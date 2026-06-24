@@ -9,7 +9,9 @@ Bluetooth is the primary transport because Multicam needs to control multiple ca
 Brand-specific protocol details live behind `BLECameraDeviceClient` implementations:
 
 - `GoProBLEClient` uses Open GoPro BLE commands, settings, and query/status packets.
-- `DJIExperimentalBLEClient` uses experimental DUML-style packets over DJI BLE services.
+- `DJIExperimentalBLEClient` uses experimental DUML-style packets over DJI BLE services for supported Action/Nano cameras.
+
+The app uses an allowlist for camera control. Only the models below marked tested are enabled in the UI. Other discovered cameras are visible as Unsupported until their BLE command/status behavior has been tested directly.
 
 ## GoPro HERO13 Black
 
@@ -70,13 +72,31 @@ Known limits:
 
 ## DJI Osmo Pocket 3
 
-Status: unverified.
+Status: not supported.
 
-Pocket 3 advertises BLE support, but this project has not yet been tested against physical Pocket 3 hardware. The app identifies Pocket-style DJI names and tries the shared experimental DJI record path. Treat all Pocket 3 behavior as a proof gate until tested.
+Pocket 3 is recognized by name/model so it can be shown clearly in the app, but pairing, selection, and record controls are disabled.
+
+What local testing found:
+
+- Pocket 3 advertises BLE and can send status-like traffic.
+- Physical record-button presses produced incoming notifications, but replaying those packets and sending the known DJI Action/Nano record command families did not start or stop recording.
+- DJI's public Pocket 3 docs describe phone control through Bluetooth plus Wi-Fi, and LightCut/Mimo-style flows appear to use Bluetooth for discovery/handshake before joining the camera Wi-Fi network.
+
+Current decision:
+
+- Do not claim Pocket 3 BLE-only recording support.
+- Do not include Pocket 3 in multicam selection or automatic reconnect.
+- Revisit only if a reproducible BLE command path or official API becomes available.
+
+## Other Cameras
+
+Status: not supported.
+
+Any camera other than GoPro HERO13 Black, DJI Osmo Action 6, or DJI Osmo Nano is shown as Unsupported. This includes future GoPro models, older GoPro models, and other DJI models until they are tested on hardware and mapped explicitly.
 
 ## Next Proof Gates
 
-1. Test Pocket 3 pairing, record start/stop, and state reads on physical hardware.
-2. Capture DJI mode-switch traffic from first-party apps/accessories if reliable Video-mode switching becomes important.
-3. Expand GoPro settings support after querying and rendering device-specific capabilities.
-4. Decide whether Wi-Fi preview/media workflows belong in this app or a companion tool.
+1. Capture DJI mode-switch traffic from first-party apps/accessories if reliable Video-mode switching becomes important.
+2. Expand GoPro settings support after querying and rendering device-specific capabilities.
+3. Decide whether Wi-Fi preview/media workflows belong in this app or a companion tool.
+4. Revisit Pocket 3 only if a BLE-only control route is found or the app grows a deliberate single-camera Wi-Fi control mode.

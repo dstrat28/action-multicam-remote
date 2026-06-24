@@ -27,7 +27,8 @@ final class CameraStore {
     @ObservationIgnored private let defaultConnectionTimeoutDelay: Duration = .seconds(9)
     @ObservationIgnored private let goProWakeConnectionTimeoutDelay: Duration = .seconds(30)
     @ObservationIgnored private let action6WakeConnectionTimeoutDelay: Duration = .seconds(28)
-    @ObservationIgnored private let startStateGuardInterval: TimeInterval = 5
+    @ObservationIgnored private let defaultStartStateGuardInterval: TimeInterval = 5
+    @ObservationIgnored private let pocket3StartStateGuardInterval: TimeInterval = 1.5
     @ObservationIgnored private let stopStateGuardInterval: TimeInterval = 2.5
     @ObservationIgnored private var wakeRetryTasksByCameraID: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var startRecordingTasksByCameraID: [UUID: Task<Void, Never>] = [:]
@@ -240,6 +241,12 @@ final class CameraStore {
     }
 
     func connect(_ camera: DiscoveredCamera) {
+        if let unsupportedReason = camera.unsupportedReason {
+            setCameraDiagnostic(unsupportedReason, for: camera)
+            updateCamera(camera.id, state: .unsupported(unsupportedReason), detail: nil)
+            return
+        }
+
         if isDemoMode {
             markCameraAsPaired(camera.id)
             updateCamera(camera.id, state: .connected, detail: "Demo connection established.")
@@ -473,7 +480,6 @@ private extension CameraStore {
     }
 
     func merge(_ candidate: DiscoveredCameraCandidate) {
-        let capabilities = normalizedCapabilities(candidate.capabilities, for: candidate.brand)
         var shouldAutoConnect = false
         var shouldSort = false
         let now = Date()
@@ -489,6 +495,19 @@ private extension CameraStore {
         }
 
         if let index = cameras.firstIndex(where: { $0.id == candidate.id }) {
+            let resolvedModel = candidate.model == .unknown ? cameras[index].model : candidate.model
+            let capabilities = normalizedCapabilities(
+                candidate.capabilities,
+                brand: candidate.brand,
+                model: resolvedModel,
+                name: candidate.name
+            )
+            let unsupportedReason = unsupportedReason(
+                brand: candidate.brand,
+                model: resolvedModel,
+                name: candidate.name
+            )
+
             if cameras[index].name != candidate.name {
                 cameras[index].name = candidate.name
                 shouldSort = true
@@ -497,56 +516,88 @@ private extension CameraStore {
                 cameras[index].brand = candidate.brand
                 shouldSort = true
             }
-            if candidate.model != .unknown, cameras[index].model != candidate.model {
-                cameras[index].model = candidate.model
+            if candidate.model != .unknown, cameras[index].model != resolvedModel {
+                cameras[index].model = resolvedModel
                 shouldSort = true
             }
             if cameras[index].capabilities != capabilities {
                 cameras[index].capabilities = capabilities
             }
 
-            let shouldRefreshSignal = now.timeIntervalSince(cameras[index].lastSeen) >= signalRefreshInterval
-                || abs(cameras[index].rssi - candidate.rssi) >= 12
-            if cameras[index].connectionState != .connected {
-                cameras[index].lastSeen = now
-                if isConnectable {
-                    cameras[index].lastConnectableSeen = now
+            if let unsupportedReason {
+                if cameras[index].connectionState == .connected || cameras[index].connectionState == .connecting {
+                    scanner.disconnect(from: candidate.id)
+                    clients[candidate.id] = nil
                 }
-                if shouldRefreshSignal {
-                    cameras[index].rssi = candidate.rssi
-                }
-            }
-
-            switch cameras[index].connectionState {
-            case .disconnected, .failed, .reconnecting:
-                if isConnectable, !isAvailabilitySuppressed || isPairingModeActive {
-                    cameras[index].connectionState = .discovered
-                    if cameras[index].isPaired,
-                       cameras[index].supportsBatchRecord,
-                       !pendingStartCameraIDs.contains(candidate.id),
-                       cameras[index].recordingState != .recording {
-                        cameras[index].recordingState = .stopped
+                cameras[index].connectionState = .unsupported(unsupportedReason)
+                cameras[index].recordingState = .unavailable
+                cameras[index].currentMode = nil
+                cameras[index].isSelected = false
+                cancelAvailabilityTimeout(for: candidate.id)
+                cancelConnectionTimeout(for: candidate.id)
+                cancelWakeRetry(for: candidate.id)
+                pendingStartCameraIDs.remove(candidate.id)
+                pendingStopCameraIDs.remove(candidate.id)
+                clearStateGuards(for: candidate.id)
+                shouldAutoConnect = false
+            } else {
+                let shouldRefreshSignal = now.timeIntervalSince(cameras[index].lastSeen) >= signalRefreshInterval
+                    || abs(cameras[index].rssi - candidate.rssi) >= 12
+                if cameras[index].connectionState != .connected {
+                    cameras[index].lastSeen = now
+                    if isConnectable {
+                        cameras[index].lastConnectableSeen = now
+                    }
+                    if shouldRefreshSignal {
+                        cameras[index].rssi = candidate.rssi
                     }
                 }
-            case .discovered, .connecting, .connected, .unsupported:
-                if !isConnectable, cameras[index].connectionState == .discovered {
-                    cameras[index].connectionState = .disconnected
-                    cameras[index].recordingState = cameras[index].supportsBatchRecord ? .unknown : .unavailable
-                    cameras[index].currentMode = nil
-                }
-                break
-            }
-            shouldAutoConnect = cameras[index].isPaired
-                && cameras[index].connectionState != .connected
-                && cameras[index].connectionState != .connecting
-                && !isAvailabilitySuppressed
-                && isConnectable
-                && canAttemptAutoConnect(to: cameras[index], now: now)
 
-            if candidate.brand == .dji, candidate.isAwake != nil {
-                scheduleDJIIdleDisconnectIfNeeded(for: candidate.id)
+                switch cameras[index].connectionState {
+                case .disconnected, .failed, .reconnecting:
+                    if isConnectable, !isAvailabilitySuppressed || isPairingModeActive {
+                        cameras[index].connectionState = .discovered
+                        clearSelectionIfNotConnected(at: index)
+                        if cameras[index].isPaired,
+                           cameras[index].supportsBatchRecord,
+                           !pendingStartCameraIDs.contains(candidate.id),
+                           cameras[index].recordingState != .recording {
+                            cameras[index].recordingState = .stopped
+                        }
+                    }
+                case .discovered, .connecting, .connected, .unsupported:
+                    if !isConnectable, cameras[index].connectionState == .discovered {
+                        cameras[index].connectionState = .disconnected
+                        clearSelectionIfNotConnected(at: index)
+                        cameras[index].recordingState = cameras[index].supportsBatchRecord ? .unknown : .unavailable
+                        cameras[index].currentMode = nil
+                    }
+                    break
+                }
+
+                shouldAutoConnect = cameras[index].isPaired
+                    && cameras[index].connectionState != .connected
+                    && cameras[index].connectionState != .connecting
+                    && !isAvailabilitySuppressed
+                    && isConnectable
+                    && canAttemptAutoConnect(to: cameras[index], now: now)
+
+                if candidate.brand == .dji, candidate.isAwake != nil {
+                    scheduleDJIIdleDisconnectIfNeeded(for: candidate.id)
+                }
             }
         } else {
+            let capabilities = normalizedCapabilities(
+                candidate.capabilities,
+                brand: candidate.brand,
+                model: candidate.model,
+                name: candidate.name
+            )
+            let unsupportedReason = unsupportedReason(
+                brand: candidate.brand,
+                model: candidate.model,
+                name: candidate.name
+            )
             cameras.append(
                 DiscoveredCamera(
                     id: candidate.id,
@@ -555,8 +606,9 @@ private extension CameraStore {
                     model: candidate.model,
                     rssi: candidate.rssi,
                     capabilities: capabilities,
-                    connectionState: isConnectable ? .discovered : .disconnected,
-                    recordingState: capabilities.contains(.record) ? .unknown : .unavailable,
+                    connectionState: unsupportedReason.map(CameraConnectionState.unsupported)
+                        ?? (isConnectable ? .discovered : .disconnected),
+                    recordingState: unsupportedReason == nil && capabilities.contains(.record) ? .unknown : .unavailable,
                     isPaired: false,
                     isSelected: false,
                     lastSeen: Date(),
@@ -570,7 +622,8 @@ private extension CameraStore {
             sortCamerasForEditing()
         }
 
-        if isConnectable, !isAvailabilitySuppressed || isPairingModeActive {
+        if cameras.first(where: { $0.id == candidate.id })?.isSupportedByApp == true,
+           isConnectable, !isAvailabilitySuppressed || isPairingModeActive {
             scheduleAvailabilityTimeout(for: candidate.id)
         }
 
@@ -605,8 +658,10 @@ private extension CameraStore {
             if let isAwake = freshAwakeAdvertisement(for: camera.id, now: now) {
                 return isAwake
             }
-            let lastProbe = lastDJIProbeByCameraID[camera.id] ?? .distantPast
-            return now.timeIntervalSince(lastProbe) >= 30
+            if camera.behavior.kind == .djiOsmoNano {
+                return false
+            }
+            return true
         }
 
         return false
@@ -623,8 +678,12 @@ private extension CameraStore {
     }
 
     func protectStartTransition(for camera: DiscoveredCamera) {
-        ignoreStoppedUntilByCameraID[camera.id] = Date().addingTimeInterval(startStateGuardInterval)
+        ignoreStoppedUntilByCameraID[camera.id] = Date().addingTimeInterval(startStateGuardInterval(for: camera))
         ignoreRecordingUntilByCameraID.removeValue(forKey: camera.id)
+    }
+
+    func startStateGuardInterval(for camera: DiscoveredCamera) -> TimeInterval {
+        camera.behavior.kind == .djiOsmoPocket3 ? pocket3StartStateGuardInterval : defaultStartStateGuardInterval
     }
 
     func protectStopTransition(for camera: DiscoveredCamera) {
@@ -992,6 +1051,7 @@ private extension CameraStore {
         reconnectTasksByCameraID[id] = nil
         if let index = cameras.firstIndex(where: { $0.id == id }) {
             cameras[index].connectionState = .failed(reason)
+            clearSelectionIfNotConnected(at: index)
             cameras[index].recordingState = cameras[index].supportsBatchRecord ? .unknown : .unavailable
             cameras[index].currentMode = nil
         }
@@ -1123,7 +1183,10 @@ private extension CameraStore {
     }
 
     func scheduleWakeRetryIfNeeded(for cameras: [DiscoveredCamera]) {
-        for camera in cameras where camera.brand == .dji && camera.recordingState != .recording {
+        for camera in cameras
+            where camera.brand == .dji
+                && camera.behavior.assumesRecordingAfterUnconfirmedDJIStart
+                && camera.recordingState != .recording {
             cancelWakeRetry(for: camera.id)
             scheduleWakeRetry(for: camera.id, attemptsRemaining: 2)
         }
@@ -1632,6 +1695,8 @@ private extension CameraStore {
             scheduleAvailabilityTimeout(for: id)
         }
 
+        clearSelectionIfNotConnected(at: index)
+
         if let detail {
             cameraDiagnosticsByID[id] = detail
             appendLog("\(cameras[index].name): \(detail)")
@@ -1646,6 +1711,10 @@ private extension CameraStore {
         for camera: DiscoveredCamera,
         requestedState state: CameraConnectionState
     ) -> CameraConnectionState {
+        if let unsupportedReason = camera.unsupportedReason {
+            return .unsupported(unsupportedReason)
+        }
+
         guard camera.isPaired else { return state }
 
         switch state {
@@ -1667,6 +1736,15 @@ private extension CameraStore {
         case .discovered, .connecting, .connected, .reconnecting, .unsupported:
             return state
         }
+    }
+
+    func clearSelectionIfNotConnected(at index: Int) {
+        guard cameras.indices.contains(index),
+              cameras[index].connectionState != .connected else {
+            return
+        }
+
+        cameras[index].isSelected = false
     }
 
     func freshAvailableState(for camera: DiscoveredCamera) -> CameraConnectionState? {
@@ -1691,8 +1769,13 @@ private extension CameraStore {
         do {
             cameras = try JSONDecoder().decode([DiscoveredCamera].self, from: data).map { saved in
                 var camera = saved
-                camera.capabilities = normalizedCapabilities(camera.capabilities, for: camera.brand)
-                camera.connectionState = .disconnected
+                camera.capabilities = normalizedCapabilities(
+                    camera.capabilities,
+                    brand: camera.brand,
+                    model: camera.model,
+                    name: camera.name
+                )
+                camera.connectionState = camera.unsupportedReason.map(CameraConnectionState.unsupported) ?? .disconnected
                 camera.recordingState = camera.supportsBatchRecord ? .unknown : .unavailable
                 camera.currentMode = nil
                 camera.isPaired = true
@@ -1734,8 +1817,14 @@ private extension CameraStore {
 
     func normalizedCapabilities(
         _ capabilities: Set<CameraCapability>,
-        for brand: CameraBrand
+        brand: CameraBrand,
+        model: CameraModel,
+        name: String
     ) -> Set<CameraCapability> {
+        if unsupportedReason(brand: brand, model: model, name: name) != nil {
+            return [.experimental]
+        }
+
         var normalized = capabilities
         if brand == .dji {
             normalized.insert(.record)
@@ -1743,6 +1832,14 @@ private extension CameraStore {
             normalized.insert(.experimental)
         }
         return normalized
+    }
+
+    func unsupportedReason(
+        brand: CameraBrand,
+        model: CameraModel,
+        name: String
+    ) -> String? {
+        DiscoveredCamera.unsupportedReason(brand: brand, model: model, name: name)
     }
 
     func discoverNextDemoCamera() {
@@ -1834,9 +1931,9 @@ extension CameraStore {
             {
                 DiscoveredCamera(
                     id: UUID(),
-                    name: "Osmo Pocket 3",
+                    name: "Osmo Nano",
                     brand: .dji,
-                    model: .djiOsmoPocket3,
+                    model: .djiOsmoNano,
                     rssi: -74,
                     capabilities: [.record, .experimental],
                     connectionState: .discovered,

@@ -16,23 +16,29 @@ struct CameraRowView: View {
                     .frame(width: 34, height: 34)
             }
             .buttonStyle(.plain)
+            .disabled(!camera.canSelectForBatch && !camera.isSelected)
             .accessibilityLabel(camera.isSelected ? "Deselect \(camera.name)" : "Select \(camera.name)")
 
             VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 8) {
-                    Text(camera.name)
-                        .font(.headline)
-                        .lineLimit(1)
-
-                    StatusPill(text: camera.brand.rawValue, color: brandColor)
-                }
+                Text(camera.name)
+                    .font(.headline)
+                    .lineLimit(1)
 
                 Text(cameraSubtitle)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
 
-                if isShowingDiagnostics, let detail = camera.connectionState.detail {
+                if let unsupportedReason = camera.unsupportedReason {
+                    Text(unsupportedReason)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(3)
+                }
+
+                if camera.unsupportedReason == nil,
+                   isShowingDiagnostics,
+                   let detail = camera.connectionState.detail {
                     Text(detail)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -83,7 +89,7 @@ struct CameraRowView: View {
     }
 
     private var cameraSubtitle: String {
-        var parts = [camera.model.rawValue, camera.displayConnectionLabel]
+        var parts = [camera.brand.rawValue, camera.model.rawValue, camera.displayConnectionLabel]
 
         if camera.isConnected {
             if let currentMode = camera.currentMode {
@@ -97,10 +103,6 @@ struct CameraRowView: View {
 
     private var shouldShowDiagnosticDetail: Bool {
         camera.isKnownAction6 || camera.connectionState != .connected
-    }
-
-    private var brandColor: Color {
-        camera.brand.badgeColor
     }
 }
 

@@ -139,9 +139,17 @@ extension DJIExperimentalBLEClient {
             if characteristic.properties.contains(.notify) || characteristic.properties.contains(.indicate) {
                 peripheral.setNotifyValue(true, for: characteristic)
             }
+
+            if shouldDiscoverDescriptors(for: characteristic, in: service) {
+                peripheral.discoverDescriptors(for: characteristic)
+            }
         }
 
         if !writeCandidates.isEmpty {
+            if shouldUsePocket3RecordFallbacks {
+                onLog("\(cameraName): Pocket 3 write candidates: \(writeTargetSummary).")
+                onLog("\(cameraName): Pocket 3 selected write targets: \(selectedWriteTargetSummary).")
+            }
             onStatus(cameraID, .connected, "DJI record characteristics ready: \(writeTargets.count)")
             scheduleInitialStatusProbe(to: peripheral)
             startStatusPolling(to: peripheral)
@@ -170,6 +178,46 @@ extension DJIExperimentalBLEClient {
 
     func peripheral(
         _ peripheral: CBPeripheral,
+        didDiscoverDescriptorsFor characteristic: CBCharacteristic,
+        error: Error?
+    ) {
+        let characteristicLabel = characteristic.debugLabel
+
+        if let error {
+            onLog("\(cameraName): descriptor discovery for \(characteristicLabel) failed: \(error.localizedDescription)")
+            return
+        }
+
+        let descriptors = characteristic.descriptors ?? []
+        if descriptors.isEmpty {
+            onLog("\(cameraName): descriptors for \(characteristicLabel): none.")
+            return
+        }
+
+        let descriptorIDs = descriptors.map { $0.uuid.uuidString }.joined(separator: ", ")
+        onLog("\(cameraName): descriptors for \(characteristicLabel): \(descriptorIDs).")
+        descriptors.forEach { peripheral.readValue(for: $0) }
+    }
+
+    func peripheral(
+        _ peripheral: CBPeripheral,
+        didUpdateValueFor descriptor: CBDescriptor,
+        error: Error?
+    ) {
+        let characteristicLabel = descriptor.characteristic?.debugLabel ?? "unknown characteristic"
+
+        if let error {
+            onLog("\(cameraName): descriptor \(characteristicLabel) / \(descriptor.uuid.uuidString) read failed: \(error.localizedDescription)")
+            return
+        }
+
+        onLog(
+            "\(cameraName): descriptor \(characteristicLabel) / \(descriptor.uuid.uuidString) = \(descriptorValueLabel(descriptor.value))."
+        )
+    }
+
+    func peripheral(
+        _ peripheral: CBPeripheral,
         didWriteValueFor characteristic: CBCharacteristic,
         error: Error?
     ) {
@@ -189,6 +237,13 @@ private extension DJIExperimentalBLEClient {
     }
 
     var writeTargets: [DJIWritableCharacteristic] {
+        if shouldUsePocket3RecordFallbacks {
+            let pocketTargets = writeCandidates.filter(\.isPocket3CommandTarget)
+            if !pocketTargets.isEmpty {
+                return Array(pocketTargets.prefix(4))
+            }
+        }
+
         let privateTargets = writeCandidates.filter { !$0.isStandardBLETarget }
         if shouldUseExpandedActionWriteTargets {
             let safeTargets = writeCandidates.filter { !$0.isClearlyGenericBLETarget }
@@ -237,11 +292,15 @@ private extension DJIExperimentalBLEClient {
         return result(
             for: command,
             status: .sent,
-            message: "Sent \(packetCount) experimental DJI \(action.isStarting ? "start" : "stop") record packets to \(targets.count) BLE targets."
+            message: "Sent \(packetCount) experimental DJI \(action.isStarting ? "start" : "stop") record packets to \(targets.count) BLE targets.\(pocket3CommandDiagnosticSuffix())"
         )
     }
 
     func djiRecordPackets(for action: RecordAction) -> [DJICommandPacket] {
+        if shouldUsePocket3RecordFallbacks {
+            return djiPocket3RecordPackets(for: action)
+        }
+
         if shouldSendDirectCameraRecordOnly {
             var packets = action.isStarting ? djiVideoModePackets() : []
             packets.append(
@@ -307,6 +366,63 @@ private extension DJIExperimentalBLEClient {
                         commandSet: 0x02,
                         commandID: 0x7C,
                         payload: Data([action.isStarting ? 0x01 : 0x00])
+                    )
+                )
+            )
+        }
+
+        return packets
+    }
+
+    func djiPocket3RecordPackets(for action: RecordAction) -> [DJICommandPacket] {
+        var packets: [DJICommandPacket] = []
+        let payload = Data([action.isStarting ? 0x01 : 0x00])
+
+        for routing in recordCommandRoutings {
+            packets.append(
+                DJICommandPacket(
+                    label: "pocket route \(routing.debugLabel) camera control \(action.isStarting ? "start" : "stop")",
+                    command: nextDumlPacket(
+                        routing: routing,
+                        commandSet: 0x02,
+                        commandID: 0x01,
+                        payload: payload
+                    )
+                )
+            )
+
+            packets.append(
+                DJICommandPacket(
+                    label: "pocket route \(routing.debugLabel) camera do record \(action.isStarting ? "on" : "off")",
+                    command: nextDumlPacket(
+                        routing: routing,
+                        commandSet: 0x02,
+                        commandID: 0x02,
+                        payload: payload
+                    )
+                )
+            )
+
+            packets.append(
+                DJICommandPacket(
+                    label: "pocket route \(routing.debugLabel) \(action.isStarting ? "special start video" : "special stop video")",
+                    command: nextDumlPacket(
+                        routing: routing,
+                        commandSet: 0x01,
+                        commandID: action.isStarting ? 0x21 : 0x22,
+                        payload: Data()
+                    )
+                )
+            )
+
+            packets.append(
+                DJICommandPacket(
+                    label: "pocket route \(routing.debugLabel) camera shutter \(action.isStarting ? "on" : "off")",
+                    command: nextDumlPacket(
+                        routing: routing,
+                        commandSet: 0x02,
+                        commandID: 0x7C,
+                        payload: payload
                     )
                 )
             )
@@ -450,11 +566,12 @@ private extension DJIExperimentalBLEClient {
         ].uniqued()
     }
 
-    func djiVideoModePackets() -> [DJICommandPacket] {
+    func djiVideoModePackets(routing: DJIDUMLRouting? = nil) -> [DJICommandPacket] {
         var packets = [
             DJICommandPacket(
-                label: "camera work mode video",
+                label: routing.map { "route \($0.debugLabel) camera work mode video" } ?? "camera work mode video",
                 command: nextDumlPacket(
+                    routing: routing,
                     commandSet: 0x02,
                     commandID: 0x10,
                     payload: Data([0x01])
@@ -467,6 +584,7 @@ private extension DJIExperimentalBLEClient {
                 DJICommandPacket(
                     label: "camera work mode video alt",
                     command: nextDumlPacket(
+                        routing: routing,
                         commandSet: 0x02,
                         commandID: 0x10,
                         payload: Data([0x00])
@@ -475,6 +593,7 @@ private extension DJIExperimentalBLEClient {
                 DJICommandPacket(
                     label: "camera set mode video",
                     command: nextDumlPacket(
+                        routing: routing,
                         commandSet: 0x02,
                         commandID: 0x1C,
                         payload: Data([0x00])
@@ -483,6 +602,7 @@ private extension DJIExperimentalBLEClient {
                 DJICommandPacket(
                     label: "camera set mode record",
                     command: nextDumlPacket(
+                        routing: routing,
                         commandSet: 0x02,
                         commandID: 0x1C,
                         payload: Data([0x01])
@@ -507,6 +627,12 @@ private extension DJIExperimentalBLEClient {
         cameraBehavior.kind == .djiOsmoNano
     }
 
+    var shouldUsePocket3RecordFallbacks: Bool {
+        // Pocket 3 is recognized at the app layer but intentionally unsupported:
+        // local testing found status traffic, not a working BLE-only record path.
+        false
+    }
+
     var stopCommandBurstCount: Int {
         shouldUseNanoStopFallbacks ? 3 : 2
     }
@@ -526,17 +652,83 @@ private extension DJIExperimentalBLEClient {
         cameraName.lowercased().filter { $0.isLetter || $0.isNumber }
     }
 
+    var recordCommandRoutings: [DJIDUMLRouting] {
+        guard shouldUsePocket3RecordFallbacks else { return [dumlRouting] }
+        return [
+            dumlRouting,
+            .default,
+            DJIDUMLRouting(appAddress: 0x02, cameraAddress: 0x05)
+        ].uniqued()
+    }
+
+    var writeTargetSummary: String {
+        guard !writeCandidates.isEmpty else { return "none" }
+        return writeCandidates
+            .map(\.diagnosticLabel)
+            .joined(separator: ", ")
+    }
+
+    var selectedWriteTargetSummary: String {
+        let targets = writeTargets
+        guard !targets.isEmpty else { return "none" }
+        return targets
+            .map(\.diagnosticLabel)
+            .joined(separator: ", ")
+    }
+
     var cameraBehavior: CameraBehaviorProfile {
         CameraBehaviorProfile.resolve(brand: .dji, model: cameraModel, name: cameraName)
     }
 
+    func pocket3CommandDiagnosticSuffix() -> String {
+        guard shouldUsePocket3RecordFallbacks else { return "" }
+        return " Pocket 3 selected targets: \(selectedWriteTargetSummary). All write candidates: \(writeTargetSummary)."
+    }
+
+    func shouldDiscoverDescriptors(for characteristic: CBCharacteristic, in service: CBService) -> Bool {
+        guard shouldUsePocket3RecordFallbacks else { return false }
+
+        let serviceID = service.uuid.uuidString.uppercased()
+        let characteristicID = characteristic.uuid.uuidString.uppercased()
+
+        return serviceID == "FFF0"
+            || serviceID == "1812"
+            || characteristicID == "2A4B"
+            || characteristicID == "2A4D"
+            || characteristicID == "2A4E"
+            || characteristicID == "2A4F"
+    }
+
+    func descriptorValueLabel(_ value: Any?) -> String {
+        switch value {
+        case let data as Data:
+            data.isEmpty ? "empty data" : data.hexString
+        case let string as String:
+            "\"\(string)\""
+        case let number as NSNumber:
+            number.stringValue
+        case let uuid as CBUUID:
+            uuid.uuidString
+        case .none:
+            "nil"
+        case let value?:
+            String(describing: value)
+        }
+    }
+
     static func defaultDumlRouting(cameraModel: CameraModel, cameraName: String) -> DJIDUMLRouting {
-        if CameraBehaviorProfile.resolve(
+        let profile = CameraBehaviorProfile.resolve(
             brand: .dji,
             model: cameraModel,
             name: cameraName
-        ).kind == .djiOsmoAction6 {
+        )
+
+        if profile.kind == .djiOsmoAction6 {
             return DJIDUMLRouting(appAddress: 0x25, cameraAddress: 0x01)
+        }
+
+        if profile.kind == .djiOsmoPocket3 {
+            return DJIDUMLRouting(appAddress: 0x02, cameraAddress: 0x04)
         }
 
         return .default
@@ -544,6 +736,10 @@ private extension DJIExperimentalBLEClient {
 
     func updateDumlRouting(from value: Data) {
         guard let packet = DJIDUMLIncomingPacket(data: value) else { return }
+
+        if cameraBehavior.kind == .djiOsmoPocket3 {
+            return
+        }
 
         var learnedRouting = dumlRouting
         if packet.receiver != 0x01, packet.receiver != 0x05, packet.receiver != learnedRouting.appAddress {
@@ -702,7 +898,7 @@ private extension DJIExperimentalBLEClient {
             if (cameraBehavior.trustsDJICompactRecordingStatus && state.isCompactRecordingSignal)
                 || recordingTimerSignal {
                 recordingState = .recording
-            } else if state.isCompactStoppedSignal {
+            } else if shouldTrustCompactStoppedStatus && state.isCompactStoppedSignal {
                 recordingState = .stopped
             } else {
                 recordingState = nil
@@ -734,6 +930,10 @@ private extension DJIExperimentalBLEClient {
         }
 
         return state.videoRecordTime > lastVideoRecordTime
+    }
+
+    var shouldTrustCompactStoppedStatus: Bool {
+        cameraBehavior.kind != .djiOsmoPocket3
     }
 
     func logAction6StatusDecode(
@@ -841,6 +1041,11 @@ private extension DJIExperimentalBLEClient {
 
     func shouldLogRawNotification(_ value: Data) -> Bool {
         guard let packet = DJIDUMLIncomingPacket(data: value) else { return true }
+        if cameraBehavior.kind == .djiOsmoPocket3,
+           !packet.isResponse,
+           packet.isPocket3NoisyStatePacket {
+            return false
+        }
         return !packet.isHighFrequencyStatePush
     }
 
@@ -848,7 +1053,8 @@ private extension DJIExperimentalBLEClient {
         routing: DJIDUMLRouting? = nil,
         commandSet: UInt8,
         commandID: UInt8,
-        payload: Data
+        payload: Data,
+        flags: UInt8 = 0x40
     ) -> DJISequencedCommand {
         let currentSequenceNumber = sequenceNumber
         defer { sequenceNumber &+= 1 }
@@ -859,7 +1065,8 @@ private extension DJIExperimentalBLEClient {
                 routing: routing ?? dumlRouting,
                 commandSet: commandSet,
                 commandID: commandID,
-                payload: payload
+                payload: payload,
+                flags: flags
             )
         )
     }
@@ -902,6 +1109,11 @@ private struct DJIDUMLIncomingPacket {
     var isCameraStatePush: Bool {
         (commandSet == 0x02 && commandID == 0x80)
             || (commandSet == 0x0D && commandID == 0x02)
+    }
+
+    var isPocket3NoisyStatePacket: Bool {
+        (commandSet == 0x04 && commandID == 0x05)
+            || (commandSet == 0x04 && commandID == 0x27)
     }
 
     var payloadWithoutResultCode: Data {
@@ -1110,6 +1322,14 @@ private struct DJIWritableCharacteristic: Comparable {
         "\(serviceUUID.uuidString) / \(characteristic.uuid.uuidString)"
     }
 
+    var diagnosticLabel: String {
+        let writeTypeLabel = writeTypes(expanded: true)
+            .map(\.logLabel)
+            .joined(separator: "/")
+        let propertyLabel = characteristic.properties.debugLabels.joined(separator: "/")
+        return "\(debugLabel) [\(propertyLabel); \(writeTypeLabel.isEmpty ? "no write type" : writeTypeLabel)]"
+    }
+
     var isStandardBLETarget: Bool {
         DJIStandardBLEUUIDs.contains(serviceUUID.uuidString.uppercased())
             || DJIStandardBLEUUIDs.contains(characteristic.uuid.uuidString.uppercased())
@@ -1118,6 +1338,10 @@ private struct DJIWritableCharacteristic: Comparable {
     var isClearlyGenericBLETarget: Bool {
         DJIClearlyGenericBLEUUIDs.contains(serviceUUID.uuidString.uppercased())
             || DJIClearlyGenericBLEUUIDs.contains(characteristic.uuid.uuidString.uppercased())
+    }
+
+    var isPocket3CommandTarget: Bool {
+        serviceUUID.uuidString.uppercased() == "FFF0"
     }
 
     func writeTypes(expanded: Bool) -> [CBCharacteristicWriteType] {
@@ -1185,6 +1409,13 @@ private extension CBCharacteristicWriteType {
     }
 }
 
+private extension CBCharacteristic {
+    var debugLabel: String {
+        let serviceID = service?.uuid.uuidString ?? "unknown service"
+        return "\(serviceID) / \(uuid.uuidString)"
+    }
+}
+
 private extension Array where Element: Equatable {
     func uniqued() -> [Element] {
         reduce(into: []) { result, element in
@@ -1211,7 +1442,8 @@ private enum DJIDUMLPacket {
         routing: DJIDUMLRouting,
         commandSet: UInt8,
         commandID: UInt8,
-        payload: Data
+        payload: Data,
+        flags: UInt8 = 0x40
     ) -> Data {
         let packetLength = UInt16(11 + payload.count + 2)
         let versionAndLength = packetLength | (1 << 10)
@@ -1225,7 +1457,7 @@ private enum DJIDUMLPacket {
         bytes.append(routing.cameraAddress)
         bytes.append(UInt8(sequenceNumber & 0xFF))
         bytes.append(UInt8((sequenceNumber >> 8) & 0xFF))
-        bytes.append(0x40) // request, ack after exec, no encryption
+        bytes.append(flags)
         bytes.append(commandSet)
         bytes.append(commandID)
         bytes.append(payload)

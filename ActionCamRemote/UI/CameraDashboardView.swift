@@ -193,14 +193,14 @@ private struct PairingCameraRow: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center, spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
-                    StatusPill(text: camera.isPaired ? "\(camera.brand.rawValue) · Paired" : camera.brand.rawValue, color: camera.brand.badgeColor)
-
                     Text(camera.name)
                         .font(.headline)
+                        .lineLimit(1)
 
-                    Text("\(camera.model.rawValue) · \(camera.connectionState.label)")
+                    Text("\(camera.brand.rawValue) · \(camera.model.rawValue) · \(camera.connectionState.label)")
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
 
                 Spacer()
@@ -215,6 +215,15 @@ private struct PairingCameraRow: View {
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                         .fixedSize()
+                    } else if camera.unsupportedReason != nil {
+                        Button {
+                        } label: {
+                            Text("Unsupported")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                        .fixedSize()
+                        .disabled(true)
                     } else {
                         Button {
                             store.connect(camera)
@@ -229,7 +238,8 @@ private struct PairingCameraRow: View {
                 }
             }
 
-            if let detail = camera.connectionState.detail {
+            if camera.unsupportedReason == nil,
+               let detail = camera.connectionState.detail {
                 Text(detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)

@@ -115,7 +115,10 @@ struct CameraBehaviorProfile: Equatable {
     ) -> CameraBehaviorProfile {
         let normalizedName = name.lowercased().filter { $0.isLetter || $0.isNumber }
 
-        if brand == .gopro || model == .goproHero13Black || normalizedName.contains("gopro") {
+        if model == .goproHero13Black
+            || normalizedName.contains("hero13")
+            || normalizedName.contains("13black")
+            || normalizedName.contains("h2401") {
             return CameraBehaviorProfile(
                 kind: .goProHero13Black,
                 assumesRecordingAfterUnconfirmedDJIStart: false,
@@ -200,6 +203,8 @@ struct CameraBehaviorProfile: Equatable {
 }
 
 struct DiscoveredCamera: Identifiable, Equatable, Codable {
+    static let unsupportedCameraReason = "Unsupported"
+
     let id: UUID
     var name: String
     var brand: CameraBrand
@@ -214,8 +219,53 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     var lastSeen: Date
     var lastConnectableSeen: Date? = nil
 
+    var isSupportedByApp: Bool {
+        unsupportedReason == nil
+    }
+
+    var unsupportedReason: String? {
+        Self.unsupportedReason(brand: brand, model: model, name: name)
+    }
+
+    static func unsupportedReason(
+        brand: CameraBrand,
+        model: CameraModel,
+        name: String
+    ) -> String? {
+        isTestedSupportedModel(brand: brand, model: model, name: name) ? nil : unsupportedCameraReason
+    }
+
+    static func isTestedSupportedModel(
+        brand: CameraBrand,
+        model: CameraModel,
+        name: String
+    ) -> Bool {
+        switch model {
+        case .goproHero13Black, .djiOsmoAction6, .djiOsmoNano:
+            return true
+        case .djiOsmoPocket3, .unknown:
+            break
+        }
+
+        let normalizedName = name.lowercased().filter { $0.isLetter || $0.isNumber }
+        if brand == .gopro {
+            return normalizedName.contains("hero13")
+                || normalizedName.contains("13black")
+                || normalizedName.contains("h2401")
+        }
+
+        if brand == .dji {
+            return normalizedName.contains("action6")
+                || normalizedName.contains("osmoaction6")
+                || normalizedName.contains("oa6")
+                || normalizedName.contains("nano")
+        }
+
+        return false
+    }
+
     var supportsBatchRecord: Bool {
-        capabilities.contains(.record)
+        isSupportedByApp && capabilities.contains(.record)
     }
 
     var isConnected: Bool {
@@ -227,7 +277,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     }
 
     var isControllable: Bool {
-        isConnected || isAvailableToConnect
+        isSupportedByApp && (isConnected || isAvailableToConnect)
     }
 
     var normalizedName: String {
@@ -247,11 +297,14 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     }
 
     var displayConnectionLabel: String {
-        connectionState.label
+        isSupportedByApp ? connectionState.label : "Unsupported"
     }
 
     var canSelectForBatch: Bool {
-        isPaired && supportsBatchRecord && (isControllable || canAttemptWakeFromNotConnected)
+        isSupportedByApp
+            && isPaired
+            && supportsBatchRecord
+            && (isControllable || canAttemptWakeFromNotConnected)
     }
 
     var canStartRecording: Bool {
@@ -306,6 +359,10 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     }
 
     var primaryRecordTitle: String {
+        if !isSupportedByApp {
+            return "Unsupported"
+        }
+
         if !canStartRecordingInCurrentMode,
            recordingState != .recording,
            recordingState != .starting {
@@ -323,6 +380,10 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     }
 
     var primaryRecordIcon: String {
+        if !isSupportedByApp {
+            return "nosign"
+        }
+
         if !canStartRecordingInCurrentMode,
            recordingState != .recording,
            recordingState != .starting {
