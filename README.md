@@ -12,6 +12,12 @@ Multicam is an independent project and is not affiliated with, endorsed by, or s
 
 This is an early hardware-driven project. The app currently targets iOS 17+ and uses CoreBluetooth plus SwiftUI.
 
+## TestFlight
+
+Public TestFlight link: coming after the App Store Connect app record and first external beta review are complete.
+
+Release/archive notes live in [`docs/testflight.md`](docs/testflight.md).
+
 | Camera | Status | Notes |
 | --- | --- | --- |
 | GoPro HERO13 Black | Tested | BLE discovery, wake/connect, start/stop recording, recording status, model detection, and Video preset switching are implemented through Open GoPro BLE. |
