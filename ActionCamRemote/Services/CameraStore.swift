@@ -98,7 +98,7 @@ final class CameraStore {
             case .discovered, .connecting, .connected, .reconnecting, .unsupported, .failed:
                 return true
             case .disconnected:
-                return false
+                return isPairingModeActive && camera.brand == .dji && camera.isSupportedByApp
             }
         }
     }
