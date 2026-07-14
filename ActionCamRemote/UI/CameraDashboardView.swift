@@ -2,48 +2,65 @@ import SwiftUI
 import UIKit
 
 struct CameraDashboardView: View {
-    @Environment(CameraStore.self) private var store
     @State private var isManagingCameras = false
     @State private var manageCameraDetent: PresentationDetent = .large
+    @State private var selectedCameraDetails: CameraDetailSelection?
     @State private var isShowingDiagnostics = false
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    ControlDeckView()
-                    CameraListView(isShowingDiagnostics: activeDiagnosticsVisibility) {
-                        isManagingCameras = true
-                    }
+                VStack(alignment: .leading, spacing: 12) {
+                    SessionReadiness()
+
+                    CameraListView(
+                        isShowingDiagnostics: activeDiagnosticsVisibility,
+                        onManage: {
+                            isManagingCameras = true
+                        },
+                        onShowCameraDetails: { camera in
+                            guard camera.isConnected else { return }
+                            selectedCameraDetails = CameraDetailSelection(id: camera.id)
+                        }
+                    )
                     #if DEBUG
                     DiagnosticsView(isExpanded: $isShowingDiagnostics)
                     #endif
                 }
-                .padding()
+                .frame(maxWidth: ACRDesign.contentMaxWidth)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 16)
+                .padding(.top, 6)
+                .padding(.bottom, 24)
             }
-            .background(
-                LinearGradient(
-                    colors: [Color.acrAppBackground, Color.acrInsetSurface.opacity(0.65)],
-                    startPoint: .top,
-                    endPoint: .bottom
-                )
-            )
-            .navigationTitle("Action Cam Remote")
+            .background(Color.acrAppBackground)
+            .navigationTitle("Multicam Remote")
             .toolbar {
-                ToolbarItemGroup(placement: .topBarTrailing) {
+                ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        store.selectAllSupported()
+                        isManagingCameras = true
                     } label: {
-                        Image(systemName: "checklist.checked")
+                        Image(systemName: "plus")
                     }
-                    .accessibilityLabel("Select supported cameras")
+                    .accessibilityLabel("Manage cameras")
+                    .help("Manage cameras")
                 }
+            }
+            .safeAreaInset(edge: .bottom) {
+                MulticamRecordBar()
             }
             .sheet(isPresented: $isManagingCameras) {
                 NavigationStack {
                     PairingView()
                 }
                 .presentationDetents([.large], selection: $manageCameraDetent)
+            }
+            .sheet(item: $selectedCameraDetails) { selection in
+                NavigationStack {
+                    CameraDetailView(cameraID: selection.id)
+                }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
             }
         }
     }
@@ -57,172 +74,187 @@ struct CameraDashboardView: View {
     }
 }
 
-private struct ControlDeckView: View {
+private struct CameraDetailSelection: Identifiable {
+    var id: UUID
+}
+
+private struct SessionReadiness: View {
     @Environment(CameraStore.self) private var store
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(alignment: .top, spacing: 12) {
-                Text("Multicam Control")
-                    .font(.title2.weight(.bold))
-                    .foregroundStyle(.white)
+        HStack(spacing: 8) {
+            Circle()
+                .fill(statusColor)
+                .frame(width: 9, height: 9)
 
-                Spacer()
+            Text(sessionSummary)
+                .font(.headline.weight(.semibold))
+                .foregroundStyle(statusColor)
+                .lineLimit(1)
 
-                VStack(alignment: .trailing, spacing: 6) {
-                    SessionCountPill(
-                        text: "\(store.selectedControllableCameras.count) selected",
-                        systemImage: "checkmark.circle"
-                    )
-                    SessionCountPill(
-                        text: "\(store.connectedCameras.count) connected",
-                        systemImage: "dot.radiowaves.left.and.right"
-                    )
-                }
-            }
-
-            HStack(spacing: 12) {
-                if store.canStopMulticamRecording {
-                    MulticamCommandButton(
-                        title: "Stop All Cameras",
-                        systemImage: "stop.circle",
-                        color: .acrRecord,
-                        isEnabled: true
-                    ) {
-                        store.stopMulticamRecording()
-                    }
-                } else {
-                    MulticamCommandButton(
-                        title: startButtonTitle,
-                        systemImage: "record.circle",
-                        color: .acrReady,
-                        isEnabled: store.canStartMulticamRecording
-                    ) {
-                        store.startMulticamRecording()
-                    }
-                }
-            }
+            Spacer(minLength: 0)
         }
-        .padding(18)
-        .background(
-            LinearGradient(
-                colors: [.acrCommandTop, .acrCommandBottom],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            ),
-            in: RoundedRectangle(cornerRadius: 24, style: .continuous)
-        )
-        .overlay(alignment: .topTrailing) {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .stroke(Color.white.opacity(0.12), lineWidth: 1)
-        }
+        .padding(.horizontal, 4)
     }
 
-    private var startButtonTitle: String {
-        guard !store.controllableRecordCameras.isEmpty,
-              store.selectedControllableCameras.count == store.controllableRecordCameras.count else {
-            return "Start Selected Cameras"
-        }
+    private var sessionSummary: String {
+        let count = store.connectedCameras.count
+        guard count > 0 else { return "No cameras connected" }
+        return count == 1 ? "1 camera connected" : "\(count) cameras connected"
+    }
 
-        return "Start All Cameras"
+    private var statusColor: Color {
+        store.connectedCameras.isEmpty ? .secondary : .acrReady
     }
 }
 
-private struct MulticamCommandButton: View {
-    var title: String
-    var systemImage: String
-    var color: Color
-    var isEnabled: Bool
-    var action: () -> Void
+private struct MulticamRecordBar: View {
+    @Environment(CameraStore.self) private var store
 
     var body: some View {
-        Button(action: action) {
+        HStack(alignment: .center, spacing: 12) {
+            selectionLabel
+
+            Spacer(minLength: 4)
+
+            actionButton
+        }
+        .frame(minHeight: 56, alignment: .center)
+        .frame(maxWidth: ACRDesign.contentMaxWidth)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(.regularMaterial)
+        .overlay(alignment: .top) {
+            Divider()
+        }
+    }
+
+    private var selectionLabel: some View {
+        Text(selectionSummary)
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(Color.acrInk)
+            .lineLimit(1)
+    }
+
+    private var actionButton: some View {
+        Button {
+            performAction()
+        } label: {
             Label(title, systemImage: systemImage)
                 .font(.headline.weight(.semibold))
-                .foregroundStyle(.white.opacity(isEnabled ? 1 : 0.64))
-                .frame(maxWidth: .infinity)
-                .frame(height: 48)
-                .background(buttonFill, in: Capsule())
-                .overlay {
-                    Capsule()
-                        .stroke(Color.white.opacity(isEnabled ? 0.12 : 0.08), lineWidth: 1)
-                }
+                .foregroundStyle(isEnabled ? Color.white : Color.acrMutedText)
+                .frame(minWidth: 164)
+                .frame(height: 56)
+                .padding(.horizontal, 14)
+                .background(
+                    buttonFill,
+                    in: RoundedRectangle(cornerRadius: ACRDesign.buttonCornerRadius, style: .continuous)
+                )
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled)
         .accessibilityLabel(title)
     }
 
-    private var buttonFill: Color {
-        isEnabled ? color : Color.white.opacity(0.10)
+    private var title: String {
+        store.canStopMulticamRecording ? "Stop" : "Record"
     }
-}
 
-private struct SessionCountPill: View {
-    var text: String
-    var systemImage: String
+    private var systemImage: String {
+        store.canStopMulticamRecording ? "stop.fill" : "record.circle.fill"
+    }
 
-    var body: some View {
-        Label(text, systemImage: systemImage)
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(.white.opacity(0.88))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(Color.white.opacity(0.10), in: Capsule())
-            .overlay {
-                Capsule()
-                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
-            }
-            .lineLimit(1)
+    private var isEnabled: Bool {
+        store.canStopMulticamRecording || store.canStartMulticamRecording
+    }
+
+    private var buttonFill: Color {
+        guard isEnabled else { return Color.secondary.opacity(0.22) }
+        return .acrRecord
+    }
+
+    private var selectionSummary: String {
+        let count = store.selectedCameras.count
+        guard count > 0 else { return "No cameras" }
+        return count == 1 ? "1 camera" : "\(count) cameras"
+    }
+
+    private func performAction() {
+        if store.canStopMulticamRecording {
+            store.stopMulticamRecording()
+        } else {
+            store.startMulticamRecording()
+        }
     }
 }
 
 private struct CameraListView: View {
     @Environment(CameraStore.self) private var store
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     var isShowingDiagnostics: Bool
     var onManage: () -> Void
+    var onShowCameraDetails: (DiscoveredCamera) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Cameras")
-                    .font(.title3.weight(.bold))
-                Spacer()
-                Button {
-                    onManage()
-                } label: {
-                    Label("Manage", systemImage: "slider.horizontal.3")
-                        .font(.subheadline.weight(.semibold))
-                }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .tint(.acrAccent)
-            }
-
+        VStack(alignment: .leading, spacing: 8) {
             if store.pairedCameras.isEmpty {
-                VStack(spacing: 12) {
+                VStack(spacing: 14) {
                     Image(systemName: "camera.badge.ellipsis")
                         .font(.largeTitle)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(Color.acrAccent)
 
-                    Text("Previously connected cameras will show here")
+                    Text("No cameras yet")
                         .font(.headline)
+
+                    Text("Pair a DJI or GoPro camera to start controlling a session.")
+                        .font(.subheadline)
+                        .foregroundStyle(Color.acrMutedText)
+                        .multilineTextAlignment(.center)
+
+                    Button {
+                        onManage()
+                    } label: {
+                        Label("Add Camera", systemImage: "plus")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.acrAccent)
                 }
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 30)
-                .padding(.horizontal)
-                .acrCard(fill: Color.acrSurface.opacity(0.78), stroke: Color.acrLine.opacity(0.8))
+                .padding(.vertical, 34)
+                .padding(.horizontal, 22)
+                .acrCard(fill: Color.acrSurface, stroke: Color.acrLine.opacity(0.8))
             } else {
-                LazyVStack(spacing: 10) {
-                    ForEach(store.pairedCameras) { camera in
+                LazyVGrid(
+                    columns: [GridItem(.adaptive(minimum: 330), spacing: 10, alignment: .top)],
+                    alignment: .leading,
+                    spacing: 8
+                ) {
+                    ForEach(Array(store.pairedCameras.enumerated()), id: \.element.id) { index, camera in
                         CameraRowView(
                             camera: camera,
-                            isShowingDiagnostics: isShowingDiagnostics
+                            isShowingDiagnostics: isShowingDiagnostics,
+                            matchesConnectedPeerHeight: shouldMatchConnectedPeerHeight(at: index),
+                            onShowDetails: {
+                                onShowCameraDetails(camera)
+                            }
                         )
                     }
                 }
             }
         }
+    }
+
+    private func shouldMatchConnectedPeerHeight(at index: Int) -> Bool {
+        let cameras = store.pairedCameras
+        guard horizontalSizeClass == .regular,
+              cameras.indices.contains(index),
+              !cameras[index].isConnected else {
+            return false
+        }
+
+        let peerIndex = index.isMultiple(of: 2) ? index + 1 : index - 1
+        return cameras.indices.contains(peerIndex) && cameras[peerIndex].isConnected
     }
 }
 
@@ -232,12 +264,12 @@ private struct PairingView: View {
 
     var body: some View {
         List {
-            Section("Discovered") {
+            Section {
                 if store.pairingCameras.isEmpty {
                     ContentUnavailableView(
                         "No Cameras Found",
                         systemImage: "camera.badge.ellipsis",
-                        description: Text("Put a camera in pairing mode, then scan.")
+                        description: Text("Put a camera in pairing mode.")
                     )
                 } else {
                     ForEach(store.pairingCameras) { camera in
@@ -246,6 +278,7 @@ private struct PairingView: View {
                 }
             }
         }
+        .listStyle(.insetGrouped)
         .scrollContentBackground(.hidden)
         .background(Color.acrAppBackground)
         .navigationTitle("Manage Cameras")
@@ -276,6 +309,8 @@ private struct PairingCameraRow: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center, spacing: 12) {
+                CameraProductThumbnail(model: camera.model, brand: camera.brand, size: .small)
+
                 VStack(alignment: .leading, spacing: 3) {
                     Text(camera.name)
                         .font(.headline)

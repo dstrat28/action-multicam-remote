@@ -50,6 +50,10 @@ private struct KnownCameraProfile {
     var capabilities: Set<CameraCapability>
 }
 
+private enum DJIRSDKBLEUUID {
+    static let service = CBUUID(string: "FFF0")
+}
+
 final class BLECameraScanner: NSObject {
     private lazy var centralManager = CBCentralManager(delegate: self, queue: nil)
     private var wantsScanning = false
@@ -130,15 +134,35 @@ final class BLECameraScanner: NSObject {
 
         clientsByID[id] = client
         peripheral.delegate = client
+        onEvent?(.connectionChanged(id, .connecting))
+
+        if peripheral.state == .connected {
+            onEvent?(.log("\(peripheral.name ?? "Camera"): reusing existing BLE connection."))
+            client.didConnect()
+            return
+        }
+
         centralManager.connect(
             peripheral,
             options: connectOptions(enableAutoReconnect: enableAutoReconnect)
         )
-        onEvent?(.connectionChanged(id, .connecting))
     }
 
     func disconnect(from id: UUID) {
-        guard let peripheral = peripheralsByID[id] else { return }
+        guard let peripheral = peripheralsByID[id] else {
+            clientsByID[id]?.didDisconnect(error: nil)
+            clientsByID[id] = nil
+            onEvent?(.connectionChanged(id, .disconnected))
+            return
+        }
+
+        if peripheral.state == .disconnected {
+            clientsByID[id]?.didDisconnect(error: nil)
+            clientsByID[id] = nil
+            onEvent?(.connectionChanged(id, .disconnected))
+            return
+        }
+
         centralManager.cancelPeripheralConnection(peripheral)
     }
 }
@@ -149,6 +173,13 @@ extension BLECameraScanner: CBCentralManagerDelegate {
 
         if central.state == .poweredOn, wantsScanning {
             start()
+        } else if central.state != .poweredOn {
+            let activeClients = clientsByID
+            clientsByID.removeAll()
+            activeClients.forEach { id, client in
+                client.didDisconnect(error: nil)
+                onEvent?(.connectionChanged(id, .disconnected))
+            }
         }
     }
 
@@ -191,6 +222,8 @@ extension BLECameraScanner: CBCentralManagerDelegate {
         error: Error?
     ) {
         let message = error?.localizedDescription ?? "Connection failed."
+        clientsByID[peripheral.identifier]?.didDisconnect(error: error)
+        clientsByID[peripheral.identifier] = nil
         onEvent?(.log("\(peripheral.name ?? "Camera"): BLE connection failed: \(message)"))
         onEvent?(.connectionChanged(peripheral.identifier, .failed(message)))
     }
@@ -229,8 +262,9 @@ private extension BLECameraScanner {
         rssi: Int
     ) -> DiscoveredCameraCandidate? {
         let advertisedName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
-        let name = advertisedName ?? peripheral.name ?? "Unnamed Camera"
         let services = advertisedServiceUUIDs(from: advertisementData)
+        let hasDJIAdvertisementSignature = isDJIAdvertisement(advertisementData, advertisedServices: services)
+        let name = advertisedName ?? peripheral.name ?? (hasDJIAdvertisementSignature ? "DJI Osmo Camera" : "Unnamed Camera")
         let lowercasedName = name.lowercased()
 
         if services.contains(GoProBLEUUID.serviceControlAndQuery) || lowercasedName.contains("gopro") {
@@ -247,21 +281,23 @@ private extension BLECameraScanner {
             )
         }
 
-        if lowercasedName.contains("dji")
+        if hasDJIAdvertisementSignature
+            || lowercasedName.contains("dji")
             || lowercasedName.contains("osmo")
             || lowercasedName.contains("action")
             || lowercasedName.contains("oa6")
             || lowercasedName.contains("osmoaction")
             || lowercasedName.contains("pocket")
             || lowercasedName.contains("op3") {
+            let model = inferDJIModel(from: name)
             return DiscoveredCameraCandidate(
                 id: peripheral.identifier,
                 name: name,
                 brand: .dji,
-                model: inferDJIModel(from: name),
+                model: model,
                 rssi: rssi,
                 capabilities: [.experimental],
-                isAwake: inferDJIAwakeState(from: advertisementData, cameraName: name),
+                isAwake: inferDJIAwakeState(for: model, from: advertisementData),
                 isConnectable: inferConnectableState(from: advertisementData)
             )
         }
@@ -345,7 +381,12 @@ private extension BLECameraScanner {
             model: inferredModel == .unknown ? known.model : inferredModel,
             rssi: rssi,
             capabilities: known.capabilities,
-            isAwake: inferAwakeState(for: known.brand, cameraName: name, from: advertisementData, advertisedServices: services),
+            isAwake: inferAwakeState(
+                for: known.brand,
+                cameraModel: inferredModel == .unknown ? known.model : inferredModel,
+                from: advertisementData,
+                advertisedServices: services
+            ),
             isPairing: known.brand == .gopro ? inferGoProPairingState(from: advertisementData) : nil,
             isConnectable: inferConnectableState(from: advertisementData)
         )
@@ -505,7 +546,7 @@ private extension BLECameraScanner {
 
     func inferAwakeState(
         for brand: CameraBrand,
-        cameraName: String,
+        cameraModel: CameraModel,
         from advertisementData: [String: Any],
         advertisedServices: [CBUUID]
     ) -> Bool? {
@@ -513,24 +554,26 @@ private extension BLECameraScanner {
         case .gopro:
             inferGoProAwakeState(from: advertisementData, advertisedServices: advertisedServices)
         case .dji:
-            inferDJIAwakeState(from: advertisementData, cameraName: cameraName)
+            inferDJIAwakeState(for: cameraModel, from: advertisementData)
         case .unknown:
             nil
         }
     }
 
-    func inferDJIAwakeState(from advertisementData: [String: Any], cameraName: String) -> Bool? {
-        guard cameraName.lowercased().contains("nano") else { return nil }
-        guard let manufacturerData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
-              manufacturerData.count >= 2 else {
+    func inferDJIAwakeState(
+        for model: CameraModel,
+        from advertisementData: [String: Any]
+    ) -> Bool? {
+        guard model == .djiOsmoNano,
+              let manufacturerData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
+              manufacturerData.count >= 12,
+              manufacturerData[manufacturerData.startIndex] == 0xAA,
+              manufacturerData[manufacturerData.index(manufacturerData.startIndex, offsetBy: 1)] == 0x08,
+              manufacturerData[manufacturerData.index(manufacturerData.startIndex, offsetBy: 2)] == 0x19 else {
             return nil
         }
 
-        let companyID = UInt16(manufacturerData[manufacturerData.startIndex])
-            | (UInt16(manufacturerData[manufacturerData.index(manufacturerData.startIndex, offsetBy: 1)]) << 8)
-        guard companyID == 0x08AA, let stateByte = manufacturerData.last else { return nil }
-
-        switch stateByte {
+        switch manufacturerData[manufacturerData.index(manufacturerData.startIndex, offsetBy: 11)] {
         case 0x02:
             return true
         case 0x03:
@@ -538,6 +581,21 @@ private extension BLECameraScanner {
         default:
             return nil
         }
+    }
+
+    func isDJIAdvertisement(_ advertisementData: [String: Any], advertisedServices: [CBUUID]) -> Bool {
+        if advertisedServices.contains(DJIRSDKBLEUUID.service) {
+            return true
+        }
+
+        guard let manufacturerData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
+              manufacturerData.count >= 5 else {
+            return false
+        }
+
+        return manufacturerData[manufacturerData.startIndex] == 0xAA
+            && manufacturerData[manufacturerData.index(manufacturerData.startIndex, offsetBy: 1)] == 0x08
+            && manufacturerData[manufacturerData.index(manufacturerData.startIndex, offsetBy: 4)] == 0xFA
     }
 
     func inferConnectableState(from advertisementData: [String: Any]) -> Bool? {

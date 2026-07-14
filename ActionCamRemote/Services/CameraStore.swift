@@ -21,12 +21,20 @@ final class CameraStore {
     @ObservationIgnored private var lastConnectionAttemptByID: [UUID: Date] = [:]
     @ObservationIgnored private let signalRefreshInterval: TimeInterval = 8
     @ObservationIgnored private let availabilityFreshnessInterval: TimeInterval = 10
+    @ObservationIgnored private let djiWakeAdvertisementGapInterval: TimeInterval = 5
     @ObservationIgnored private let autoConnectRetryCooldownInterval: TimeInterval = 12
     @ObservationIgnored private let availabilityTimeoutDelay: Duration = .seconds(10)
+    @ObservationIgnored private let action6ProtocolStalenessInterval: TimeInterval = 5
+    @ObservationIgnored private let nanoProtocolStalenessInterval: TimeInterval = 12
+    @ObservationIgnored private let nanoAwakeStabilizationInterval: TimeInterval = 1
+    @ObservationIgnored private let goProProtocolStalenessInterval: TimeInterval = 12
     @ObservationIgnored private let modeSwitchDelay: Duration = .milliseconds(1600)
     @ObservationIgnored private let defaultConnectionTimeoutDelay: Duration = .seconds(9)
+    @ObservationIgnored private let goProProtocolConnectionTimeoutDelay: Duration = .seconds(15)
+    @ObservationIgnored private let action6PassiveConnectionTimeoutDelay: Duration = .seconds(6)
+    @ObservationIgnored private let nanoPassiveConnectionTimeoutDelay: Duration = .seconds(15)
+    @ObservationIgnored private let djiProtocolConnectionTimeoutDelay: Duration = .seconds(32)
     @ObservationIgnored private let goProWakeConnectionTimeoutDelay: Duration = .seconds(30)
-    @ObservationIgnored private let action6WakeConnectionTimeoutDelay: Duration = .seconds(28)
     @ObservationIgnored private let defaultStartStateGuardInterval: TimeInterval = 5
     @ObservationIgnored private let maxManualPairConnectionFailures = 3
     @ObservationIgnored private let pocket3StartStateGuardInterval: TimeInterval = 1.5
@@ -38,21 +46,24 @@ final class CameraStore {
     @ObservationIgnored private var availabilityTimeoutTasksByCameraID: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var reconnectTasksByCameraID: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var manualPairRetryTasksByCameraID: [UUID: Task<Void, Never>] = [:]
-    @ObservationIgnored private var djiIdleDisconnectTasksByCameraID: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var connectedStalenessTasksByCameraID: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var modeSwitchAttemptsByCameraID: [UUID: Int] = [:]
     @ObservationIgnored private var pendingStartConnectionFailuresByCameraID: [UUID: Int] = [:]
     @ObservationIgnored private var manualPairConnectionFailuresByCameraID: [UUID: Int] = [:]
     @ObservationIgnored private var availabilitySuppressedUntilByCameraID: [UUID: Date] = [:]
     @ObservationIgnored private var autoConnectSuppressedUntilByCameraID: [UUID: Date] = [:]
     @ObservationIgnored private var lastWakeScanRefreshByCameraID: [UUID: Date] = [:]
-    @ObservationIgnored private var lastDJIProbeByCameraID: [UUID: Date] = [:]
+    @ObservationIgnored private var lastProtocolActivityByCameraID: [UUID: Date] = [:]
+    @ObservationIgnored private var lastDJIAdvertisementByCameraID: [UUID: Date] = [:]
     @ObservationIgnored private var awakeAdvertisementByCameraID: [UUID: Bool] = [:]
     @ObservationIgnored private var awakeAdvertisementSeenAtByCameraID: [UUID: Date] = [:]
+    @ObservationIgnored private var nanoAwakeSinceByCameraID: [UUID: Date] = [:]
     @ObservationIgnored private var ignoreStoppedUntilByCameraID: [UUID: Date] = [:]
     @ObservationIgnored private var ignoreRecordingUntilByCameraID: [UUID: Date] = [:]
     @ObservationIgnored private var pendingStartCameraIDs: Set<UUID> = []
     @ObservationIgnored private var pendingStopCameraIDs: Set<UUID> = []
     @ObservationIgnored private var pendingManualPairCameraIDs: Set<UUID> = []
+    @ObservationIgnored private var sleepingDJICameraIDs: Set<UUID> = []
     @ObservationIgnored private var isPairingModeActive = false
     @ObservationIgnored private let logger = Logger(subsystem: "com.ds.ActionCamRemote", category: "camera")
 
@@ -263,8 +274,20 @@ final class CameraStore {
             return
         }
 
+        if let deferredDJIMessage = djiConnectionDeferralMessage(for: camera) {
+            appendLog("\(camera.name): \(deferredDJIMessage)")
+            setCameraDiagnostic(deferredDJIMessage, for: camera)
+            clearPendingStartIfDJIUnavailable(for: camera)
+            updateCamera(camera.id, state: .disconnected, detail: deferredDJIMessage)
+            refreshWakeScan(for: camera)
+            return
+        }
+
         if isDemoMode {
             markCameraAsPaired(camera.id)
+            if let index = cameras.firstIndex(where: { $0.id == camera.id }) {
+                cameras[index].telemetry = Self.demoTelemetry(for: cameras[index])
+            }
             updateCamera(camera.id, state: .connected, detail: "Demo connection established.")
             return
         }
@@ -336,6 +359,11 @@ final class CameraStore {
                 onCameraStatus: { [weak self] id, update in
                     Task { @MainActor in self?.updateCameraStatus(id, update: update) }
                 },
+                onProtocolActivity: { [weak self] id in
+                    Task { @MainActor in self?.noteProtocolActivity(for: id) }
+                },
+                hasConfirmedAwakeNanoAdvertisement: camera.behavior.kind == .djiOsmoNano
+                    && freshAwakeAdvertisement(for: camera.id, now: Date()) == true,
                 onLog: { [weak self] message in
                     Task { @MainActor in self?.appendLog(message) }
                 }
@@ -348,11 +376,6 @@ final class CameraStore {
         do {
             clients[camera.id] = client
             lastConnectionAttemptByID[camera.id] = Date()
-            if camera.brand == .dji,
-               !pendingStartCameraIDs.contains(camera.id),
-               !pendingStopCameraIDs.contains(camera.id) {
-                lastDJIProbeByCameraID[camera.id] = Date()
-            }
             scheduleConnectionTimeout(for: camera.id)
             try scanner.connect(
                 to: camera.id,
@@ -379,20 +402,23 @@ final class CameraStore {
         cancelVideoModeSwitch(for: camera.id)
         cancelConnectionTimeout(for: camera.id)
         cancelAvailabilityTimeout(for: camera.id)
-        cancelDJIIdleDisconnect(for: camera.id)
+        cancelConnectedStalenessTimeout(for: camera.id)
         cancelManualPairRetry(for: camera.id)
         modeSwitchAttemptsByCameraID.removeValue(forKey: camera.id)
         pendingStartConnectionFailuresByCameraID.removeValue(forKey: camera.id)
         manualPairConnectionFailuresByCameraID.removeValue(forKey: camera.id)
         availabilitySuppressedUntilByCameraID.removeValue(forKey: camera.id)
         lastWakeScanRefreshByCameraID.removeValue(forKey: camera.id)
-        lastDJIProbeByCameraID.removeValue(forKey: camera.id)
+        lastProtocolActivityByCameraID.removeValue(forKey: camera.id)
+        lastDJIAdvertisementByCameraID.removeValue(forKey: camera.id)
         awakeAdvertisementByCameraID.removeValue(forKey: camera.id)
         awakeAdvertisementSeenAtByCameraID.removeValue(forKey: camera.id)
+        nanoAwakeSinceByCameraID.removeValue(forKey: camera.id)
         clearStateGuards(for: camera.id)
         pendingStartCameraIDs.remove(camera.id)
         pendingStopCameraIDs.remove(camera.id)
         pendingManualPairCameraIDs.remove(camera.id)
+        sleepingDJICameraIDs.remove(camera.id)
         if camera.connectionState == .connected || camera.connectionState == .connecting {
             disconnect(camera)
         }
@@ -509,13 +535,62 @@ private extension CameraStore {
         var shouldAutoConnect = false
         var shouldSort = false
         let now = Date()
+        if candidate.brand == .dji {
+            let canTreatAdvertisementAsWake = candidate.model == .djiOsmoNano
+                ? candidate.isAwake == true
+                : true
+            if canTreatAdvertisementAsWake,
+               sleepingDJICameraIDs.contains(candidate.id),
+               let previousAdvertisement = lastDJIAdvertisementByCameraID[candidate.id],
+               now.timeIntervalSince(previousAdvertisement) >= djiWakeAdvertisementGapInterval {
+                sleepingDJICameraIDs.remove(candidate.id)
+                availabilitySuppressedUntilByCameraID.removeValue(forKey: candidate.id)
+                autoConnectSuppressedUntilByCameraID.removeValue(forKey: candidate.id)
+                appendLog("\(candidate.name): fresh DJI advertisement after sleep; reconnecting is available.")
+            }
+            lastDJIAdvertisementByCameraID[candidate.id] = now
+        }
         let isConnectable = candidate.isConnectable ?? true
-        var isAvailabilitySuppressed = (availabilitySuppressedUntilByCameraID[candidate.id] ?? .distantPast) > now
+        let isConnectionFreshnessAdvertisement = candidate.brand == .dji
+            ? candidate.isConnectable == true
+            : isConnectable
+        var isAvailabilitySuppressed = sleepingDJICameraIDs.contains(candidate.id)
+            || (availabilitySuppressedUntilByCameraID[candidate.id] ?? .distantPast) > now
         let previousAwakeAdvertisement = awakeAdvertisementByCameraID[candidate.id]
+        let isNanoAdvertisement = candidate.model == .djiOsmoNano
+            || cameras.first(where: { $0.id == candidate.id })?.behavior.kind == .djiOsmoNano
         if let isAwake = candidate.isAwake {
             awakeAdvertisementByCameraID[candidate.id] = isAwake
             awakeAdvertisementSeenAtByCameraID[candidate.id] = now
-            if isAwake, isAvailabilitySuppressed {
+            if isAwake, isNanoAdvertisement {
+                if previousAwakeAdvertisement != true {
+                    nanoAwakeSinceByCameraID[candidate.id] = now
+                }
+                sleepingDJICameraIDs.remove(candidate.id)
+                availabilitySuppressedUntilByCameraID.removeValue(forKey: candidate.id)
+                autoConnectSuppressedUntilByCameraID.removeValue(forKey: candidate.id)
+                isAvailabilitySuppressed = false
+                if previousAwakeAdvertisement == false {
+                    lastConnectionAttemptByID.removeValue(forKey: candidate.id)
+                }
+            } else if !isAwake, isNanoAdvertisement {
+                nanoAwakeSinceByCameraID.removeValue(forKey: candidate.id)
+                sleepingDJICameraIDs.insert(candidate.id)
+                availabilitySuppressedUntilByCameraID[candidate.id] = now.addingTimeInterval(
+                    availabilityFreshnessInterval
+                )
+                autoConnectSuppressedUntilByCameraID[candidate.id] = now.addingTimeInterval(
+                    availabilityFreshnessInterval
+                )
+                isAvailabilitySuppressed = true
+
+                if let existingCamera = cameras.first(where: { $0.id == candidate.id }),
+                   existingCamera.connectionState == .connected
+                    || existingCamera.connectionState == .connecting
+                    || existingCamera.connectionState == .reconnecting {
+                    handleSleepingDJIProtocolStatus(for: candidate.id)
+                }
+            } else if isAwake, isAvailabilitySuppressed {
                 availabilitySuppressedUntilByCameraID.removeValue(forKey: candidate.id)
                 isAvailabilitySuppressed = false
             }
@@ -578,7 +653,7 @@ private extension CameraStore {
                     || abs(cameras[index].rssi - candidate.rssi) >= 12
                 if cameras[index].connectionState != .connected {
                     cameras[index].lastSeen = now
-                    if isConnectable {
+                    if isConnectionFreshnessAdvertisement {
                         cameras[index].lastConnectableSeen = now
                     }
                     if shouldRefreshSignal {
@@ -618,13 +693,9 @@ private extension CameraStore {
                     && cameras[index].connectionState != .connected
                     && cameras[index].connectionState != .connecting
                     && !isAvailabilitySuppressed
-                    && isConnectable
+                    && isConnectionFreshnessAdvertisement
                     && canAttemptAutoConnect(to: cameras[index], now: now)
 
-                if candidate.brand == .dji, candidate.isAwake != nil {
-                    applySleepingDJIAdvertisementIfNeeded(for: candidate.id)
-                    scheduleDJIIdleDisconnectIfNeeded(for: candidate.id)
-                }
             }
         } else {
             let capabilities = normalizedCapabilities(
@@ -652,7 +723,7 @@ private extension CameraStore {
                     isPaired: false,
                     isSelected: false,
                     lastSeen: Date(),
-                    lastConnectableSeen: isConnectable ? Date() : nil,
+                    lastConnectableSeen: isConnectionFreshnessAdvertisement ? Date() : nil,
                     isPairingAdvertisement: candidate.brand == .gopro ? candidate.isPairing : nil
                 )
             )
@@ -676,6 +747,34 @@ private extension CameraStore {
     }
 
     func canAttemptAutoConnect(to camera: DiscoveredCamera, now: Date) -> Bool {
+        if camera.brand == .dji {
+            let hasQueuedCommand = pendingStartCameraIDs.contains(camera.id)
+                || pendingStopCameraIDs.contains(camera.id)
+            guard camera.isPaired
+                || hasQueuedCommand else {
+                return false
+            }
+            if !hasQueuedCommand {
+                if camera.behavior.kind == .djiOsmoNano,
+                   !hasStableNanoAwakeAdvertisement(for: camera.id, now: now) {
+                    return false
+                }
+
+                if let lastAttempt = lastConnectionAttemptByID[camera.id],
+                   now.timeIntervalSince(lastAttempt) < autoConnectRetryCooldownInterval {
+                    return false
+                }
+
+                if let suppressedUntil = autoConnectSuppressedUntilByCameraID[camera.id] {
+                    if suppressedUntil > now {
+                        return false
+                    }
+                    autoConnectSuppressedUntilByCameraID.removeValue(forKey: camera.id)
+                }
+            }
+            return djiConnectionDeferralMessage(for: camera, now: now) == nil
+        }
+
         if pendingStartCameraIDs.contains(camera.id)
             || pendingStopCameraIDs.contains(camera.id) {
             return true
@@ -700,19 +799,36 @@ private extension CameraStore {
             return freshAwakeAdvertisement(for: camera.id, now: now) == true
         }
 
-        if camera.brand == .dji,
-           let lastConnectableSeen = camera.lastConnectableSeen,
-           now.timeIntervalSince(lastConnectableSeen) <= availabilityFreshnessInterval {
-            if let isAwake = freshAwakeAdvertisement(for: camera.id, now: now) {
-                return isAwake
-            }
-            if camera.behavior.kind == .djiOsmoNano {
-                return false
-            }
-            return true
+        return false
+    }
+
+    func djiConnectionDeferralMessage(for camera: DiscoveredCamera, now: Date = Date()) -> String? {
+        guard !isDemoMode,
+              camera.brand == .dji else {
+            return nil
         }
 
-        return false
+        if hasFreshDJIConnectableAdvertisement(for: camera, now: now) {
+            return nil
+        }
+
+        if camera.isKnownAction6 {
+            return "Waiting for a fresh Action 6 Bluetooth advertisement before connecting."
+        }
+
+        return "Waiting for a fresh DJI Bluetooth advertisement before connecting."
+    }
+
+    func djiConnectionFreshnessInterval(for camera: DiscoveredCamera) -> TimeInterval {
+        camera.isKnownAction6 ? djiWakeAdvertisementGapInterval : availabilityFreshnessInterval
+    }
+
+    func hasFreshDJIConnectableAdvertisement(for camera: DiscoveredCamera, now: Date) -> Bool {
+        guard let lastConnectableSeen = camera.lastConnectableSeen else {
+            return false
+        }
+
+        return now.timeIntervalSince(lastConnectableSeen) <= djiConnectionFreshnessInterval(for: camera)
     }
 
     func freshAwakeAdvertisement(for id: UUID, now: Date) -> Bool? {
@@ -723,6 +839,15 @@ private extension CameraStore {
         }
 
         return isAwake
+    }
+
+    func hasStableNanoAwakeAdvertisement(for id: UUID, now: Date) -> Bool {
+        guard freshAwakeAdvertisement(for: id, now: now) == true,
+              let awakeSince = nanoAwakeSinceByCameraID[id] else {
+            return false
+        }
+
+        return now.timeIntervalSince(awakeSince) >= nanoAwakeStabilizationInterval
     }
 
     func protectStartTransition(for camera: DiscoveredCamera) {
@@ -779,6 +904,25 @@ private extension CameraStore {
         updateCameraStatus(camera.id, update: pendingStartStatusUpdate(for: camera))
         refreshWakeScan(for: camera)
         ensureScanning()
+    }
+
+    func clearPendingStartIfDJIUnavailable(for camera: DiscoveredCamera) {
+        guard camera.brand == .dji,
+              pendingStartCameraIDs.remove(camera.id) != nil else {
+            return
+        }
+
+        cancelStartRecording(for: camera.id)
+        cancelWakeRetry(for: camera.id)
+        clearStateGuards(for: camera.id)
+        pendingStartConnectionFailuresByCameraID.removeValue(forKey: camera.id)
+        reconnectTasksByCameraID[camera.id]?.cancel()
+        reconnectTasksByCameraID[camera.id] = nil
+
+        if let index = cameras.firstIndex(where: { $0.id == camera.id }) {
+            cameras[index].recordingState = cameras[index].supportsBatchRecord ? .unknown : .unavailable
+            cameras[index].currentMode = nil
+        }
     }
 
     func ensureScanning() {
@@ -844,6 +988,17 @@ private extension CameraStore {
                         return
                     }
                 } else {
+                    if latest.behavior.kind == .djiOsmoNano {
+                        self.sleepingDJICameraIDs.insert(id)
+                        self.lastDJIAdvertisementByCameraID[id] = Date()
+                        self.availabilitySuppressedUntilByCameraID[id] = Date().addingTimeInterval(
+                            self.availabilityFreshnessInterval
+                        )
+                        self.autoConnectSuppressedUntilByCameraID[id] = Date().addingTimeInterval(
+                            self.autoConnectRetryCooldownInterval
+                        )
+                    }
+
                     if self.shouldRetryManualPairConnection(for: latest) {
                         let failures = (self.manualPairConnectionFailuresByCameraID[id] ?? 0) + 1
                         self.manualPairConnectionFailuresByCameraID[id] = failures
@@ -945,17 +1100,34 @@ private extension CameraStore {
     }
 
     func connectionTimeoutDelay(for id: UUID) -> Duration {
-        guard let camera = cameras.first(where: { $0.id == id }),
-              pendingStartCameraIDs.contains(id) else {
+        guard let camera = cameras.first(where: { $0.id == id }) else {
             return defaultConnectionTimeoutDelay
         }
 
-        if camera.brand == .gopro {
+        if camera.isKnownAction6,
+           !pendingStartCameraIDs.contains(id),
+           !pendingStopCameraIDs.contains(id),
+           !pendingManualPairCameraIDs.contains(id) {
+            return action6PassiveConnectionTimeoutDelay
+        }
+
+        if camera.behavior.kind == .djiOsmoNano,
+           !pendingStartCameraIDs.contains(id),
+           !pendingStopCameraIDs.contains(id),
+           !pendingManualPairCameraIDs.contains(id) {
+            return nanoPassiveConnectionTimeoutDelay
+        }
+
+        if camera.brand == .dji {
+            return djiProtocolConnectionTimeoutDelay
+        }
+
+        if pendingStartCameraIDs.contains(id), camera.brand == .gopro {
             return goProWakeConnectionTimeoutDelay
         }
 
-        if camera.isKnownAction6 {
-            return action6WakeConnectionTimeoutDelay
+        if camera.brand == .gopro {
+            return goProProtocolConnectionTimeoutDelay
         }
 
         return defaultConnectionTimeoutDelay
@@ -1034,82 +1206,122 @@ private extension CameraStore {
         availabilityTimeoutTasksByCameraID[id] = nil
     }
 
-    func scheduleDJIIdleDisconnectIfNeeded(for id: UUID) {
-        guard let camera = cameras.first(where: { $0.id == id }),
-              camera.brand == .dji,
-              camera.connectionState == .connected,
-              !shouldHoldDJIConnection(camera) else {
-            cancelDJIIdleDisconnect(for: id)
+    func noteProtocolActivity(for id: UUID, at timestamp: Date = Date()) {
+        guard !isDemoMode,
+              let index = cameras.firstIndex(where: { $0.id == id }),
+              protocolStalenessInterval(for: cameras[index]) != nil else {
             return
         }
 
-        djiIdleDisconnectTasksByCameraID[id]?.cancel()
-        djiIdleDisconnectTasksByCameraID[id] = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(1.5))
+        cameras[index].lastSeen = timestamp
+        lastProtocolActivityByCameraID[id] = timestamp
+        scheduleConnectedStalenessTimeoutIfNeeded(for: id)
+    }
+
+    func protocolStalenessInterval(for camera: DiscoveredCamera) -> TimeInterval? {
+        if camera.behavior.kind == .djiOsmoNano {
+            return nanoProtocolStalenessInterval
+        }
+
+        if camera.isKnownAction6 {
+            return action6ProtocolStalenessInterval
+        }
+
+        if camera.brand == .gopro {
+            return goProProtocolStalenessInterval
+        }
+
+        return nil
+    }
+
+    func scheduleConnectedStalenessTimeoutIfNeeded(for id: UUID) {
+        guard let camera = cameras.first(where: { $0.id == id }),
+              let delay = protocolStalenessInterval(for: camera),
+              camera.connectionState == .connected else {
+            cancelConnectedStalenessTimeout(for: id)
+            return
+        }
+
+        connectedStalenessTasksByCameraID[id]?.cancel()
+        connectedStalenessTasksByCameraID[id] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(delay))
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard let self,
                       let latest = self.cameras.first(where: { $0.id == id }) else { return }
-                guard latest.brand == .dji,
-                      latest.connectionState == .connected,
-                      !self.shouldHoldDJIConnection(latest) else {
-                    self.cancelDJIIdleDisconnect(for: id)
+                guard let currentDelay = self.protocolStalenessInterval(for: latest),
+                      latest.connectionState == .connected else {
+                    self.cancelConnectedStalenessTimeout(for: id)
                     return
                 }
 
+                if self.shouldDeferProtocolStalenessDisconnect(for: latest) {
+                    self.scheduleConnectedStalenessTimeoutIfNeeded(for: id)
+                    return
+                }
+
+                let lastActivity = self.lastProtocolActivityByCameraID[id] ?? .distantPast
+                guard Date().timeIntervalSince(lastActivity) >= currentDelay else {
+                    self.scheduleConnectedStalenessTimeoutIfNeeded(for: id)
+                    return
+                }
+
+                self.appendLog("\(latest.name): no recent protocol status; showing as Not Connected.")
                 if let index = self.cameras.firstIndex(where: { $0.id == id }) {
-                    self.cameras[index].lastConnectableSeen = Date()
+                    self.cameras[index].lastConnectableSeen = nil
                 }
                 self.scanner.disconnect(from: id)
-                self.djiIdleDisconnectTasksByCameraID[id] = nil
+                self.updateCamera(id, state: .disconnected, detail: "No recent camera status.")
+                self.connectedStalenessTasksByCameraID[id] = nil
             }
         }
     }
 
-    func applySleepingDJIAdvertisementIfNeeded(for id: UUID) {
-        guard let index = cameras.firstIndex(where: { $0.id == id }) else { return }
-        guard cameras[index].brand == .dji,
-              cameras[index].connectionState == .connected,
-              shouldShowAsAvailableForSleepingDJI(cameras[index]) else {
-            return
-        }
-
-        appendLog("\(cameras[index].name): asleep Bluetooth advertisement seen; showing as Not Connected.")
-        cameras[index].lastConnectableSeen = nil
-        scanner.disconnect(from: id)
-        updateCamera(id, state: .disconnected, detail: nil)
-    }
-
-    func cancelDJIIdleDisconnect(for id: UUID) {
-        djiIdleDisconnectTasksByCameraID[id]?.cancel()
-        djiIdleDisconnectTasksByCameraID[id] = nil
-    }
-
-    func shouldHoldDJIConnection(_ camera: DiscoveredCamera) -> Bool {
-        if awakeAdvertisementByCameraID[camera.id] != false {
-            return true
-        }
-
-        if camera.behavior.kind == .djiOsmoNano {
-            return pendingStartCameraIDs.contains(camera.id)
-                || pendingStopCameraIDs.contains(camera.id)
-                || camera.recordingState == .recording
-                || camera.recordingState == .starting
-        }
+    func shouldDeferProtocolStalenessDisconnect(for camera: DiscoveredCamera) -> Bool {
+        guard camera.brand == .dji else { return false }
 
         return pendingStartCameraIDs.contains(camera.id)
             || pendingStopCameraIDs.contains(camera.id)
-            || camera.recordingState == .recording
+            || modeSwitchAttemptsByCameraID[camera.id] != nil
             || camera.recordingState == .starting
     }
 
-    func shouldShowAsAvailableForSleepingDJI(_ camera: DiscoveredCamera) -> Bool {
-        guard camera.behavior.kind == .djiOsmoNano else { return false }
-        guard awakeAdvertisementByCameraID[camera.id] == false else { return false }
-        return !pendingStartCameraIDs.contains(camera.id)
-            && !pendingStopCameraIDs.contains(camera.id)
-            && camera.recordingState != .recording
-            && camera.recordingState != .starting
+    func cancelConnectedStalenessTimeout(for id: UUID) {
+        connectedStalenessTasksByCameraID[id]?.cancel()
+        connectedStalenessTasksByCameraID[id] = nil
+    }
+
+    func handleSleepingDJIProtocolStatus(for id: UUID) {
+        guard let camera = cameras.first(where: { $0.id == id }),
+              camera.brand == .dji else {
+            return
+        }
+
+        appendLog("\(camera.name): DJI status reports sleep/off; closing the control session.")
+        clearPendingStartIfDJIUnavailable(for: camera)
+        pendingStopCameraIDs.remove(id)
+        cancelStartRecording(for: id)
+        cancelVideoModeSwitch(for: id)
+        cancelWakeRetry(for: id)
+        reconnectTasksByCameraID[id]?.cancel()
+        reconnectTasksByCameraID[id] = nil
+        modeSwitchAttemptsByCameraID.removeValue(forKey: id)
+        clearStateGuards(for: id)
+        cancelConnectedStalenessTimeout(for: id)
+        lastProtocolActivityByCameraID.removeValue(forKey: id)
+        sleepingDJICameraIDs.insert(id)
+        nanoAwakeSinceByCameraID.removeValue(forKey: id)
+        lastDJIAdvertisementByCameraID[id] = Date()
+        availabilitySuppressedUntilByCameraID[id] = Date().addingTimeInterval(availabilityFreshnessInterval)
+        autoConnectSuppressedUntilByCameraID[id] = Date().addingTimeInterval(availabilityFreshnessInterval)
+        if let index = cameras.firstIndex(where: { $0.id == id }) {
+            cameras[index].lastConnectableSeen = nil
+            cameras[index].recordingState = cameras[index].supportsBatchRecord ? .unknown : .unavailable
+            cameras[index].currentMode = nil
+        }
+
+        scanner.disconnect(from: id)
+        updateCamera(id, state: .disconnected, detail: "Camera is asleep or off.")
     }
 
     func scheduleReconnect(for id: UUID, attemptsRemaining: Int) {
@@ -1225,7 +1437,7 @@ private extension CameraStore {
 
     func replayPendingStopIfReady(for id: UUID, detail: String?) {
         guard pendingStopCameraIDs.contains(id) else { return }
-        guard detail?.contains("DJI record characteristics ready") == true else { return }
+        guard isDJIControlReady(detail: detail) else { return }
         guard let latest = cameras.first(where: { $0.id == id }), latest.connectionState == .connected else { return }
 
         appendLog("\(latest.name): sending queued stop after reconnect.")
@@ -1239,9 +1451,9 @@ private extension CameraStore {
         let isReady: Bool
         switch latest.brand {
         case .gopro:
-            isReady = detail?.contains("GoPro command characteristic is ready") == true
+            isReady = detail?.contains("Open GoPro protocol ready") == true
         case .dji:
-            isReady = detail?.contains("DJI record characteristics ready") == true
+            isReady = isDJIControlReady(detail: detail)
         case .unknown:
             isReady = false
         }
@@ -1249,6 +1461,12 @@ private extension CameraStore {
 
         appendLog("\(latest.name): sending queued start after reconnect.")
         scheduleRecordAfterModeSwitch(for: [latest.id])
+    }
+
+    func isDJIControlReady(detail: String?) -> Bool {
+        guard let detail else { return false }
+        return detail.contains("DJI record characteristics ready")
+            || detail.contains("DJI R SDK protocol ready")
     }
 
     func startRecordingSequence(for cameras: [DiscoveredCamera]) {
@@ -1271,7 +1489,7 @@ private extension CameraStore {
             if camera.connectionState == .connected {
                 pendingStartCameraIDs.insert(camera.id)
                 updateCameraStatus(camera.id, update: pendingStartStatusUpdate(for: camera))
-                if camera.brand != .dji, camera.currentMode != .video {
+                if camera.currentMode != .video, camera.canSwitchToVideoMode {
                     sendVideoModeCommandAttempt(for: camera, attemptsAlreadySent: 0)
                     modeSwitchAttemptsByCameraID[camera.id] = 1
                 }
@@ -1311,16 +1529,7 @@ private extension CameraStore {
                         return
                     }
 
-                    if latest.brand == .dji {
-                        self.updateCameraStatus(id, update: CameraStatusUpdate(shouldClearCurrentMode: true))
-                        self.send(.startRecording, to: [latest])
-                        self.scheduleWakeRetryIfNeeded(for: [latest])
-                        self.modeSwitchAttemptsByCameraID.removeValue(forKey: id)
-                        self.startRecordingTasksByCameraID[id] = nil
-                        return
-                    }
-
-                    if latest.currentMode != .video {
+                    if latest.currentMode != .video, latest.canSwitchToVideoMode {
                         let attempts = self.modeSwitchAttemptsByCameraID[id] ?? 0
                         if attempts >= 6 {
                             self.appendLog("\(latest.name): recording skipped because the camera did not confirm Video mode.")
@@ -1336,6 +1545,25 @@ private extension CameraStore {
                         self.sendVideoModeCommandAttempt(for: latest, attemptsAlreadySent: attempts)
                         self.modeSwitchAttemptsByCameraID[id] = attempts + 1
                         self.scheduleRecordAfterModeSwitch(for: [id])
+                        return
+                    }
+
+                    guard latest.canStartRecordingInCurrentMode else {
+                        self.appendLog("\(latest.name): recording skipped because the camera is not in Video mode.")
+                        self.setCameraDiagnostic("Switch this camera to Video mode, then try recording again.", for: latest)
+                        self.pendingStartCameraIDs.remove(id)
+                        self.modeSwitchAttemptsByCameraID.removeValue(forKey: id)
+                        self.updateCameraStatus(id, update: CameraStatusUpdate(recordingState: .stopped))
+                        self.startRecordingTasksByCameraID[id] = nil
+                        return
+                    }
+
+                    if latest.brand == .dji {
+                        self.updateCameraStatus(id, update: CameraStatusUpdate(shouldClearCurrentMode: true))
+                        self.send(.startRecording, to: [latest])
+                        self.scheduleWakeRetryIfNeeded(for: [latest])
+                        self.modeSwitchAttemptsByCameraID.removeValue(forKey: id)
+                        self.startRecordingTasksByCameraID[id] = nil
                         return
                     }
 
@@ -1576,7 +1804,7 @@ private extension CameraStore {
                command != .stopRecording,
                command != .setMode(.video) {
                 status = .unsupported
-                message = "DJI settings and mode control still require hardware command mapping."
+                message = "DJI settings beyond Record, Stop, and Video still require hardware command mapping."
             } else {
                 status = .sent
                 message = "Simulated \(command.label.lowercased()) in demo mode."
@@ -1642,11 +1870,25 @@ private extension CameraStore {
 
     func updateCameraStatus(_ id: UUID, update: CameraStatusUpdate) {
         guard let index = cameras.firstIndex(where: { $0.id == id }) else { return }
+
+        if cameras[index].brand == .dji, update.powerState == .sleeping {
+            handleSleepingDJIProtocolStatus(for: id)
+            return
+        }
+
+        if cameras[index].brand == .dji, update.powerState == .awake {
+            sleepingDJICameraIDs.remove(id)
+            availabilitySuppressedUntilByCameraID.removeValue(forKey: id)
+            autoConnectSuppressedUntilByCameraID.removeValue(forKey: id)
+        }
+
         var shouldSort = false
         var shouldPersist = false
         let previousRecordingState = cameras[index].recordingState
         var recordingStateToApply = update.recordingState
         var recordingDecision: String?
+
+        noteProtocolActivity(for: id)
 
         if let recordingState = recordingStateToApply {
             let now = Date()
@@ -1733,9 +1975,6 @@ private extension CameraStore {
             persistPairedCameras()
         }
 
-        if cameras[index].brand == .dji {
-            scheduleDJIIdleDisconnectIfNeeded(for: id)
-        }
     }
 
     func updateCamera(_ id: UUID, state: CameraConnectionState, detail: String?) {
@@ -1787,9 +2026,9 @@ private extension CameraStore {
             persistPairedCameras()
             replayPendingStartIfReady(for: id, detail: detail)
             replayPendingStopIfReady(for: id, detail: detail)
-            scheduleDJIIdleDisconnectIfNeeded(for: id)
+            noteProtocolActivity(for: id)
         case .reconnecting:
-            cancelDJIIdleDisconnect(for: id)
+            cancelConnectedStalenessTimeout(for: id)
             cancelConnectionTimeout(for: id)
             cancelAvailabilityTimeout(for: id)
             if !shouldKeepWakeRetryDuringConnectionChurn(
@@ -1832,7 +2071,8 @@ private extension CameraStore {
                 cameras[index].currentMode = nil
             }
         case .disconnected, .failed:
-            cancelDJIIdleDisconnect(for: id)
+            cancelConnectedStalenessTimeout(for: id)
+            lastProtocolActivityByCameraID.removeValue(forKey: id)
             cancelConnectionTimeout(for: id)
             cancelAvailabilityTimeout(for: id)
             if !shouldKeepWakeRetryDuringConnectionChurn(
@@ -1870,17 +2110,21 @@ private extension CameraStore {
                 cameras[index].currentMode = nil
             }
         case .unsupported:
-            cancelDJIIdleDisconnect(for: id)
+            cancelConnectedStalenessTimeout(for: id)
+            lastProtocolActivityByCameraID.removeValue(forKey: id)
             cancelConnectionTimeout(for: id)
             cancelAvailabilityTimeout(for: id)
             cancelWakeRetry(for: id)
             cameras[index].recordingState = cameras[index].supportsBatchRecord ? .unknown : .unavailable
             cameras[index].currentMode = nil
         case .connecting:
-            cancelDJIIdleDisconnect(for: id)
+            cancelConnectedStalenessTimeout(for: id)
             cancelAvailabilityTimeout(for: id)
+            if previousState != .connecting, cameras[index].behavior.kind == .djiOsmoNano {
+                cameras[index].telemetry = nil
+            }
         case .discovered:
-            cancelDJIIdleDisconnect(for: id)
+            cancelConnectedStalenessTimeout(for: id)
             cancelConnectionTimeout(for: id)
             cancelWakeRetry(for: id)
             if cameras[index].supportsBatchRecord, !pendingStartCameraIDs.contains(id) {
@@ -1989,6 +2233,7 @@ private extension CameraStore {
                 camera.isSelected = false
                 camera.lastSeen = .distantPast
                 camera.lastConnectableSeen = nil
+                camera.telemetry = nil
                 return camera
             }
             appendLog("Loaded \(cameras.count) remembered cameras.")
@@ -2006,6 +2251,7 @@ private extension CameraStore {
             copy.currentMode = nil
             copy.isSelected = false
             copy.lastConnectableSeen = nil
+            copy.telemetry = nil
             return copy
         }
 

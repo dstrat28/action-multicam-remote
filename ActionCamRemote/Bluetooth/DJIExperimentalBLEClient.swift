@@ -2,28 +2,56 @@ import CoreBluetooth
 import Foundation
 
 final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
+    private struct PendingRSDKWrite {
+        var packet: Data
+        var label: String
+        var shouldLog: Bool
+    }
+
     let cameraID: UUID
     let cameraName: String
     let cameraModel: CameraModel
 
     private weak var peripheral: CBPeripheral?
     private var writeCandidates: [DJIWritableCharacteristic] = []
+    private var rSDKWriteCharacteristic: CBCharacteristic?
+    private var rSDKNotifyCharacteristic: CBCharacteristic?
+    private var rSDKReceiveBuffer = Data()
+    private var rSDKSequenceNumber: UInt16 = UInt16.random(in: .min ... .max)
+    private var hasSentRSDKConnectionRequest = false
+    private var hasCompletedRSDKHandshake = false
+    private var hasCompletedLegacyDumlHandshake = false
+    private var hasReportedLegacyDumlReady = false
+    private var hasReportedRSDKReady = false
+    private var hasSentRSDKStatusSubscription = false
+    private var rSDKHandshakePairingRetryCount = 0
+    private var rSDKHandshakePairingRetryTimer: Timer?
+    private var pendingRSDKWrites: [PendingRSDKWrite] = []
+    private var silentRSDKStatusSubscriptionSequences: Set<UInt16> = []
     private var dumlRouting: DJIDUMLRouting
     private var sequenceNumber: UInt16 = UInt16.random(in: .min ... .max)
     private var pendingRecordActionsBySequence: [UInt16: RecordAction] = [:]
     private var pendingModeUpdatesBySequence: [UInt16: CaptureMode] = [:]
     private var pendingStatusProbeLabelsBySequence: [UInt16: String] = [:]
+    private var pendingRSDKRecordActionsBySequence: [UInt16: RecordAction] = [:]
+    private var pendingRSDKModeUpdatesBySequence: [UInt16: CaptureMode] = [:]
     private var hasSentInitialStatusProbe = false
     private var statusProbeTimer: Timer?
     private var lastCameraStateSummaryLabel: String?
     private var lastCameraStateSummaryLogDate = Date.distantPast
+    private var lastRSDKStatusSummaryLabel: String?
+    private var lastRSDKStatusSummaryLogDate = Date.distantPast
+    private var lastRSDKBufferedFrameLogLabel: String?
+    private let maxRSDKHandshakePairingRetries = 15
     private var lastVideoRecordTime: UInt32?
     private var lastAction6StatusDiagnosticLabel: String?
     private var lastUnhandledDumlPacketLabel: String?
     private var compactStoppedProtectionUntil = Date.distantPast
     private let onStatus: (UUID, CameraConnectionState, String?) -> Void
     private let onCameraStatus: (UUID, CameraStatusUpdate) -> Void
+    private let onProtocolActivity: (UUID) -> Void
     private let onLog: (String) -> Void
+    private let hasConfirmedAwakeNanoAdvertisement: Bool
 
     init(
         cameraID: UUID,
@@ -32,6 +60,8 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
         peripheral: CBPeripheral,
         onStatus: @escaping (UUID, CameraConnectionState, String?) -> Void,
         onCameraStatus: @escaping (UUID, CameraStatusUpdate) -> Void,
+        onProtocolActivity: @escaping (UUID) -> Void,
+        hasConfirmedAwakeNanoAdvertisement: Bool,
         onLog: @escaping (String) -> Void
     ) {
         self.cameraID = cameraID
@@ -41,6 +71,8 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
         self.dumlRouting = Self.defaultDumlRouting(cameraModel: cameraModel, cameraName: cameraName)
         self.onStatus = onStatus
         self.onCameraStatus = onCameraStatus
+        self.onProtocolActivity = onProtocolActivity
+        self.hasConfirmedAwakeNanoAdvertisement = hasConfirmedAwakeNanoAdvertisement
         self.onLog = onLog
         super.init()
     }
@@ -48,19 +80,42 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
     func didConnect() {
         peripheral?.delegate = self
         peripheral?.discoverServices(nil)
-        onLog("\(cameraName): DJI DUML route \(dumlRouting.debugLabel).")
+        if cameraBehavior.kind == .djiOsmoNano {
+            onLog("\(cameraName): DJI Nano BLE connected; discovering legacy DUML characteristics.")
+        } else {
+            onLog("\(cameraName): DJI BLE connected; discovering R SDK and legacy DUML characteristics.")
+        }
         onStatus(cameraID, .connecting, "BLE link established; discovering DJI control characteristics.")
     }
 
     func didDisconnect(error: Error?) {
         writeCandidates.removeAll()
+        rSDKWriteCharacteristic = nil
+        rSDKNotifyCharacteristic = nil
+        rSDKReceiveBuffer.removeAll(keepingCapacity: true)
+        hasSentRSDKConnectionRequest = false
+        hasCompletedRSDKHandshake = false
+        hasCompletedLegacyDumlHandshake = false
+        hasReportedLegacyDumlReady = false
+        hasReportedRSDKReady = false
+        hasSentRSDKStatusSubscription = false
+        rSDKHandshakePairingRetryCount = 0
+        rSDKHandshakePairingRetryTimer?.invalidate()
+        rSDKHandshakePairingRetryTimer = nil
+        pendingRSDKWrites.removeAll()
+        silentRSDKStatusSubscriptionSequences.removeAll()
         pendingRecordActionsBySequence.removeAll()
         pendingModeUpdatesBySequence.removeAll()
         pendingStatusProbeLabelsBySequence.removeAll()
+        pendingRSDKRecordActionsBySequence.removeAll()
+        pendingRSDKModeUpdatesBySequence.removeAll()
         hasSentInitialStatusProbe = false
         statusProbeTimer?.invalidate()
         statusProbeTimer = nil
         lastVideoRecordTime = nil
+        lastRSDKStatusSummaryLabel = nil
+        lastRSDKStatusSummaryLogDate = .distantPast
+        lastRSDKBufferedFrameLogLabel = nil
         lastAction6StatusDiagnosticLabel = nil
         compactStoppedProtectionUntil = .distantPast
     }
@@ -72,8 +127,14 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
 
         switch command {
         case .startRecording:
+            if canUseRSDKControl {
+                return sendRSDKRecordCommand(.start, to: peripheral, label: command)
+            }
             return sendRecordCommand(.start, to: peripheral, label: command)
         case .stopRecording:
+            if canUseRSDKControl {
+                return sendRSDKRecordCommand(.stop, to: peripheral, label: command)
+            }
             return sendRecordCommand(.stop, to: peripheral, label: command)
         case .toggleRecording:
             return result(for: command, status: .unsupported, message: "DJI toggle record is not safe without camera state confirmation.")
@@ -81,10 +142,19 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
             guard mode == .video else {
                 return result(for: command, status: .unsupported, message: "Only DJI Video mode is mapped.")
             }
+            if canUseRSDKControl {
+                return sendRSDKVideoModeCommand(to: peripheral, label: command)
+            }
             return sendVideoModeCommand(to: peripheral, label: command)
         case .keepAlive:
-            sendStatusProbe(to: peripheral, includeExtendedProbes: true, shouldLog: true)
-            return result(for: command, status: .sent, message: "Sent DJI diagnostic status probe.")
+            if canUseRSDKControl {
+                sendRSDKStatusSubscription(to: peripheral, shouldLog: true)
+                sendRSDKVersionQuery(to: peripheral)
+                return result(for: command, status: .sent, message: "Refreshed DJI R SDK status subscription.")
+            } else {
+                sendStatusProbe(to: peripheral, includeExtendedProbes: true, shouldLog: true)
+                return result(for: command, status: .sent, message: "Sent DJI diagnostic status probe.")
+            }
         case .cycleMode, .applySetting:
             return result(
                 for: command,
@@ -123,6 +193,7 @@ extension DJIExperimentalBLEClient {
         service.characteristics?.forEach { characteristic in
             let properties = characteristic.properties.debugLabels.joined(separator: ", ")
             onLog("\(cameraName): \(service.uuid.uuidString) / \(characteristic.uuid.uuidString) [\(properties)]")
+            trackRSDKCharacteristic(characteristic, in: service, peripheral: peripheral)
 
             if characteristic.properties.contains(.read) {
                 peripheral.readValue(for: characteristic)
@@ -130,31 +201,33 @@ extension DJIExperimentalBLEClient {
 
             if characteristic.properties.contains(.write) || characteristic.properties.contains(.writeWithoutResponse) {
                 let candidate = DJIWritableCharacteristic(serviceUUID: service.uuid, characteristic: characteristic)
-                if !writeCandidates.contains(candidate) {
+                if shouldTrackLegacyWriteCandidate(candidate), !writeCandidates.contains(candidate) {
                     writeCandidates.append(candidate)
+                    writeCandidates.sort()
+                    onLog("\(cameraName): DJI legacy write candidate \(candidate.debugLabel)")
                 }
-                writeCandidates.sort()
-                onLog("\(cameraName): DJI write candidate \(candidate.debugLabel)")
             }
 
             if characteristic.properties.contains(.notify) || characteristic.properties.contains(.indicate) {
                 peripheral.setNotifyValue(true, for: characteristic)
             }
-
-            if shouldDiscoverDescriptors(for: characteristic, in: service) {
-                peripheral.discoverDescriptors(for: characteristic)
-            }
         }
 
-        if !writeCandidates.isEmpty {
-            if shouldUsePocket3RecordFallbacks {
-                onLog("\(cameraName): Pocket 3 write candidates: \(writeTargetSummary).")
-                onLog("\(cameraName): Pocket 3 selected write targets: \(selectedWriteTargetSummary).")
+        if cameraBehavior.kind == .djiOsmoNano, !writeTargets.isEmpty {
+            onStatus(cameraID, .connecting, "DJI Nano control ready; waiting for camera status.")
+            if hasConfirmedAwakeNanoAdvertisement {
+                onLog("\(cameraName): awake Nano advertisement confirmed; requesting legacy camera status.")
+                scheduleInitialStatusProbe(to: peripheral)
             }
+        } else if rSDKWriteCharacteristic != nil {
+            onStatus(cameraID, .connecting, "DJI R SDK characteristics ready; waiting for protocol handshake.")
+        } else if !writeCandidates.isEmpty {
             onStatus(cameraID, .connected, "DJI record characteristics ready: \(writeTargets.count)")
             scheduleInitialStatusProbe(to: peripheral)
             startStatusPolling(to: peripheral)
         }
+
+        bootstrapRSDKIfReady(to: peripheral)
     }
 
     func peripheral(
@@ -168,54 +241,27 @@ extension DJIExperimentalBLEClient {
         }
 
         guard let value = characteristic.value else { return }
-        updateDumlRouting(from: value)
-        applyDumlRecordingHint(from: value)
-        logDumlAck(from: value)
-        logDumlStatusPush(from: value)
-        logUnhandledDumlPacket(from: value)
-        if shouldLogRawNotification(value) {
+        if handleRSDKNotification(value, from: characteristic) {
+            return
+        }
+
+        let dumlFrames = dumlFrames(in: value)
+        if !dumlFrames.isEmpty {
+            completeLegacyDumlHandshakeIfNeeded(to: peripheral)
+        }
+        for frame in dumlFrames {
+            onProtocolActivity(cameraID)
+            updateDumlRouting(from: frame)
+            reportLegacyDumlReadyIfNeeded(from: frame)
+            applyDumlRecordingHint(from: frame)
+            logDumlAck(from: frame)
+            logDumlStatusPush(from: frame)
+            logUnhandledDumlPacket(from: frame)
+        }
+
+        if dumlFrames.isEmpty || dumlFrames.contains(where: shouldLogRawNotification) {
             onLog("\(cameraName): \(characteristic.uuid.uuidString) \(value.hexString)")
         }
-    }
-
-    func peripheral(
-        _ peripheral: CBPeripheral,
-        didDiscoverDescriptorsFor characteristic: CBCharacteristic,
-        error: Error?
-    ) {
-        let characteristicLabel = characteristic.debugLabel
-
-        if let error {
-            onLog("\(cameraName): descriptor discovery for \(characteristicLabel) failed: \(error.localizedDescription)")
-            return
-        }
-
-        let descriptors = characteristic.descriptors ?? []
-        if descriptors.isEmpty {
-            onLog("\(cameraName): descriptors for \(characteristicLabel): none.")
-            return
-        }
-
-        let descriptorIDs = descriptors.map { $0.uuid.uuidString }.joined(separator: ", ")
-        onLog("\(cameraName): descriptors for \(characteristicLabel): \(descriptorIDs).")
-        descriptors.forEach { peripheral.readValue(for: $0) }
-    }
-
-    func peripheral(
-        _ peripheral: CBPeripheral,
-        didUpdateValueFor descriptor: CBDescriptor,
-        error: Error?
-    ) {
-        let characteristicLabel = descriptor.characteristic?.debugLabel ?? "unknown characteristic"
-
-        if let error {
-            onLog("\(cameraName): descriptor \(characteristicLabel) / \(descriptor.uuid.uuidString) read failed: \(error.localizedDescription)")
-            return
-        }
-
-        onLog(
-            "\(cameraName): descriptor \(characteristicLabel) / \(descriptor.uuid.uuidString) = \(descriptorValueLabel(descriptor.value))."
-        )
     }
 
     func peripheral(
@@ -226,6 +272,33 @@ extension DJIExperimentalBLEClient {
         if let error {
             onLog("\(cameraName): DJI write to \(characteristic.uuid.uuidString) failed: \(error.localizedDescription)")
         }
+    }
+
+    func peripheral(
+        _ peripheral: CBPeripheral,
+        didUpdateNotificationStateFor characteristic: CBCharacteristic,
+        error: Error?
+    ) {
+        guard characteristic.uuid == DJIRSDKBLEUUID.notifyCharacteristic else { return }
+
+        if let error {
+            let protocolName = cameraBehavior.kind == .djiOsmoNano ? "DJI Nano" : "DJI R SDK"
+            onLog("\(cameraName): \(protocolName) notify enable failed: \(error.localizedDescription)")
+            return
+        }
+
+        if characteristic.isNotifying {
+            if cameraBehavior.kind == .djiOsmoNano {
+                onLog("\(cameraName): DJI Nano notifications enabled on \(characteristic.debugLabel).")
+            } else {
+                onLog("\(cameraName): DJI R SDK notifications enabled on \(characteristic.debugLabel).")
+                bootstrapRSDKIfReady(to: peripheral)
+            }
+        }
+    }
+
+    func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
+        flushPendingRSDKWrites(to: peripheral)
     }
 }
 
@@ -238,23 +311,465 @@ private extension DJIExperimentalBLEClient {
         var isStopping: Bool { self == .stop }
     }
 
-    var writeTargets: [DJIWritableCharacteristic] {
-        if shouldUsePocket3RecordFallbacks {
-            let pocketTargets = writeCandidates.filter(\.isPocket3CommandTarget)
-            if !pocketTargets.isEmpty {
-                return Array(pocketTargets.prefix(4))
+    var canUseRSDKControl: Bool {
+        hasCompletedRSDKHandshake && rSDKWriteCharacteristic != nil
+    }
+
+    func completeLegacyDumlHandshakeIfNeeded(to peripheral: CBPeripheral) {
+        guard cameraBehavior.kind == .djiOsmoNano,
+              !hasCompletedRSDKHandshake,
+              !hasCompletedLegacyDumlHandshake,
+              !writeTargets.isEmpty else {
+            return
+        }
+
+        hasCompletedLegacyDumlHandshake = true
+        onLog("\(cameraName): valid DJI DUML activity received; legacy Nano protocol is ready.")
+        onStatus(cameraID, .connecting, "DJI Nano protocol detected; waiting for camera status.")
+        scheduleInitialStatusProbe(to: peripheral)
+        startStatusPolling(to: peripheral)
+    }
+
+    func reportLegacyDumlReadyIfNeeded(from value: Data) {
+        guard cameraBehavior.kind == .djiOsmoNano,
+              hasCompletedLegacyDumlHandshake,
+              !hasCompletedRSDKHandshake,
+              !hasReportedLegacyDumlReady,
+              let packet = DJIDUMLIncomingPacket(data: value) else {
+            return
+        }
+
+        let isCameraResponse = packet.isResponse && packet.senderType == dumlRouting.cameraAddress & 0x1F
+        let isCameraStatePush = !packet.isResponse && packet.isCameraStatePush
+        guard isCameraResponse || isCameraStatePush else { return }
+
+        hasReportedLegacyDumlReady = true
+        onLog("\(cameraName): DJI Nano returned camera status; legacy control is ready.")
+        onStatus(cameraID, .connected, "DJI Nano protocol ready.")
+    }
+
+    func shouldTrackLegacyWriteCandidate(_ candidate: DJIWritableCharacteristic) -> Bool {
+        !candidate.isRSDKControlTarget
+    }
+
+    func trackRSDKCharacteristic(
+        _ characteristic: CBCharacteristic,
+        in service: CBService,
+        peripheral: CBPeripheral
+    ) {
+        guard service.uuid == DJIRSDKBLEUUID.service else { return }
+
+        switch characteristic.uuid {
+        case DJIRSDKBLEUUID.writeCharacteristic:
+            rSDKWriteCharacteristic = characteristic
+            onLog("\(cameraName): DJI R SDK write characteristic ready on \(characteristic.debugLabel).")
+        case DJIRSDKBLEUUID.notifyCharacteristic:
+            rSDKNotifyCharacteristic = characteristic
+            onLog("\(cameraName): DJI R SDK notify characteristic ready on \(characteristic.debugLabel).")
+            if characteristic.properties.contains(.notify) || characteristic.properties.contains(.indicate) {
+                peripheral.setNotifyValue(true, for: characteristic)
+            }
+        default:
+            break
+        }
+    }
+
+    func bootstrapRSDKIfReady(to peripheral: CBPeripheral) {
+        guard cameraBehavior.kind != .djiOsmoNano else { return }
+        guard rSDKWriteCharacteristic != nil, let notify = rSDKNotifyCharacteristic else { return }
+        guard notify.isNotifying else { return }
+        guard !hasSentRSDKConnectionRequest else { return }
+
+        hasSentRSDKConnectionRequest = true
+        sendRSDKConnectionRequest(to: peripheral)
+    }
+
+    func sendRSDKConnectionRequest(to peripheral: CBPeripheral) {
+        let seq = nextRSDKSequence()
+        let packet = DJIRSDKPacket.connectionRequest(sequenceNumber: seq)
+        writeRSDK(packet, to: peripheral, label: "protocol connect request")
+    }
+
+    func sendRSDKConnectionResponse(to peripheral: CBPeripheral, sequenceNumber: UInt16, cameraReserved: UInt8) {
+        let packet = DJIRSDKPacket.connectionResponse(sequenceNumber: sequenceNumber, cameraReserved: cameraReserved)
+        writeRSDK(packet, to: peripheral, label: "protocol connect response")
+    }
+
+    func sendRSDKStatusSubscription(to peripheral: CBPeripheral, shouldLog: Bool) {
+        guard hasCompletedRSDKHandshake else { return }
+        let seq = nextRSDKSequence()
+        let packet = DJIRSDKPacket.statusSubscription(sequenceNumber: seq)
+        if !shouldLog {
+            silentRSDKStatusSubscriptionSequences.insert(seq)
+        }
+        writeRSDK(packet, to: peripheral, label: "status subscription", shouldLog: shouldLog)
+        hasSentRSDKStatusSubscription = true
+    }
+
+    func sendRSDKVersionQuery(to peripheral: CBPeripheral) {
+        guard hasCompletedRSDKHandshake else { return }
+        let seq = nextRSDKSequence()
+        let packet = DJIRSDKPacket.frame(
+            sequenceNumber: seq,
+            commandType: DJIRSDKCommandType.waitResult,
+            commandSet: 0x00,
+            commandID: 0x00,
+            payload: Data()
+        )
+        writeRSDK(packet, to: peripheral, label: "version query")
+    }
+
+    func sendRSDKRecordCommand(
+        _ action: RecordAction,
+        to peripheral: CBPeripheral,
+        label command: CameraCommand
+    ) -> CameraCommandResult {
+        if action.isStarting {
+            protectAgainstStaleStoppedStatusAfterStart()
+        }
+
+        let seq = nextRSDKSequence()
+        let packet = DJIRSDKPacket.recordControl(sequenceNumber: seq, isStarting: action.isStarting)
+        pendingRSDKRecordActionsBySequence[seq] = action
+        writeRSDK(packet, to: peripheral, label: "R SDK \(action.isStarting ? "start" : "stop") record")
+
+        return result(
+            for: command,
+            status: .sent,
+            message: "Sent DJI R SDK \(action.isStarting ? "start" : "stop") recording command."
+        )
+    }
+
+    func sendRSDKVideoModeCommand(
+        to peripheral: CBPeripheral,
+        label command: CameraCommand
+    ) -> CameraCommandResult {
+        let seq = nextRSDKSequence()
+        let packet = DJIRSDKPacket.modeSwitch(sequenceNumber: seq, mode: 0x01)
+        pendingRSDKModeUpdatesBySequence[seq] = .video
+        writeRSDK(packet, to: peripheral, label: "R SDK switch to video")
+
+        return result(for: command, status: .sent, message: "Sent DJI R SDK Video mode command.")
+    }
+
+    func writeRSDK(_ packet: Data, to peripheral: CBPeripheral, label: String, shouldLog: Bool = true) {
+        guard let characteristic = rSDKWriteCharacteristic else {
+            onLog("\(cameraName): DJI R SDK \(label) skipped; write characteristic is not ready.")
+            return
+        }
+
+        let writeType: CBCharacteristicWriteType = characteristic.properties.contains(.writeWithoutResponse)
+            ? .withoutResponse
+            : .withResponse
+        if writeType == .withoutResponse, !peripheral.canSendWriteWithoutResponse {
+            pendingRSDKWrites.append(
+                PendingRSDKWrite(packet: packet, label: label, shouldLog: shouldLog)
+            )
+            if shouldLog {
+                onLog("\(cameraName): DJI \(label) queued until the BLE write buffer is ready.")
+            }
+            return
+        }
+
+        peripheral.writeValue(packet, for: characteristic, type: writeType)
+        if shouldLog {
+            onLog("\(cameraName): DJI \(label) -> \(characteristic.debugLabel) (\(writeType.logLabel)) \(packet.hexString)")
+        }
+    }
+
+    func flushPendingRSDKWrites(to peripheral: CBPeripheral) {
+        guard let characteristic = rSDKWriteCharacteristic else {
+            pendingRSDKWrites.removeAll()
+            return
+        }
+
+        while peripheral.canSendWriteWithoutResponse, !pendingRSDKWrites.isEmpty {
+            let write = pendingRSDKWrites.removeFirst()
+            peripheral.writeValue(write.packet, for: characteristic, type: .withoutResponse)
+            if write.shouldLog {
+                onLog("\(cameraName): DJI \(write.label) -> \(characteristic.debugLabel) (withoutResponse) \(write.packet.hexString)")
             }
         }
+    }
 
-        let privateTargets = writeCandidates.filter { !$0.isStandardBLETarget }
-        if shouldUseExpandedActionWriteTargets {
-            let safeTargets = writeCandidates.filter { !$0.isClearlyGenericBLETarget }
-            let candidates = (privateTargets + safeTargets.filter { !privateTargets.contains($0) })
-            return Array(candidates.prefix(8))
+    func nextRSDKSequence() -> UInt16 {
+        let sequence = rSDKSequenceNumber
+        rSDKSequenceNumber &+= 1
+        return sequence
+    }
+
+    func handleRSDKNotification(_ value: Data, from characteristic: CBCharacteristic) -> Bool {
+        guard cameraBehavior.kind != .djiOsmoNano else { return false }
+        let isRSDKCharacteristic = characteristic.service?.uuid == DJIRSDKBLEUUID.service
+            && characteristic.uuid == DJIRSDKBLEUUID.notifyCharacteristic
+        guard isRSDKCharacteristic else { return false }
+        guard !rSDKReceiveBuffer.isEmpty || value.first == DJIRSDKPacket.startOfFrame else { return false }
+        if rSDKReceiveBuffer.isEmpty,
+           value.count >= DJIRSDKPacket.headerLength,
+           !DJIRSDKPacket.hasValidHeader(in: value) {
+            return false
         }
 
-        let candidates = privateTargets.isEmpty ? writeCandidates : privateTargets
-        return Array(candidates.prefix(4))
+        rSDKReceiveBuffer.append(value)
+        drainRSDKReceiveBuffer()
+        return true
+    }
+
+    func drainRSDKReceiveBuffer() {
+        while !rSDKReceiveBuffer.isEmpty {
+            if rSDKReceiveBuffer.first != DJIRSDKPacket.startOfFrame {
+                guard let startIndex = rSDKReceiveBuffer.firstIndex(of: DJIRSDKPacket.startOfFrame) else {
+                    onLog("\(cameraName): discarded \(rSDKReceiveBuffer.count) non-R SDK notification bytes.")
+                    rSDKReceiveBuffer.removeAll(keepingCapacity: true)
+                    lastRSDKBufferedFrameLogLabel = nil
+                    return
+                }
+
+                let droppedByteCount = rSDKReceiveBuffer.distance(from: rSDKReceiveBuffer.startIndex, to: startIndex)
+                if droppedByteCount > 0 {
+                    onLog("\(cameraName): discarded \(droppedByteCount) bytes before DJI R SDK frame.")
+                    rSDKReceiveBuffer.removeSubrange(rSDKReceiveBuffer.startIndex ..< startIndex)
+                    lastRSDKBufferedFrameLogLabel = nil
+                }
+            }
+
+            guard rSDKReceiveBuffer.count >= 3 else { return }
+            guard let declaredLength = DJIRSDKPacket.declaredLength(in: rSDKReceiveBuffer),
+                  declaredLength >= DJIRSDKPacket.minimumFrameLength,
+                  declaredLength <= DJIRSDKPacket.maximumFrameLength else {
+                onLog("\(cameraName): DJI R SDK frame length was invalid; resyncing from \(rSDKReceiveBuffer.hexString).")
+                rSDKReceiveBuffer.removeFirst()
+                lastRSDKBufferedFrameLogLabel = nil
+                continue
+            }
+
+            if rSDKReceiveBuffer.count >= DJIRSDKPacket.headerLength,
+               !DJIRSDKPacket.hasValidHeader(in: rSDKReceiveBuffer) {
+                onLog("\(cameraName): DJI R SDK frame header checksum was invalid; resyncing.")
+                rSDKReceiveBuffer.removeFirst()
+                lastRSDKBufferedFrameLogLabel = nil
+                continue
+            }
+
+            guard rSDKReceiveBuffer.count >= declaredLength else {
+                let logLabel = "\(rSDKReceiveBuffer.count)/\(declaredLength)"
+                if logLabel != lastRSDKBufferedFrameLogLabel {
+                    onLog("\(cameraName): buffering DJI R SDK frame \(logLabel) bytes.")
+                    lastRSDKBufferedFrameLogLabel = logLabel
+                }
+                return
+            }
+
+            let frameData = Data(rSDKReceiveBuffer.prefix(declaredLength))
+            rSDKReceiveBuffer.removeFirst(declaredLength)
+            lastRSDKBufferedFrameLogLabel = nil
+
+            guard let frame = DJIRSDKIncomingFrame(data: frameData) else {
+                onLog("\(cameraName): invalid complete DJI R SDK frame \(frameData.hexString)")
+                continue
+            }
+
+            handleRSDKFrame(frame)
+        }
+    }
+
+    func dumlFrames(in value: Data) -> [Data] {
+        var remaining = value
+        var frames: [Data] = []
+
+        while let startIndex = remaining.firstIndex(of: 0x55) {
+            if startIndex != remaining.startIndex {
+                remaining.removeSubrange(remaining.startIndex ..< startIndex)
+            }
+
+            guard remaining.count >= 3,
+                  let versionAndLength = remaining.littleEndianUInt16(at: 1) else {
+                break
+            }
+
+            let frameLength = Int(versionAndLength & 0x03FF)
+            guard frameLength >= 13 else {
+                remaining.removeFirst()
+                continue
+            }
+            guard remaining.count >= frameLength else { break }
+
+            let frame = Data(remaining.prefix(frameLength))
+            if DJIDUMLIncomingPacket(data: frame) != nil {
+                frames.append(frame)
+            }
+            remaining.removeFirst(frameLength)
+        }
+
+        return frames
+    }
+
+    func handleRSDKFrame(_ frame: DJIRSDKIncomingFrame) {
+        onProtocolActivity(cameraID)
+
+        switch (frame.cmdSet, frame.cmdID, frame.isResponse) {
+        case (0x00, 0x19, true):
+            let responseCode = frame.payload.byte(at: 4)
+            if responseCode == 0x00 {
+                onLog("\(cameraName): DJI R SDK connection request accepted; waiting for camera verification request.")
+            } else {
+                onLog("\(cameraName): DJI R SDK connection request returned \(responseCode.map { "0x\($0.hexByte)" } ?? "missing code").")
+            }
+
+        case (0x00, 0x19, false):
+            guard let request = DJIRSDKConnectionRequest(payload: frame.payload) else {
+                onLog(
+                    "\(cameraName): DJI R SDK camera verification request was malformed (\(frame.payload.count) bytes): \(frame.payload.hexString)"
+                )
+                return
+            }
+            onLog("\(cameraName): DJI R SDK camera verification request \(request.debugLabel).")
+
+            if request.verifyMode == 0x02, request.verifyData == 0 {
+                if let peripheral {
+                    sendRSDKConnectionResponse(
+                        to: peripheral,
+                        sequenceNumber: frame.sequenceNumber,
+                        cameraReserved: request.cameraReserved
+                    )
+                    completeRSDKHandshake(to: peripheral, source: "camera verification")
+                }
+            } else if request.verifyMode == 0x02, request.verifyData == 1 {
+                if let peripheral {
+                    scheduleRSDKHandshakePairingRetry(to: peripheral)
+                }
+            } else {
+                onLog(
+                    "\(cameraName): DJI R SDK camera verification rejected: mode 0x\(request.verifyMode.hexByte), data 0x\(request.verifyData.hexWord)."
+                )
+            }
+
+        case (0x1D, 0x02, false):
+            applyRSDKStatusPush(frame.payload)
+
+        case (0x1D, 0x06, false):
+            if let details = DJIRSDKModeDetails(payload: frame.payload) {
+                onLog("\(cameraName): DJI R SDK mode detail \(details.debugLabel).")
+            }
+
+        case (0x1D, 0x03, true):
+            let resultCode = frame.payload.first
+            let resultLabel = resultCode == 0x00 ? "success" : "error \(resultCode.map { "0x\($0.hexByte)" } ?? "missing code")"
+            onLog("\(cameraName): DJI R SDK record ACK \(resultLabel).")
+            if let action = pendingRSDKRecordActionsBySequence.removeValue(forKey: frame.sequenceNumber),
+               resultCode == 0x00 {
+                if action.isStarting {
+                    protectAgainstStaleStoppedStatusAfterStart()
+                    onCameraStatus(cameraID, CameraStatusUpdate(recordingState: .starting, shouldClearCurrentMode: true))
+                } else {
+                    onCameraStatus(cameraID, CameraStatusUpdate(recordingState: .stopped))
+                }
+            }
+
+        case (0x1D, 0x04, true):
+            let resultCode = frame.payload.first
+            let resultLabel = resultCode == 0x00 ? "success" : "error \(resultCode.map { "0x\($0.hexByte)" } ?? "missing code")"
+            onLog("\(cameraName): DJI R SDK mode ACK \(resultLabel).")
+            if let mode = pendingRSDKModeUpdatesBySequence.removeValue(forKey: frame.sequenceNumber),
+               resultCode == 0x00 {
+                onCameraStatus(cameraID, CameraStatusUpdate(currentMode: mode))
+            }
+
+        case (0x1D, 0x05, true):
+            let resultCode = frame.payload.first
+            let wasSilentHeartbeat = silentRSDKStatusSubscriptionSequences.remove(frame.sequenceNumber) != nil
+            if !wasSilentHeartbeat {
+                let resultLabel = resultCode == 0x00 ? "success" : "error \(resultCode.map { "0x\($0.hexByte)" } ?? "missing code")"
+                onLog("\(cameraName): DJI R SDK status subscription ACK \(resultLabel).")
+            }
+
+        default:
+            let payloadLabel = frame.payload.isEmpty ? "empty payload" : "payload \(frame.payload.hexString)"
+            onLog(
+                "\(cameraName): DJI R SDK \(frame.isResponse ? "response" : "push") cmdset 0x\(frame.cmdSet.hexByte) cmd 0x\(frame.cmdID.hexByte), \(payloadLabel)."
+            )
+        }
+    }
+
+    func completeRSDKHandshake(to peripheral: CBPeripheral, source: String) {
+        var completedNow = false
+        if !hasCompletedRSDKHandshake {
+            hasCompletedRSDKHandshake = true
+            completedNow = true
+            statusProbeTimer?.invalidate()
+            statusProbeTimer = nil
+            rSDKHandshakePairingRetryTimer?.invalidate()
+            rSDKHandshakePairingRetryTimer = nil
+            rSDKHandshakePairingRetryCount = 0
+            onLog("\(cameraName): DJI R SDK protocol handshake complete via \(source).")
+        }
+
+        if !hasSentRSDKStatusSubscription {
+            sendRSDKStatusSubscription(to: peripheral, shouldLog: true)
+        }
+
+        if completedNow {
+            onStatus(cameraID, .connecting, "DJI R SDK handshake complete; waiting for camera status.")
+        }
+    }
+
+    func scheduleRSDKHandshakePairingRetry(to peripheral: CBPeripheral) {
+        guard rSDKHandshakePairingRetryCount < maxRSDKHandshakePairingRetries else {
+            onLog("\(cameraName): DJI R SDK BLE pairing did not finish after \(maxRSDKHandshakePairingRetries) protocol retries.")
+            onStatus(cameraID, .failed("DJI BLE pairing did not finish. Accept the system pairing prompt, then tap Pair again."), nil)
+            return
+        }
+
+        rSDKHandshakePairingRetryCount += 1
+        rSDKHandshakePairingRetryTimer?.invalidate()
+        onLog(
+            "\(cameraName): DJI R SDK BLE pairing is pending; retrying protocol handshake \(rSDKHandshakePairingRetryCount)/\(maxRSDKHandshakePairingRetries)."
+        )
+        onStatus(
+            cameraID,
+            .connecting,
+            "DJI BLE pairing is pending; retrying protocol handshake \(rSDKHandshakePairingRetryCount)/\(maxRSDKHandshakePairingRetries)."
+        )
+
+        rSDKHandshakePairingRetryTimer = commonModeTimer(withTimeInterval: 2.0, repeats: false) { [weak self, weak peripheral] _ in
+            guard let self,
+                  let peripheral,
+                  self.peripheral === peripheral,
+                  !self.hasCompletedRSDKHandshake else {
+                return
+            }
+
+            self.hasSentRSDKConnectionRequest = false
+            self.bootstrapRSDKIfReady(to: peripheral)
+        }
+    }
+
+    func applyRSDKStatusPush(_ payload: Data) {
+        guard let status = DJIRSDKStatusPush(payload: payload) else {
+            onLog("\(cameraName): DJI R SDK status push could not be parsed: \(payload.hexString)")
+            return
+        }
+
+        if status.powerState != .sleeping, !hasReportedRSDKReady {
+            hasReportedRSDKReady = true
+            onStatus(cameraID, .connected, "DJI R SDK protocol ready.")
+        }
+        onCameraStatus(cameraID, status.cameraStatusUpdate)
+        let now = Date()
+        if status.debugLabel != lastRSDKStatusSummaryLabel
+            || now.timeIntervalSince(lastRSDKStatusSummaryLogDate) >= 5 {
+            onLog("\(cameraName): DJI R SDK status \(status.debugLabel).")
+            lastRSDKStatusSummaryLabel = status.debugLabel
+            lastRSDKStatusSummaryLogDate = now
+        }
+    }
+
+    var writeTargets: [DJIWritableCharacteristic] {
+        let candidates = writeCandidates.filter { !$0.isRSDKControlTarget }
+        let privateTargets = candidates.filter { !$0.isStandardBLETarget && !$0.isClearlyGenericBLETarget }
+        let selectedTargets = privateTargets.isEmpty ? candidates : privateTargets
+
+        return Array(selectedTargets.prefix(4))
     }
 
     func sendRecordCommand(
@@ -283,7 +798,7 @@ private extension DJIExperimentalBLEClient {
             for packet in packets {
                 pendingRecordActionsBySequence[packet.sequenceNumber] = action
                 for target in targets {
-                    for writeType in target.writeTypes(expanded: shouldUseExpandedActionWriteTargets) {
+                    for writeType in target.commandWriteTypes {
                         peripheral.writeValue(packet.data, for: target.characteristic, type: writeType)
                         onLog("\(cameraName): DJI \(packet.label)\(burstLabel) -> \(target.debugLabel) (\(writeType.logLabel)) \(packet.data.hexString)")
                     }
@@ -294,15 +809,11 @@ private extension DJIExperimentalBLEClient {
         return result(
             for: command,
             status: .sent,
-            message: "Sent \(packetCount) experimental DJI \(action.isStarting ? "start" : "stop") record packets to \(targets.count) BLE targets.\(pocket3CommandDiagnosticSuffix())"
+            message: "Sent \(packetCount) experimental DJI \(action.isStarting ? "start" : "stop") record packets to \(targets.count) BLE targets."
         )
     }
 
     func djiRecordPackets(for action: RecordAction) -> [DJICommandPacket] {
-        if shouldUsePocket3RecordFallbacks {
-            return djiPocket3RecordPackets(for: action)
-        }
-
         if shouldSendDirectCameraRecordOnly {
             var packets = action.isStarting ? djiVideoModePackets() : []
             packets.append(
@@ -376,63 +887,6 @@ private extension DJIExperimentalBLEClient {
         return packets
     }
 
-    func djiPocket3RecordPackets(for action: RecordAction) -> [DJICommandPacket] {
-        var packets: [DJICommandPacket] = []
-        let payload = Data([action.isStarting ? 0x01 : 0x00])
-
-        for routing in recordCommandRoutings {
-            packets.append(
-                DJICommandPacket(
-                    label: "pocket route \(routing.debugLabel) camera control \(action.isStarting ? "start" : "stop")",
-                    command: nextDumlPacket(
-                        routing: routing,
-                        commandSet: 0x02,
-                        commandID: 0x01,
-                        payload: payload
-                    )
-                )
-            )
-
-            packets.append(
-                DJICommandPacket(
-                    label: "pocket route \(routing.debugLabel) camera do record \(action.isStarting ? "on" : "off")",
-                    command: nextDumlPacket(
-                        routing: routing,
-                        commandSet: 0x02,
-                        commandID: 0x02,
-                        payload: payload
-                    )
-                )
-            )
-
-            packets.append(
-                DJICommandPacket(
-                    label: "pocket route \(routing.debugLabel) \(action.isStarting ? "special start video" : "special stop video")",
-                    command: nextDumlPacket(
-                        routing: routing,
-                        commandSet: 0x01,
-                        commandID: action.isStarting ? 0x21 : 0x22,
-                        payload: Data()
-                    )
-                )
-            )
-
-            packets.append(
-                DJICommandPacket(
-                    label: "pocket route \(routing.debugLabel) camera shutter \(action.isStarting ? "on" : "off")",
-                    command: nextDumlPacket(
-                        routing: routing,
-                        commandSet: 0x02,
-                        commandID: 0x7C,
-                        payload: payload
-                    )
-                )
-            )
-        }
-
-        return packets
-    }
-
     func sendVideoModeCommand(
         to peripheral: CBPeripheral,
         label command: CameraCommand
@@ -450,7 +904,7 @@ private extension DJIExperimentalBLEClient {
         for packet in packets {
             pendingModeUpdatesBySequence[packet.sequenceNumber] = .video
             for target in targets {
-                for writeType in target.writeTypes(expanded: shouldUseExpandedActionWriteTargets) {
+                for writeType in target.commandWriteTypes {
                     peripheral.writeValue(packet.data, for: target.characteristic, type: writeType)
                     onLog("\(cameraName): DJI \(packet.label) -> \(target.debugLabel) (\(writeType.logLabel)) \(packet.data.hexString)")
                 }
@@ -503,7 +957,7 @@ private extension DJIExperimentalBLEClient {
 
     func startStatusPolling(to peripheral: CBPeripheral) {
         statusProbeTimer?.invalidate()
-        statusProbeTimer = Timer.scheduledTimer(withTimeInterval: 2.5, repeats: true) { [weak self, weak peripheral] timer in
+        statusProbeTimer = commonModeTimer(withTimeInterval: 2.5, repeats: true) { [weak self, weak peripheral] timer in
             guard let self, let peripheral, self.peripheral === peripheral else {
                 timer.invalidate()
                 return
@@ -511,6 +965,16 @@ private extension DJIExperimentalBLEClient {
 
             self.sendStatusProbe(to: peripheral, includeExtendedProbes: false, shouldLog: false)
         }
+    }
+
+    func commonModeTimer(
+        withTimeInterval interval: TimeInterval,
+        repeats: Bool,
+        block: @escaping (Timer) -> Void
+    ) -> Timer {
+        let timer = Timer(timeInterval: interval, repeats: repeats, block: block)
+        RunLoop.main.add(timer, forMode: .common)
+        return timer
     }
 
     func djiStatusProbePackets(includeExtendedProbes: Bool) -> [DJICommandPacket] {
@@ -559,13 +1023,7 @@ private extension DJIExperimentalBLEClient {
     }
 
     var statusProbeRoutings: [DJIDUMLRouting] {
-        guard shouldUseExpandedActionWriteTargets else { return [dumlRouting] }
-
-        return [
-            dumlRouting,
-            .default,
-            DJIDUMLRouting(appAddress: 0x25, cameraAddress: 0x01)
-        ].uniqued()
+        [dumlRouting]
     }
 
     func djiVideoModePackets(routing: DJIDUMLRouting? = nil) -> [DJICommandPacket] {
@@ -629,93 +1087,16 @@ private extension DJIExperimentalBLEClient {
         cameraBehavior.kind == .djiOsmoNano
     }
 
-    var shouldUsePocket3RecordFallbacks: Bool {
-        // Pocket 3 is recognized at the app layer but intentionally unsupported:
-        // local testing found status traffic, not a working BLE-only record path.
-        false
-    }
-
     var stopCommandBurstCount: Int {
         shouldUseNanoStopFallbacks ? 3 : 2
-    }
-
-    var shouldUseExpandedActionWriteTargets: Bool {
-        cameraModel == .djiOsmoAction6
-            || normalizedCameraName.contains("action")
-            || normalizedCameraName.contains("oa6")
-            || normalizedCameraName.contains("osmoaction")
     }
 
     var shouldUseActionVideoModeFallbacks: Bool {
         cameraBehavior.kind == .djiOsmoAction6
     }
 
-    var normalizedCameraName: String {
-        cameraName.lowercased().filter { $0.isLetter || $0.isNumber }
-    }
-
-    var recordCommandRoutings: [DJIDUMLRouting] {
-        guard shouldUsePocket3RecordFallbacks else { return [dumlRouting] }
-        return [
-            dumlRouting,
-            .default,
-            DJIDUMLRouting(appAddress: 0x02, cameraAddress: 0x05)
-        ].uniqued()
-    }
-
-    var writeTargetSummary: String {
-        guard !writeCandidates.isEmpty else { return "none" }
-        return writeCandidates
-            .map(\.diagnosticLabel)
-            .joined(separator: ", ")
-    }
-
-    var selectedWriteTargetSummary: String {
-        let targets = writeTargets
-        guard !targets.isEmpty else { return "none" }
-        return targets
-            .map(\.diagnosticLabel)
-            .joined(separator: ", ")
-    }
-
     var cameraBehavior: CameraBehaviorProfile {
         CameraBehaviorProfile.resolve(brand: .dji, model: cameraModel, name: cameraName)
-    }
-
-    func pocket3CommandDiagnosticSuffix() -> String {
-        guard shouldUsePocket3RecordFallbacks else { return "" }
-        return " Pocket 3 selected targets: \(selectedWriteTargetSummary). All write candidates: \(writeTargetSummary)."
-    }
-
-    func shouldDiscoverDescriptors(for characteristic: CBCharacteristic, in service: CBService) -> Bool {
-        guard shouldUsePocket3RecordFallbacks else { return false }
-
-        let serviceID = service.uuid.uuidString.uppercased()
-        let characteristicID = characteristic.uuid.uuidString.uppercased()
-
-        return serviceID == "FFF0"
-            || serviceID == "1812"
-            || characteristicID == "2A4B"
-            || characteristicID == "2A4D"
-            || characteristicID == "2A4E"
-            || characteristicID == "2A4F"
-    }
-
-    func descriptorValueLabel(_ value: Any?) -> String {
-        switch value {
-        case let data as Data:
-            data.isEmpty ? "empty data" : data.hexString
-        case let string as String:
-            "\"\(string)\""
-        case let number as NSNumber:
-            number.stringValue
-        case let uuid as CBUUID:
-            uuid.uuidString
-        case .none:
-            "nil"
-        case let value?:
-            String(describing: value)
-        }
     }
 
     static func defaultDumlRouting(cameraModel: CameraModel, cameraName: String) -> DJIDUMLRouting {
@@ -1290,8 +1671,8 @@ private struct DJICameraStateSummary {
         case .full:
             return "mode \(DJIExperimentalBLEClient.cameraStateModeLabel(mode)), recordBits \(recordBits), sdBits \(sdCardBits), remainingTime \(remainedTime)s, videoRecordTime \(videoRecordTime)s, sdFree \(sdCardFreeSize)/\(sdCardTotalSize), cameraType 0x\(cameraType.hexByte), version \(version), flags 0x\(flags.hexWord)"
         case .compact:
-            let battery = batteryPercent.map(String.init) ?? "unknown"
-            return "compact mode byte \(DJIExperimentalBLEClient.cameraStateModeLabel(mode)), recordBits \(recordBits), videoRecordTime \(videoRecordTime)s, remainingTime \(remainedTime)s, battery \(battery), flags 0x\(flags.hexWord)"
+            let batteryByte = batteryPercent.map(String.init) ?? "unknown"
+            return "compact mode byte \(DJIExperimentalBLEClient.cameraStateModeLabel(mode)), recordBits \(recordBits), videoRecordTime \(videoRecordTime)s, remainingTime \(remainedTime)s, batteryByte \(batteryByte), flags 0x\(flags.hexWord)"
         }
     }
 
@@ -1354,20 +1735,498 @@ private struct DJISequencedCommand {
     var data: Data
 }
 
+private enum DJIRSDKBLEUUID {
+    static let service = CBUUID(string: "FFF0")
+    static let notifyCharacteristic = CBUUID(string: "FFF4")
+    static let writeCharacteristic = CBUUID(string: "FFF5")
+}
+
+private enum DJIRSDKCommandType {
+    static let noResponse: UInt8 = 0x00
+    static let responseOrNot: UInt8 = 0x01
+    static let waitResult: UInt8 = 0x02
+    static let ackNoResponse: UInt8 = 0x20
+}
+
+private struct DJIRSDKIncomingFrame {
+    var commandType: UInt8
+    var sequenceNumber: UInt16
+    var cmdSet: UInt8
+    var cmdID: UInt8
+    var payload: Data
+
+    var isResponse: Bool {
+        commandType & 0x20 == 0x20
+    }
+
+    init?(data: Data) {
+        guard data.count >= DJIRSDKPacket.minimumFrameLength,
+              data[data.startIndex] == DJIRSDKPacket.startOfFrame,
+              let declaredLength = DJIRSDKPacket.declaredLength(in: data) else {
+            return nil
+        }
+
+        guard declaredLength == data.count,
+              let embeddedHeaderChecksum = data.littleEndianUInt16(at: 10),
+              let embeddedPacketChecksum = data.littleEndianUInt32(at: data.count - 4) else {
+            return nil
+        }
+
+        let headerChecksum = DJIRSDKChecksum.crc16(Data(data.prefix(10)))
+        let packetChecksum = DJIRSDKChecksum.crc32(Data(data.prefix(data.count - 4)))
+        guard headerChecksum == embeddedHeaderChecksum,
+              packetChecksum == embeddedPacketChecksum else {
+            return nil
+        }
+
+        self.commandType = data[data.index(data.startIndex, offsetBy: 3)]
+        self.sequenceNumber = UInt16(data[data.index(data.startIndex, offsetBy: 8)])
+            | UInt16(data[data.index(data.startIndex, offsetBy: 9)]) << 8
+        self.cmdSet = data[data.index(data.startIndex, offsetBy: 12)]
+        self.cmdID = data[data.index(data.startIndex, offsetBy: 13)]
+
+        let payloadStart = data.index(data.startIndex, offsetBy: 14)
+        let payloadEnd = data.index(data.endIndex, offsetBy: -4)
+        self.payload = payloadStart < payloadEnd ? Data(data[payloadStart ..< payloadEnd]) : Data()
+    }
+}
+
+private struct DJIRSDKConnectionRequest {
+    var verifyMode: UInt8
+    var verifyData: UInt16
+    var cameraReserved: UInt8
+    var payloadLength: Int
+    var layoutLabel: String
+
+    init?(payload: Data) {
+        let candidates: [(label: String, verifyModeOffset: Int, verifyDataOffset: Int, cameraReservedOffset: Int)] = [
+            ("standard", 26, 27, 29),
+            ("compact", 25, 26, 28)
+        ]
+        let parsedCandidates = candidates.compactMap { candidate
+            -> (label: String, verifyMode: UInt8, verifyData: UInt16, cameraReserved: UInt8)? in
+            guard let verifyMode = payload.byte(at: candidate.verifyModeOffset),
+                  let verifyData = payload.littleEndianUInt16(at: candidate.verifyDataOffset),
+                  let cameraReserved = payload.byte(at: candidate.cameraReservedOffset) else {
+                return nil
+            }
+
+            return (candidate.label, verifyMode, verifyData, cameraReserved)
+        }
+
+        guard let selected = parsedCandidates.first(where: { $0.verifyMode == 0x02 }) ?? parsedCandidates.first else {
+            return nil
+        }
+
+        self.verifyMode = selected.verifyMode
+        self.verifyData = selected.verifyData
+        self.cameraReserved = selected.cameraReserved
+        self.payloadLength = payload.count
+        self.layoutLabel = selected.label
+    }
+
+    var debugLabel: String {
+        "\(layoutLabel) payload \(payloadLength) bytes, mode 0x\(verifyMode.hexByte), data 0x\(verifyData.hexWord), reserved 0x\(cameraReserved.hexByte)"
+    }
+}
+
+private struct DJIRSDKStatusPush {
+    var cameraMode: UInt8
+    var cameraStatus: UInt8
+    var videoResolution: UInt8
+    var frameRateIndex: UInt8
+    var stabilizationMode: UInt8
+    var recordTime: UInt16
+    var photoRatio: UInt8
+    var remainingPhotos: UInt32
+    var remainingRecordTime: UInt32
+    var powerMode: UInt8
+    var batteryPercent: UInt8?
+
+    init?(payload: Data) {
+        guard payload.count >= 38,
+              let cameraMode = payload.byte(at: 0),
+              let cameraStatus = payload.byte(at: 1),
+              let videoResolution = payload.byte(at: 2),
+              let frameRateIndex = payload.byte(at: 3),
+              let stabilizationMode = payload.byte(at: 4),
+              let recordTime = payload.littleEndianUInt16(at: 5),
+              let photoRatio = payload.byte(at: 8),
+              let remainingPhotos = payload.littleEndianUInt32(at: 19),
+              let remainingRecordTime = payload.littleEndianUInt32(at: 23),
+              let powerMode = payload.byte(at: 28) else {
+            return nil
+        }
+
+        self.cameraMode = cameraMode
+        self.cameraStatus = cameraStatus
+        self.videoResolution = videoResolution
+        self.frameRateIndex = frameRateIndex
+        self.stabilizationMode = stabilizationMode
+        self.recordTime = recordTime
+        self.photoRatio = photoRatio
+        self.remainingPhotos = remainingPhotos
+        self.remainingRecordTime = remainingRecordTime
+        self.powerMode = powerMode
+        self.batteryPercent = payload.byte(at: 37)
+    }
+
+    var cameraStatusUpdate: CameraStatusUpdate {
+        CameraStatusUpdate(
+            recordingState: recordingState,
+            currentMode: captureMode,
+            telemetry: telemetry,
+            powerState: powerState,
+            canClearActiveRecording: recordingState != .stopped || powerMode != 0x03
+        )
+    }
+
+    var powerState: CameraPowerState? {
+        switch powerMode {
+        case 0x00:
+            .awake
+        case 0x03:
+            .sleeping
+        default:
+            nil
+        }
+    }
+
+    var recordingState: CameraRecordingState? {
+        switch cameraStatus {
+        case 0x03, 0x05:
+            .recording
+        case 0x00, 0x01, 0x02:
+            .stopped
+        default:
+            nil
+        }
+    }
+
+    var captureMode: CaptureMode? {
+        switch cameraMode {
+        case 0x01:
+            .video
+        case 0x05:
+            .photo
+        case 0x02, 0x0A:
+            .timelapse
+        default:
+            nil
+        }
+    }
+
+    var telemetry: CameraTelemetry? {
+        var telemetry = CameraTelemetry()
+        if let batteryPercent, batteryPercent <= 100 {
+            telemetry.batteryPercent = Int(batteryPercent)
+        }
+        if remainingRecordTime > 0 {
+            telemetry.remainingVideoSeconds = remainingRecordTime
+        }
+        if remainingPhotos > 0 {
+            telemetry.remainingPhotos = remainingPhotos
+        }
+        telemetry.videoResolution = Self.videoResolutionLabel(videoResolution)
+        telemetry.frameRate = Self.frameRateLabel(frameRateIndex)
+        telemetry.hypersmooth = Self.stabilizationLabel(stabilizationMode)
+        telemetry.lastUpdated = Date()
+        return telemetry.isEmpty ? nil : telemetry
+    }
+
+    var debugLabel: String {
+        let mode = captureMode?.rawValue ?? "mode 0x\(cameraMode.hexByte)"
+        let state = recordingState?.rawValue ?? "status 0x\(cameraStatus.hexByte)"
+        let battery = batteryPercent.map { "\($0)%" } ?? "unknown"
+        return "\(mode), \(state), recordTime \(recordTime)s, remaining \(remainingRecordTime)s, battery \(battery)"
+    }
+
+    static func videoResolutionLabel(_ value: UInt8) -> String? {
+        switch value {
+        case 10:
+            "1080p"
+        case 16:
+            "4K 16:9"
+        case 45:
+            "2.7K 16:9"
+        case 66:
+            "1080p 9:16"
+        case 67:
+            "2.7K 9:16"
+        case 95:
+            "2.7K 4:3"
+        case 103:
+            "4K 4:3"
+        case 109:
+            "4K 9:16"
+        default:
+            nil
+        }
+    }
+
+    static func frameRateLabel(_ value: UInt8) -> String? {
+        switch value {
+        case 1:
+            "24fps"
+        case 2:
+            "25fps"
+        case 3:
+            "30fps"
+        case 4:
+            "48fps"
+        case 5:
+            "50fps"
+        case 6:
+            "60fps"
+        case 7:
+            "120fps"
+        case 8:
+            "240fps"
+        case 10:
+            "100fps"
+        case 19:
+            "200fps"
+        default:
+            nil
+        }
+    }
+
+    static func stabilizationLabel(_ value: UInt8) -> String? {
+        switch value {
+        case 0:
+            "Off"
+        case 1:
+            "RS"
+        case 2:
+            "HS"
+        case 3:
+            "RS+"
+        case 4:
+            "HB"
+        default:
+            nil
+        }
+    }
+}
+
+private struct DJIRSDKModeDetails {
+    var modeName: String?
+    var modeParameters: String?
+
+    init?(payload: Data) {
+        guard payload.count >= 25 else { return nil }
+
+        let nameLength = min(Int(payload.byte(at: 1) ?? 0), 20)
+        if nameLength > 0, payload.count >= 2 + nameLength {
+            let start = payload.index(payload.startIndex, offsetBy: 2)
+            let end = payload.index(start, offsetBy: nameLength)
+            modeName = String(data: Data(payload[start ..< end]), encoding: .ascii)
+        }
+
+        guard let paramMarker = payload.byte(at: 23), paramMarker == 0x02 else { return }
+        let parameterLength = min(Int(payload.byte(at: 24) ?? 0), 20)
+        if parameterLength > 0, payload.count >= 25 + parameterLength {
+            let start = payload.index(payload.startIndex, offsetBy: 25)
+            let end = payload.index(start, offsetBy: parameterLength)
+            modeParameters = String(data: Data(payload[start ..< end]), encoding: .ascii)
+        }
+    }
+
+    var debugLabel: String {
+        [modeName, modeParameters]
+            .compactMap { $0?.isEmpty == false ? $0 : nil }
+            .joined(separator: " ")
+    }
+}
+
+private enum DJIRSDKPacket {
+    static let startOfFrame: UInt8 = 0xAA
+    static let minimumFrameLength = 18
+    static let maximumFrameLength = 0x03FF
+    static let headerLength = 12
+
+    static func declaredLength(in data: Data) -> Int? {
+        guard data.count >= 3,
+              data[data.startIndex] == startOfFrame,
+              let versionAndLength = data.littleEndianUInt16(at: 1) else {
+            return nil
+        }
+
+        return Int(versionAndLength & 0x03FF)
+    }
+
+    static func hasValidHeader(in data: Data) -> Bool {
+        guard data.count >= headerLength,
+              data[data.startIndex] == startOfFrame,
+              let embeddedChecksum = data.littleEndianUInt16(at: 10) else {
+            return false
+        }
+
+        return DJIRSDKChecksum.crc16(Data(data.prefix(10))) == embeddedChecksum
+    }
+
+    static func connectionRequest(sequenceNumber: UInt16) -> Data {
+        var payload = Data()
+        payload.appendLittleEndian(controllerDeviceID)
+        payload.append(0x10)
+        payload.append(contentsOf: controllerIdentifier)
+        payload.appendLittleEndian(UInt32(0))
+        payload.append(0x00)
+        payload.append(0x00)
+        payload.appendLittleEndian(UInt16(0))
+        payload.append(contentsOf: [0x00, 0x00, 0x00, 0x00])
+
+        return frame(
+            sequenceNumber: sequenceNumber,
+            commandType: DJIRSDKCommandType.waitResult,
+            commandSet: 0x00,
+            commandID: 0x19,
+            payload: payload
+        )
+    }
+
+    static func connectionResponse(sequenceNumber: UInt16, cameraReserved: UInt8) -> Data {
+        var payload = Data()
+        payload.appendLittleEndian(controllerDeviceID)
+        payload.append(0x00)
+        payload.append(contentsOf: [cameraReserved, 0x00, 0x00, 0x00])
+
+        return frame(
+            sequenceNumber: sequenceNumber,
+            commandType: DJIRSDKCommandType.ackNoResponse,
+            commandSet: 0x00,
+            commandID: 0x19,
+            payload: payload
+        )
+    }
+
+    static func recordControl(sequenceNumber: UInt16, isStarting: Bool) -> Data {
+        var payload = Data()
+        payload.appendLittleEndian(UInt32(0x33FF0000))
+        payload.append(isStarting ? 0x00 : 0x01)
+        payload.append(contentsOf: [0x00, 0x00, 0x00, 0x00])
+
+        return frame(
+            sequenceNumber: sequenceNumber,
+            commandType: DJIRSDKCommandType.responseOrNot,
+            commandSet: 0x1D,
+            commandID: 0x03,
+            payload: payload
+        )
+    }
+
+    static func modeSwitch(sequenceNumber: UInt16, mode: UInt8) -> Data {
+        var payload = Data()
+        payload.appendLittleEndian(UInt32(0xFF330000))
+        payload.append(mode)
+        payload.append(contentsOf: [0x01, 0x47, 0x39, 0x36])
+
+        return frame(
+            sequenceNumber: sequenceNumber,
+            commandType: DJIRSDKCommandType.responseOrNot,
+            commandSet: 0x1D,
+            commandID: 0x04,
+            payload: payload
+        )
+    }
+
+    static func statusSubscription(sequenceNumber: UInt16) -> Data {
+        var payload = Data()
+        payload.append(0x03)
+        payload.append(0x14)
+        payload.append(contentsOf: [0x00, 0x00, 0x00, 0x00])
+
+        return frame(
+            sequenceNumber: sequenceNumber,
+            commandType: DJIRSDKCommandType.noResponse,
+            commandSet: 0x1D,
+            commandID: 0x05,
+            payload: payload
+        )
+    }
+
+    static func frame(
+        sequenceNumber: UInt16,
+        commandType: UInt8,
+        commandSet: UInt8,
+        commandID: UInt8,
+        payload: Data
+    ) -> Data {
+        let totalLength = UInt16(minimumFrameLength + payload.count)
+        let versionAndLength = totalLength
+        var bytes = Data()
+
+        bytes.append(startOfFrame)
+        bytes.appendLittleEndian(versionAndLength)
+        bytes.append(commandType)
+        bytes.append(0x00)
+        bytes.append(contentsOf: [0x00, 0x00, 0x00])
+        bytes.appendLittleEndian(sequenceNumber)
+        bytes.appendLittleEndian(DJIRSDKChecksum.crc16(bytes))
+        bytes.append(commandSet)
+        bytes.append(commandID)
+        bytes.append(payload)
+        bytes.appendLittleEndian(DJIRSDKChecksum.crc32(bytes))
+        return bytes
+    }
+
+    private static let controllerIdentifier: Data = {
+        let storageKey = "djiRSDKControllerIdentifier.v1"
+        if let saved = UserDefaults.standard.data(forKey: storageKey), saved.count == 16 {
+            return saved
+        }
+
+        var bytes = Data()
+        let uuid = UUID().uuid
+        withUnsafeBytes(of: uuid) { rawBuffer in
+            bytes.append(contentsOf: rawBuffer)
+        }
+        let identifier = Data(bytes.prefix(16))
+        UserDefaults.standard.set(identifier, forKey: storageKey)
+        return identifier
+    }()
+
+    private static let controllerDeviceID: UInt32 = 0x00000001
+}
+
+private enum DJIRSDKChecksum {
+    static func crc16(_ data: Data) -> UInt16 {
+        var checksum: UInt16 = 0x3AA3
+        for byte in data {
+            checksum ^= UInt16(byte)
+            for _ in 0 ..< 8 {
+                if checksum & 0x0001 == 0x0001 {
+                    checksum = (checksum >> 1) ^ 0xA001
+                } else {
+                    checksum >>= 1
+                }
+            }
+        }
+        return checksum
+    }
+
+    static func crc32(_ data: Data) -> UInt32 {
+        var checksum: UInt32 = 0x00003AA3
+        for byte in data {
+            checksum ^= UInt32(byte)
+            for _ in 0 ..< 8 {
+                if checksum & 0x00000001 == 0x00000001 {
+                    checksum = (checksum >> 1) ^ 0xEDB88320
+                } else {
+                    checksum >>= 1
+                }
+            }
+        }
+        return checksum
+    }
+}
+
 private struct DJIWritableCharacteristic: Comparable {
     var serviceUUID: CBUUID
     var characteristic: CBCharacteristic
 
     var debugLabel: String {
         "\(serviceUUID.uuidString) / \(characteristic.uuid.uuidString)"
-    }
-
-    var diagnosticLabel: String {
-        let writeTypeLabel = writeTypes(expanded: true)
-            .map(\.logLabel)
-            .joined(separator: "/")
-        let propertyLabel = characteristic.properties.debugLabels.joined(separator: "/")
-        return "\(debugLabel) [\(propertyLabel); \(writeTypeLabel.isEmpty ? "no write type" : writeTypeLabel)]"
     }
 
     var isStandardBLETarget: Bool {
@@ -1380,17 +2239,14 @@ private struct DJIWritableCharacteristic: Comparable {
             || DJIClearlyGenericBLEUUIDs.contains(characteristic.uuid.uuidString.uppercased())
     }
 
-    var isPocket3CommandTarget: Bool {
-        serviceUUID.uuidString.uppercased() == "FFF0"
+    var isRSDKControlTarget: Bool {
+        serviceUUID == DJIRSDKBLEUUID.service
+            && characteristic.uuid == DJIRSDKBLEUUID.writeCharacteristic
     }
 
-    func writeTypes(expanded: Bool) -> [CBCharacteristicWriteType] {
+    var commandWriteTypes: [CBCharacteristicWriteType] {
         let canWriteWithResponse = characteristic.properties.contains(.write)
         let canWriteWithoutResponse = characteristic.properties.contains(.writeWithoutResponse)
-
-        if expanded, canWriteWithResponse, canWriteWithoutResponse {
-            return [.withResponse, .withoutResponse]
-        }
 
         if canWriteWithoutResponse {
             return [.withoutResponse]
@@ -1551,6 +2407,12 @@ private extension UInt8 {
     }
 }
 
+private extension UInt16 {
+    var hexWord: String {
+        String(format: "%04X", self)
+    }
+}
+
 private extension UInt32 {
     var hexWord: String {
         String(format: "%08X", self)
@@ -1577,6 +2439,18 @@ private extension CBCharacteristicProperties {
 private extension Data {
     var hexString: String {
         map { String(format: "%02X", $0) }.joined(separator: " ")
+    }
+
+    mutating func appendLittleEndian(_ value: UInt16) {
+        append(UInt8(value & 0xFF))
+        append(UInt8((value >> 8) & 0xFF))
+    }
+
+    mutating func appendLittleEndian(_ value: UInt32) {
+        append(UInt8(value & 0xFF))
+        append(UInt8((value >> 8) & 0xFF))
+        append(UInt8((value >> 16) & 0xFF))
+        append(UInt8((value >> 24) & 0xFF))
     }
 
     func byte(at offset: Int) -> UInt8? {

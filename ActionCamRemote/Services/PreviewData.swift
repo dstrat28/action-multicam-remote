@@ -7,6 +7,7 @@ extension CameraStore {
             if camera.supportsBatchRecord {
                 camera.connectionState = .connected
                 camera.recordingState = .stopped
+                camera.currentMode = .video
                 camera.telemetry = Self.demoTelemetry(for: camera)
                 camera.isPaired = true
                 camera.isSelected = true
@@ -26,12 +27,14 @@ extension CameraStore {
         return store
     }
 
-    private static func demoTelemetry(for camera: DiscoveredCamera) -> CameraTelemetry {
+    static func demoTelemetry(for camera: DiscoveredCamera) -> CameraTelemetry {
         switch camera.brand {
         case .gopro:
             CameraTelemetry(
                 batteryPercent: 82,
                 remainingVideoSeconds: 7_560,
+                storageFreeMB: 94_000,
+                storageTotalMB: 128_000,
                 videoResolution: "5.3K",
                 frameRate: "60fps",
                 framing: "16:9",

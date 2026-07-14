@@ -121,6 +121,11 @@ enum CameraRecordingState: String, Identifiable, Codable {
     var id: String { rawValue }
 }
 
+enum CameraPowerState: Equatable {
+    case awake
+    case sleeping
+}
+
 struct CameraTelemetry: Equatable, Codable {
     var batteryPercent: Int? = nil
     var batteryBars: Int? = nil
@@ -583,7 +588,6 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     var canSwitchToVideoMode: Bool {
         isPaired
             && isConnected
-            && brand != .dji
             && capabilities.contains(.mode)
             && currentMode != .video
             && recordingState != .recording
@@ -618,41 +622,14 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
             return .stopRecording
         }
         guard recordingState != .starting else { return nil }
-        return canStartRecording ? .startRecording : nil
+        return (canStartRecording || canSwitchToVideoMode) ? .startRecording : nil
     }
 
     var primaryRecordTitle: String {
-        if !isSupportedByApp {
-            return "Unsupported"
-        }
-
-        if !canStartRecordingInCurrentMode,
-           recordingState != .recording,
-           recordingState != .starting {
-            return "Video Only"
-        }
-
-        switch recordingState {
-        case .recording:
-            return "Stop"
-        case .starting:
-            return "Starting"
-        case .unavailable, .unknown, .ready, .stopped:
-            return "Record"
-        }
+        recordingState == .recording ? "Stop" : "Record"
     }
 
     var primaryRecordIcon: String {
-        if !isSupportedByApp {
-            return "nosign"
-        }
-
-        if !canStartRecordingInCurrentMode,
-           recordingState != .recording,
-           recordingState != .starting {
-            return "video.slash"
-        }
-
         switch recordingState {
         case .recording:
             return "stop.circle"
@@ -696,6 +673,7 @@ struct CameraStatusUpdate: Equatable {
     var currentMode: CaptureMode? = nil
     var telemetry: CameraTelemetry? = nil
     var model: CameraModel? = nil
+    var powerState: CameraPowerState? = nil
     var canClearActiveRecording: Bool = true
     var shouldClearCurrentMode: Bool = false
 }
