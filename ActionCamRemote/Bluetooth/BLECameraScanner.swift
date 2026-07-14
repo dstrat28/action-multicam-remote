@@ -281,14 +281,7 @@ private extension BLECameraScanner {
             )
         }
 
-        if hasDJIAdvertisementSignature
-            || lowercasedName.contains("dji")
-            || lowercasedName.contains("osmo")
-            || lowercasedName.contains("action")
-            || lowercasedName.contains("oa6")
-            || lowercasedName.contains("osmoaction")
-            || lowercasedName.contains("pocket")
-            || lowercasedName.contains("op3") {
+        if hasDJIAdvertisementSignature || hasDJINameSignature(name) {
             let model = inferDJIModel(from: name)
             return DiscoveredCameraCandidate(
                 id: peripheral.identifier,
@@ -596,6 +589,20 @@ private extension BLECameraScanner {
         return manufacturerData[manufacturerData.startIndex] == 0xAA
             && manufacturerData[manufacturerData.index(manufacturerData.startIndex, offsetBy: 1)] == 0x08
             && manufacturerData[manufacturerData.index(manufacturerData.startIndex, offsetBy: 4)] == 0xFA
+    }
+
+    func hasDJINameSignature(_ name: String) -> Bool {
+        let lowercasedName = name.lowercased()
+        let normalizedName = lowercasedName.filter { $0.isLetter || $0.isNumber }
+        let words = lowercasedName.split { !$0.isLetter && !$0.isNumber }
+
+        return words.contains("dji")
+            || normalizedName.hasPrefix("dji")
+            || normalizedName.hasPrefix("osmo")
+            || normalizedName.hasPrefix("action6")
+            || normalizedName.hasPrefix("oa6")
+            || normalizedName.hasPrefix("pocket3")
+            || normalizedName.hasPrefix("op3")
     }
 
     func inferConnectableState(from advertisementData: [String: Any]) -> Bool? {

@@ -54,8 +54,8 @@ extension Color {
 enum ACRDesign {
     static let cardCornerRadius: CGFloat = 10
     static let buttonCornerRadius: CGFloat = 12
+    static let controlBarCornerRadius: CGFloat = 16
     static let insetCornerRadius: CGFloat = 6
-    static let contentMaxWidth: CGFloat = 920
 }
 
 extension View {

@@ -275,7 +275,9 @@ struct CameraProductThumbnail: View {
                     .scaleEffect(assetScale)
                     .offset(x: imageOffsetX)
             } else {
-                CameraBrandGlyph(brand: brand)
+                Image(systemName: "camera.fill")
+                    .font(.system(size: fallbackIconSize, weight: .semibold))
+                    .foregroundStyle(brand.badgeColor)
             }
         }
         .frame(width: size.dimensions.width, height: size.dimensions.height)
@@ -341,18 +343,16 @@ struct CameraProductThumbnail: View {
             nil
         }
     }
-}
 
-struct CameraBrandGlyph: View {
-    var brand: CameraBrand
-
-    var body: some View {
-        Image(systemName: brand == .dji ? "camera.aperture" : "video.fill")
-            .font(.headline.weight(.semibold))
-            .foregroundStyle(brand.badgeColor)
-            .frame(width: 42, height: 42)
-            .background(brand.badgeColor.opacity(0.11), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .accessibilityHidden(true)
+    private var fallbackIconSize: CGFloat {
+        switch size {
+        case .small:
+            18
+        case .card:
+            20
+        case .detail:
+            28
+        }
     }
 }
 

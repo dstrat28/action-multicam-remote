@@ -27,7 +27,6 @@ struct CameraDashboardView: View {
                     DiagnosticsView(isExpanded: $isShowingDiagnostics)
                     #endif
                 }
-                .frame(maxWidth: ACRDesign.contentMaxWidth)
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, 16)
                 .padding(.top, 6)
@@ -46,8 +45,10 @@ struct CameraDashboardView: View {
                     .help("Manage cameras")
                 }
             }
-            .safeAreaInset(edge: .bottom) {
+            .safeAreaInset(edge: .bottom, spacing: 0) {
                 MulticamRecordBar()
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
             }
             .sheet(isPresented: $isManagingCameras) {
                 NavigationStack {
@@ -120,14 +121,18 @@ private struct MulticamRecordBar: View {
             actionButton
         }
         .frame(minHeight: 56, alignment: .center)
-        .frame(maxWidth: ACRDesign.contentMaxWidth)
-        .frame(maxWidth: .infinity)
-        .padding(.horizontal, 16)
+        .padding(.leading, 16)
+        .padding(.trailing, 8)
         .padding(.vertical, 8)
-        .background(.regularMaterial)
-        .overlay(alignment: .top) {
-            Divider()
+        .background(
+            .regularMaterial,
+            in: RoundedRectangle(cornerRadius: ACRDesign.controlBarCornerRadius, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: ACRDesign.controlBarCornerRadius, style: .continuous)
+                .stroke(Color.acrLine.opacity(0.7), lineWidth: 1)
         }
+        .frame(maxWidth: .infinity)
     }
 
     private var selectionLabel: some View {
@@ -141,12 +146,15 @@ private struct MulticamRecordBar: View {
         Button {
             performAction()
         } label: {
-            Label(title, systemImage: systemImage)
+            HStack(spacing: 5) {
+                Image(systemName: systemImage)
+                Text(title)
+            }
                 .font(.headline.weight(.semibold))
                 .foregroundStyle(isEnabled ? Color.white : Color.acrMutedText)
-                .frame(minWidth: 164)
+                .frame(minWidth: 148)
                 .frame(height: 56)
-                .padding(.horizontal, 14)
+                .padding(.horizontal, 12)
                 .background(
                     buttonFill,
                     in: RoundedRectangle(cornerRadius: ACRDesign.buttonCornerRadius, style: .continuous)
@@ -315,46 +323,40 @@ private struct PairingCameraRow: View {
                     Text(camera.name)
                         .font(.headline)
                         .lineLimit(1)
+                        .minimumScaleFactor(0.82)
 
-                    Text("\(camera.brand.rawValue) · \(camera.model.rawValue) · \(camera.connectionState.label)")
+                    Text("\(camera.brand.rawValue) · \(camera.model.rawValue)")
                         .font(.subheadline)
                         .foregroundStyle(Color.acrMutedText)
-                        .lineLimit(2)
-                        .fixedSize(horizontal: false, vertical: true)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.78)
+
+                    connectionStatus
+                        .padding(.top, 1)
                 }
+                .layoutPriority(1)
 
-                Spacer()
+                Spacer(minLength: 4)
 
-                VStack(alignment: .trailing, spacing: 8) {
-                    if camera.isPaired {
-                        Button(role: .destructive) {
-                            store.remove(camera)
-                        } label: {
-                            Text("Remove")
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .fixedSize()
-                    } else if camera.unsupportedReason != nil {
-                        Button {
-                        } label: {
-                            Text("Unsupported")
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .fixedSize()
-                        .disabled(true)
-                    } else {
-                        Button {
-                            store.connect(camera)
-                        } label: {
-                            Text(pairButtonTitle)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .controlSize(.small)
-                        .fixedSize()
-                        .disabled(camera.connectionState == .connecting || camera.needsGoProPairingMode)
+                if camera.isPaired {
+                    Button(role: .destructive) {
+                        store.remove(camera)
+                    } label: {
+                        Text("Remove")
                     }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .fixedSize()
+                } else if camera.unsupportedReason == nil {
+                    Button {
+                        store.connect(camera)
+                    } label: {
+                        Text(pairButtonTitle)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .fixedSize()
+                    .disabled(camera.connectionState == .connecting || camera.needsGoProPairingMode)
                 }
             }
 
@@ -365,6 +367,21 @@ private struct PairingCameraRow: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    private var connectionStatus: some View {
+        HStack(spacing: 5) {
+            Circle()
+                .fill(camera.connectionState.statusColor)
+                .frame(width: 6, height: 6)
+
+            Text(camera.displayConnectionLabel)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(camera.connectionState.statusColor)
+        }
+        .lineLimit(1)
+        .fixedSize(horizontal: true, vertical: false)
+        .accessibilityElement(children: .combine)
     }
 
     private var pairButtonTitle: String {
