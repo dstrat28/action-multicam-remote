@@ -2,7 +2,7 @@
 
 This project distributes beta builds through App Store Connect and Xcode Cloud.
 
-Public TestFlight link: https://testflight.apple.com/join/ecxSpXZX
+Public App Store link: https://apps.apple.com/us/app/action-multicam-remote/id6784017391
 
 ## App Metadata
 
