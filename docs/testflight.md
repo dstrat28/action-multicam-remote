@@ -26,6 +26,8 @@ The normal release path is:
 
 Xcode Cloud owns the build number for cloud archives. If App Store Connect rejects a build-number collision, update the workflow's next build number in App Store Connect under Xcode Cloud > Settings > Build Number, then push a new commit.
 
+If App Store Connect reports `ITMS-90186` or `ITMS-90062` because the current pre-release train is closed or already approved, increment `MARKETING_VERSION` in the Xcode project to a version higher than the approved version. A larger build number alone cannot reopen a closed marketing-version train.
+
 ## Local Fallback
 
 Prefer Xcode Cloud. If a local archive is needed, create an iOS archive in Xcode Organizer or use:
