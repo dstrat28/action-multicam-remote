@@ -451,6 +451,9 @@ private extension BLECameraScanner {
                 return signature.model
             }
         }
+        if normalizedName == "hero" || normalizedName == "goprohero" {
+            return .goproHero
+        }
         return .unknown
     }
 
@@ -487,7 +490,12 @@ private extension BLECameraScanner {
         ("10black", .goproHero10Black),
         ("hd901", .goproHero9Black),
         ("hero9", .goproHero9Black),
-        ("9black", .goproHero9Black)
+        ("9black", .goproHero9Black),
+        ("hero2024", .goproHero),
+        ("hero8", .goproHero8Black),
+        ("8black", .goproHero8Black),
+        ("gopromax", .goproMax),
+        ("max", .goproMax)
     ]
 
     func advertisedServiceUUIDs(from advertisementData: [String: Any]) -> [CBUUID] {
@@ -599,8 +607,9 @@ private extension BLECameraScanner {
         return words.contains("dji")
             || normalizedName.hasPrefix("dji")
             || normalizedName.hasPrefix("osmo")
-            || normalizedName.hasPrefix("action6")
-            || normalizedName.hasPrefix("oa6")
+            || normalizedName.hasPrefix("action")
+            || normalizedName.hasPrefix("oa")
+            || normalizedName.hasPrefix("nano")
             || normalizedName.hasPrefix("pocket3")
             || normalizedName.hasPrefix("op3")
     }
@@ -620,6 +629,12 @@ private extension BLECameraScanner {
     func inferDJIModel(from name: String) -> CameraModel {
         let lowercasedName = name.lowercased()
         let normalizedName = lowercasedName.filter { $0.isLetter || $0.isNumber }
+        if normalizedName.contains("action5pro")
+            || normalizedName.contains("osmoaction5pro")
+            || normalizedName.contains("action5")
+            || normalizedName.contains("oa5") {
+            return .djiOsmoAction5Pro
+        }
         if normalizedName.contains("action6")
             || normalizedName.contains("oa6")
             || normalizedName.contains("osmoaction6") {
@@ -628,11 +643,36 @@ private extension BLECameraScanner {
         if lowercasedName.contains("nano") {
             return .djiOsmoNano
         }
+        if normalizedName.contains("osmo360")
+            || normalizedName.contains("dji360") {
+            return .djiOsmo360
+        }
+        if normalizedName.contains("action4")
+            || normalizedName.contains("oa4")
+            || normalizedName.contains("osmoaction4") {
+            return .djiOsmoAction4
+        }
+        if normalizedName.contains("action3")
+            || normalizedName.contains("oa3")
+            || normalizedName.contains("osmoaction3") {
+            return .djiOsmoAction3
+        }
+        if normalizedName.contains("action2")
+            || normalizedName.contains("oa2")
+            || normalizedName.contains("djiaction2") {
+            return .djiAction2
+        }
         if lowercasedName.contains("pocket 3")
             || lowercasedName.contains("pocket3")
             || lowercasedName.contains("pocket")
             || lowercasedName.contains("op3") {
             return .djiOsmoPocket3
+        }
+        if normalizedName == "action"
+            || normalizedName == "osmoaction"
+            || normalizedName == "djiosmoaction"
+            || normalizedName == "oa1" {
+            return .djiOsmoAction
         }
         return .unknown
     }

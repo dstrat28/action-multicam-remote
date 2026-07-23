@@ -1113,7 +1113,11 @@ private extension Data {
             ("10black", .goproHero10Black),
             ("hd901", .goproHero9Black),
             ("hero9", .goproHero9Black),
-            ("9black", .goproHero9Black)
+            ("9black", .goproHero9Black),
+            ("hero8", .goproHero8Black),
+            ("8black", .goproHero8Black),
+            ("gopromax", .goproMax),
+            ("max", .goproMax)
         ]
     }
 

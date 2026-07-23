@@ -12,13 +12,22 @@ enum CameraModel: String, Identifiable, Codable {
     case goproLitHero = "LIT HERO"
     case goproMax2 = "MAX 2"
     case goproHero13Black = "HERO13 Black"
+    case goproHero = "HERO"
     case goproHero12Black = "HERO12 Black"
     case goproHero11BlackMini = "HERO11 Black Mini"
     case goproHero11Black = "HERO11 Black"
     case goproHero10Black = "HERO10 Black"
     case goproHero9Black = "HERO9 Black"
+    case goproMax = "MAX"
+    case goproHero8Black = "HERO8 Black"
+    case djiOsmoAction5Pro = "Osmo Action 5 Pro"
     case djiOsmoAction6 = "Osmo Action 6"
     case djiOsmoNano = "Osmo Nano"
+    case djiOsmo360 = "Osmo 360"
+    case djiOsmoAction4 = "Osmo Action 4"
+    case djiOsmoAction3 = "Osmo Action 3"
+    case djiAction2 = "DJI Action 2"
+    case djiOsmoAction = "Osmo Action"
     case djiOsmoPocket3 = "Osmo Pocket 3"
     case unknown = "Unknown Camera"
 
@@ -29,13 +38,24 @@ enum CameraModel: String, Identifiable, Codable {
         case .goproLitHero,
              .goproMax2,
              .goproHero13Black,
+             .goproHero,
              .goproHero12Black,
              .goproHero11BlackMini,
              .goproHero11Black,
              .goproHero10Black,
-             .goproHero9Black:
+             .goproHero9Black,
+             .goproMax,
+             .goproHero8Black:
             .gopro
-        case .djiOsmoAction6, .djiOsmoNano, .djiOsmoPocket3:
+        case .djiOsmoAction5Pro,
+             .djiOsmoAction6,
+             .djiOsmoNano,
+             .djiOsmo360,
+             .djiOsmoAction4,
+             .djiOsmoAction3,
+             .djiAction2,
+             .djiOsmoAction,
+             .djiOsmoPocket3:
             .dji
         case .unknown:
             .unknown
@@ -55,7 +75,19 @@ extension CameraModel {
              .goproHero10Black,
              .goproHero9Black:
             true
-        case .djiOsmoAction6, .djiOsmoNano, .djiOsmoPocket3, .unknown:
+        case .goproHero,
+             .goproMax,
+             .goproHero8Black,
+             .djiOsmoAction5Pro,
+             .djiOsmoAction6,
+             .djiOsmoNano,
+             .djiOsmo360,
+             .djiOsmoAction4,
+             .djiOsmoAction3,
+             .djiAction2,
+             .djiOsmoAction,
+             .djiOsmoPocket3,
+             .unknown:
             false
         }
     }
@@ -304,6 +336,8 @@ struct CameraTelemetry: Equatable, Codable {
 
 enum CameraBehaviorKind: Equatable {
     case goProOpen
+    case djiOsmoAction4
+    case djiOsmoAction5Pro
     case djiOsmoAction6
     case djiOsmoNano
     case djiOsmoPocket3
@@ -358,6 +392,39 @@ struct CameraBehaviorProfile: Equatable {
                 trustsDJIRecordingTimerStatus: false,
                 trustsDJIRecordingHints: false,
                 trustsDJIStoppedStatusToClearActiveRecording: false
+            )
+        }
+
+        if model == .djiOsmoAction5Pro
+            || normalizedName.contains("action5pro")
+            || normalizedName.contains("osmoaction5pro")
+            || normalizedName.contains("action5")
+            || normalizedName.contains("oa5") {
+            return CameraBehaviorProfile(
+                kind: .djiOsmoAction5Pro,
+                assumesRecordingAfterUnconfirmedDJIStart: false,
+                preservesActiveDJIRecordingAcrossReconnect: false,
+                trustsDJICompactRecordingStatus: false,
+                trustsDJIFullRecordingStatus: true,
+                trustsDJIRecordingTimerStatus: false,
+                trustsDJIRecordingHints: false,
+                trustsDJIStoppedStatusToClearActiveRecording: true
+            )
+        }
+
+        if model == .djiOsmoAction4
+            || normalizedName.contains("action4")
+            || normalizedName.contains("osmoaction4")
+            || normalizedName.contains("oa4") {
+            return CameraBehaviorProfile(
+                kind: .djiOsmoAction4,
+                assumesRecordingAfterUnconfirmedDJIStart: false,
+                preservesActiveDJIRecordingAcrossReconnect: false,
+                trustsDJICompactRecordingStatus: false,
+                trustsDJIFullRecordingStatus: true,
+                trustsDJIRecordingTimerStatus: false,
+                trustsDJIRecordingHints: false,
+                trustsDJIStoppedStatusToClearActiveRecording: true
             )
         }
 
@@ -481,10 +548,20 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
              .goproHero11Black,
              .goproHero10Black,
              .goproHero9Black,
+             .djiOsmoAction4,
+             .djiOsmoAction5Pro,
              .djiOsmoAction6,
              .djiOsmoNano:
             return true
-        case .djiOsmoPocket3, .unknown:
+        case .goproHero,
+             .goproMax,
+             .goproHero8Black,
+             .djiOsmo360,
+             .djiOsmoAction3,
+             .djiAction2,
+             .djiOsmoAction,
+             .djiOsmoPocket3,
+             .unknown:
             break
         }
 
@@ -513,7 +590,14 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
         }
 
         if brand == .dji {
-            return normalizedName.contains("action6")
+            return normalizedName.contains("action4")
+                || normalizedName.contains("osmoaction4")
+                || normalizedName.contains("oa4")
+                || normalizedName.contains("action5pro")
+                || normalizedName.contains("osmoaction5pro")
+                || normalizedName.contains("action5")
+                || normalizedName.contains("oa5")
+                || normalizedName.contains("action6")
                 || normalizedName.contains("osmoaction6")
                 || normalizedName.contains("oa6")
                 || normalizedName.contains("nano")
@@ -554,6 +638,14 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
 
     var isKnownAction6: Bool {
         behavior.kind == .djiOsmoAction6
+    }
+
+    var isKnownAction5Pro: Bool {
+        behavior.kind == .djiOsmoAction5Pro
+    }
+
+    var isKnownAction4: Bool {
+        behavior.kind == .djiOsmoAction4
     }
 
     var canAttemptWakeFromNotConnected: Bool {

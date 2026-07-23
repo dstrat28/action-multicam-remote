@@ -240,7 +240,10 @@ struct CameraRowView: View {
     }
 
     private var shouldShowDiagnosticDetail: Bool {
-        camera.isKnownAction6 || camera.connectionState != .connected
+        camera.isKnownAction4
+            || camera.isKnownAction5Pro
+            || camera.isKnownAction6
+            || camera.connectionState != .connected
     }
 }
 
@@ -275,9 +278,10 @@ struct CameraProductThumbnail: View {
                     .scaleEffect(assetScale)
                     .offset(x: imageOffsetX)
             } else {
-                Image(systemName: "camera.fill")
-                    .font(.system(size: fallbackIconSize, weight: .semibold))
-                    .foregroundStyle(brand.badgeColor)
+                Image(systemName: "camera")
+                    .symbolRenderingMode(.monochrome)
+                    .font(.system(size: fallbackIconSize, weight: .medium))
+                    .foregroundStyle(.secondary)
             }
         }
         .frame(width: size.dimensions.width, height: size.dimensions.height)
@@ -287,18 +291,33 @@ struct CameraProductThumbnail: View {
 
     private var assetScale: CGFloat {
         switch model {
-        case .djiOsmoAction6, .djiOsmoNano:
+        case .djiOsmoAction5Pro:
+            0.9
+        case .djiOsmoAction6,
+             .djiOsmoNano,
+             .djiOsmoAction4,
+             .djiOsmoAction3,
+             .djiOsmoAction:
             1.22
+        case .djiAction2:
+            1.2
         case .goproHero13Black:
             1.02
         case .goproLitHero,
-             .goproMax2,
+             .goproHero,
              .goproHero12Black,
-             .goproHero11BlackMini,
              .goproHero11Black,
              .goproHero10Black,
              .goproHero9Black,
-             .djiOsmoPocket3,
+             .goproHero8Black:
+            1.22
+        case .goproHero11BlackMini:
+            1.15
+        case .goproMax2, .goproMax:
+            1.05
+        case .djiOsmo360:
+            1.05
+        case .djiOsmoPocket3,
              .unknown:
             1
         }
@@ -312,11 +331,20 @@ struct CameraProductThumbnail: View {
             -1
         case .goproLitHero,
              .goproMax2,
+             .goproHero,
              .goproHero12Black,
              .goproHero11BlackMini,
              .goproHero11Black,
              .goproHero10Black,
              .goproHero9Black,
+             .goproMax,
+             .goproHero8Black,
+             .djiOsmoAction5Pro,
+             .djiOsmo360,
+             .djiOsmoAction4,
+             .djiOsmoAction3,
+             .djiAction2,
+             .djiOsmoAction,
              .djiOsmoPocket3,
              .unknown:
             0
@@ -325,21 +353,38 @@ struct CameraProductThumbnail: View {
 
     private var assetName: String? {
         switch model {
+        case .djiOsmoAction5Pro:
+            "CameraOsmoAction5Pro"
         case .djiOsmoAction6:
             "CameraOsmoAction6"
         case .djiOsmoNano:
             "CameraOsmoNano"
+        case .djiOsmoAction4, .djiOsmoAction3, .djiOsmoAction:
+            "CameraOsmoActionClassic"
+        case .djiAction2:
+            "CameraDJIAction2"
+        case .djiOsmo360:
+            "CameraOsmo360"
         case .goproHero13Black:
             "CameraGoProHero13"
-        case .goproLitHero,
-             .goproMax2,
-             .goproHero12Black,
-             .goproHero11BlackMini,
+        case .goproLitHero:
+            "CameraGoProLitHero"
+        case .goproMax2:
+            "CameraGoProMax2"
+        case .goproHero:
+            "CameraGoProHero"
+        case .goproHero12Black,
              .goproHero11Black,
              .goproHero10Black,
-             .goproHero9Black,
-             .djiOsmoPocket3,
-             .unknown:
+             .goproHero9Black:
+            "CameraGoProHeroBlackClassic"
+        case .goproHero11BlackMini:
+            "CameraGoProHero11Mini"
+        case .goproMax:
+            "CameraGoProMax"
+        case .goproHero8Black:
+            "CameraGoProHero8"
+        case .djiOsmoPocket3, .unknown:
             nil
         }
     }

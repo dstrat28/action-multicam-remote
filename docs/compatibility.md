@@ -1,6 +1,6 @@
 # Camera Compatibility Notes
 
-Updated: 2026-06-25
+Updated: 2026-07-23
 
 ## Architecture
 
@@ -11,7 +11,7 @@ Brand-specific protocol details live behind `BLECameraDeviceClient` implementati
 - `GoProBLEClient` uses Open GoPro BLE commands, settings, and query/status packets.
 - `DJIExperimentalBLEClient` uses experimental DUML-style packets over DJI BLE services for supported Action/Nano cameras.
 
-The app uses an allowlist for camera control. GoPro models listed by the public Open GoPro BLE API are enabled through the shared GoPro client, with HERO13 Black tested directly. DJI models are enabled only after direct hardware testing because DJI does not publish an equivalent Action/Nano BLE control API.
+The app uses an allowlist for camera control. GoPro models listed by the public Open GoPro BLE API are enabled through the shared GoPro client, with HERO13 Black tested directly. DJI models are enabled individually with model-scoped behavior and remain clearly marked untested until verified because DJI does not publish an equivalent Action/Nano BLE control API.
 
 ## GoPro HERO13 Black
 
@@ -58,6 +58,46 @@ Known limits:
 - These models have not been verified locally with hardware.
 - Wake-from-off, pairing UX, mode switching, and setting/status labels may vary by firmware or model.
 - MAX/MAX 2 behavior may require additional camera-specific mode handling because 360 camera settings differ from HERO cameras.
+
+## DJI Osmo Action 4
+
+Status: experimental, untested.
+
+Evidence:
+
+- [DJI documents](https://repair.dji.com/help/content?customId=01700008289&lang=en&paperDocType=ARTICLE&re=US&spaceId=17) that its GPS Bluetooth Remote Controller connects to Action 4, Action 5 Pro, and Action 6 over Bluetooth.
+- The same official documentation describes multi-camera control of up to 16 cameras for those three Action models and explicitly excludes Osmo 360 from multi-control.
+- That makes Action 4 a strong candidate for the app's shared Bluetooth control path, but it does not prove that DJI's remote protocol and the app's R SDK packets are identical.
+
+Implemented:
+
+- name-based model detection for Action 4, Osmo Action 4, and OA4 advertisements;
+- pairing and BLE connection through the shared DJI R SDK handshake path;
+- conservative recording-state behavior matching the unverified Action 5 profile;
+- existing front-view Action-series product thumbnail.
+
+Known limits:
+
+- Connection, record start/stop, and recording-state interpretation require direct Action 4 hardware verification.
+- Put the camera in Video mode on-device before testing recording.
+- Wake, mode switching, and settings control are not claimed.
+
+## DJI Osmo Action 5 Pro
+
+Status: experimental, untested.
+
+Implemented:
+
+- name-based model detection for Action 5, Action 5 Pro, and OA5 advertisements;
+- pairing and BLE connection through the shared DJI R SDK handshake path;
+- conservative recording-state behavior that does not inherit Action 6-specific assumptions.
+
+Known limits:
+
+- Connection and record control require direct hardware verification.
+- Legacy DUML routing and fallback commands are not claimed as model-specific Action 5 support.
+- Put the camera in Video mode on-device before testing recording.
+- Settings control is not mapped.
 
 ## DJI Osmo Action 6
 
@@ -117,7 +157,7 @@ Current decision:
 
 Status: not supported.
 
-Any camera outside the documented Open GoPro BLE list, DJI Osmo Action 6, and DJI Osmo Nano is shown as Unsupported. Future GoPro models, older unsupported GoPro models, and other DJI models stay disabled until their BLE behavior is tested or documented clearly enough to map explicitly.
+Any camera outside the documented Open GoPro BLE list, DJI Osmo Action 4, DJI Osmo Action 5 Pro, DJI Osmo Action 6, and DJI Osmo Nano is shown as Unsupported. Recent unsupported models are still recognized visually: GoPro HERO, MAX, and HERO8 Black, plus DJI Osmo 360, Osmo Action 3, DJI Action 2, and the original Osmo Action. They receive front-view product thumbnails but stay disabled until their BLE behavior is tested or documented clearly enough to map explicitly. Cameras without a product asset use a neutral camera icon.
 
 ## Next Proof Gates
 

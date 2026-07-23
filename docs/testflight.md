@@ -17,11 +17,12 @@ Public App Store link: https://apps.apple.com/us/app/action-multicam-remote/id67
 
 The normal release path is:
 
-1. Push to GitHub.
-2. Let the configured Xcode Cloud workflow archive the app.
-3. Wait for App Store Connect to finish processing the build.
-4. Add the processed build to the desired TestFlight group.
-5. Submit for Beta App Review when required.
+1. Push the release commit to `main`; this starts the configured Xcode Cloud workflow.
+2. For an explicit TestFlight rollout, create and push the next sequential `testflight-0.1.N` tag on that same commit. The tag is a release marker, not the app's marketing version.
+3. Let Xcode Cloud archive the app.
+4. Wait for App Store Connect to finish processing the build.
+5. Add the processed build to the desired TestFlight group.
+6. Submit for Beta App Review when required.
 
 Xcode Cloud owns the build number for cloud archives. If App Store Connect rejects a build-number collision, update the workflow's next build number in App Store Connect under Xcode Cloud > Settings > Build Number, then push a new commit.
 
