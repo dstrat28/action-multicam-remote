@@ -94,7 +94,7 @@ struct CameraRowView: View {
     }
 
     private var identityRow: some View {
-        HStack(alignment: .center, spacing: 8) {
+        HStack(alignment: .center, spacing: 6) {
             CameraProductThumbnail(model: camera.model, brand: camera.brand, size: .card)
 
             Text(camera.name)
