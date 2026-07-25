@@ -9,31 +9,37 @@ struct CameraDashboardView: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    SessionReadiness()
+            ZStack {
+                ACRAtmosphericBackground()
 
-                    CameraListView(
-                        isShowingDiagnostics: activeDiagnosticsVisibility,
-                        onManage: {
-                            isManagingCameras = true
-                        },
-                        onShowCameraDetails: { camera in
-                            guard camera.isConnected else { return }
-                            selectedCameraDetails = CameraDetailSelection(id: camera.id)
+                ScrollView {
+                    ACRGlassEffectContainer(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            SessionReadiness()
+
+                            CameraListView(
+                                isShowingDiagnostics: activeDiagnosticsVisibility,
+                                onManage: {
+                                    isManagingCameras = true
+                                },
+                                onShowCameraDetails: { camera in
+                                    guard camera.isConnected else { return }
+                                    selectedCameraDetails = CameraDetailSelection(id: camera.id)
+                                }
+                            )
+                            #if DEBUG
+                            DiagnosticsView(isExpanded: $isShowingDiagnostics)
+                            #endif
                         }
-                    )
-                    #if DEBUG
-                    DiagnosticsView(isExpanded: $isShowingDiagnostics)
-                    #endif
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+                    .padding(.bottom, 24)
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.horizontal, 16)
-                .padding(.top, 6)
-                .padding(.bottom, 24)
+                .background(Color.clear)
             }
-            .background(Color.acrAppBackground)
-            .navigationTitle("Multicam Remote")
+            .navigationTitle(Text("Multicam Remote").fontDesign(.rounded))
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -48,7 +54,8 @@ struct CameraDashboardView: View {
             .safeAreaInset(edge: .bottom, spacing: 0) {
                 MulticamRecordBar()
                     .padding(.horizontal, 16)
-                    .padding(.top, 8)
+                    .padding(.top, 10)
+                    .padding(.bottom, 4)
             }
             .sheet(isPresented: $isManagingCameras) {
                 NavigationStack {
@@ -121,23 +128,17 @@ private struct MulticamRecordBar: View {
             actionButton
         }
         .frame(minHeight: 56, alignment: .center)
-        .padding(.leading, 16)
-        .padding(.trailing, 8)
-        .padding(.vertical, 8)
-        .background(
-            .regularMaterial,
-            in: RoundedRectangle(cornerRadius: ACRDesign.controlBarCornerRadius, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: ACRDesign.controlBarCornerRadius, style: .continuous)
-                .stroke(Color.acrLine.opacity(0.7), lineWidth: 1)
-        }
+        .padding(.leading, 18)
+        .padding(.trailing, 10)
+        .padding(.vertical, 10)
+        .acrFloatingControlBar()
         .frame(maxWidth: .infinity)
     }
 
     private var selectionLabel: some View {
         Text(selectionSummary)
-            .font(.subheadline.weight(.semibold))
+            .font(.body.weight(.semibold))
+            .fontDesign(.rounded)
             .foregroundStyle(Color.acrInk)
             .lineLimit(1)
     }
@@ -151,13 +152,23 @@ private struct MulticamRecordBar: View {
                 Text(title)
             }
                 .font(.headline.weight(.semibold))
+                .fontDesign(.rounded)
                 .foregroundStyle(isEnabled ? Color.white : Color.acrMutedText)
                 .frame(minWidth: 148)
-                .frame(height: 56)
+                .frame(height: 58)
                 .padding(.horizontal, 12)
                 .background(
-                    buttonFill,
-                    in: RoundedRectangle(cornerRadius: ACRDesign.buttonCornerRadius, style: .continuous)
+                        buttonFill,
+                        in: RoundedRectangle(cornerRadius: ACRDesign.buttonCornerRadius, style: .continuous)
+                    )
+                .overlay {
+                    RoundedRectangle(cornerRadius: ACRDesign.buttonCornerRadius, style: .continuous)
+                        .stroke(Color.white.opacity(isEnabled ? 0.20 : 0.06), lineWidth: 1)
+                }
+                .shadow(
+                    color: isEnabled ? Color.acrRecord.opacity(0.38) : .clear,
+                    radius: 16,
+                    y: 6
                 )
         }
         .buttonStyle(.plain)
@@ -177,9 +188,14 @@ private struct MulticamRecordBar: View {
         store.canStopMulticamRecording || store.canStartMulticamRecording
     }
 
-    private var buttonFill: Color {
-        guard isEnabled else { return Color.secondary.opacity(0.22) }
-        return .acrRecord
+    private var buttonFill: LinearGradient {
+        LinearGradient(
+            colors: isEnabled
+                ? [Color(red: 1.00, green: 0.22, blue: 0.28), Color.acrRecord, Color(red: 0.78, green: 0.04, blue: 0.12)]
+                : [Color.secondary.opacity(0.24), Color.secondary.opacity(0.18)],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
     }
 
     private var selectionSummary: String {
@@ -214,6 +230,7 @@ private struct CameraListView: View {
 
                     Text("No cameras yet")
                         .font(.headline)
+                        .fontDesign(.rounded)
 
                     Text("Pair a DJI or GoPro camera to start controlling a session.")
                         .font(.subheadline)
@@ -236,7 +253,7 @@ private struct CameraListView: View {
                 LazyVGrid(
                     columns: [GridItem(.adaptive(minimum: 330), spacing: 10, alignment: .top)],
                     alignment: .leading,
-                    spacing: 8
+                    spacing: 7
                 ) {
                     ForEach(Array(store.pairedCameras.enumerated()), id: \.element.id) { index, camera in
                         CameraRowView(

@@ -9,7 +9,7 @@ struct CameraRowView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: camera.isConnected ? 9 : 6) {
+            VStack(alignment: .leading, spacing: camera.isConnected ? 6 : 5) {
                 identityRow
                 connectionRow
 
@@ -20,18 +20,19 @@ struct CameraRowView: View {
                 guard camera.isConnected else { return }
                 onShowDetails()
             }
-            .padding(.horizontal, 14)
-            .padding(.top, camera.isConnected ? 14 : 8)
-            .padding(.bottom, 14)
+            .padding(.horizontal, 16)
+            .padding(.top, camera.isConnected ? 10 : 9)
+            .padding(.bottom, camera.isConnected ? 10 : 9)
 
             if camera.isConnected, showsCaptureBar {
                 Divider()
-                    .padding(.horizontal, 14)
+                    .overlay(Color.acrLine.opacity(0.58))
+                    .padding(.horizontal, 16)
 
                 HStack(spacing: 10) {
                     if let captureSummary {
                         Text(captureSummary)
-                            .font(.subheadline.weight(.medium))
+                            .font(.subheadline.weight(.semibold))
                             .foregroundStyle(Color.acrInk)
                             .lineLimit(1)
                             .minimumScaleFactor(0.78)
@@ -43,20 +44,16 @@ struct CameraRowView: View {
                         CameraRecordButton(camera: camera)
                     }
                 }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
             }
         }
         .frame(
             minHeight: matchesConnectedPeerHeight ? 168 : nil,
             alignment: .top
         )
-        .background(Color.acrSurface, in: RoundedRectangle(cornerRadius: ACRDesign.cardCornerRadius, style: .continuous))
         .clipShape(RoundedRectangle(cornerRadius: ACRDesign.cardCornerRadius, style: .continuous))
-        .overlay {
-            RoundedRectangle(cornerRadius: ACRDesign.cardCornerRadius, style: .continuous)
-                .stroke(rowStroke, lineWidth: 1)
-        }
+        .acrCard(fill: Color.acrSurface, stroke: rowStroke, interactive: camera.isConnected)
     }
 
     private var selectionColor: Color {
@@ -72,10 +69,10 @@ struct CameraRowView: View {
 
     private var rowStroke: Color {
         if camera.recordingState == .recording {
-            return Color.acrRecord.opacity(0.55)
+            return Color.acrRecord.opacity(0.48)
         }
         if camera.isSelected {
-            return Color.acrAvailable.opacity(0.42)
+            return Color.acrAvailable.opacity(0.30)
         }
         return Color.acrLine.opacity(0.85)
     }
@@ -88,7 +85,7 @@ struct CameraRowView: View {
             Image(systemName: camera.isSelected ? "checkmark.circle.fill" : "circle")
                 .font(.title2)
                 .foregroundStyle(selectionColor)
-                .frame(width: 36, height: 36)
+                .frame(width: 44, height: 44, alignment: .trailing)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -97,11 +94,12 @@ struct CameraRowView: View {
     }
 
     private var identityRow: some View {
-        HStack(alignment: .center, spacing: 4) {
+        HStack(alignment: .center, spacing: 8) {
             CameraProductThumbnail(model: camera.model, brand: camera.brand, size: .card)
 
             Text(camera.name)
                 .font(.headline.weight(.bold))
+                .fontDesign(.rounded)
                 .foregroundStyle(Color.acrInk)
                 .lineLimit(2)
                 .minimumScaleFactor(0.82)
@@ -258,7 +256,7 @@ struct CameraProductThumbnail: View {
             case .small:
                 CGSize(width: 38, height: 32)
             case .card:
-                CGSize(width: 38, height: 36)
+                CGSize(width: 46, height: 42)
             case .detail:
                 CGSize(width: 70, height: 58)
             }
