@@ -63,6 +63,87 @@ enum CameraModel: String, Identifiable, Codable {
     }
 }
 
+struct DJICameraNameClassifier {
+    static func isCredibleCameraName(_ name: String) -> Bool {
+        let signature = Signature(name)
+        return signature.hasDJIBrand || model(for: name) != .unknown
+    }
+
+    static func model(for name: String) -> CameraModel {
+        let signature = Signature(name)
+
+        if signature.matches(["action5pro", "action5", "oa5"]) {
+            return .djiOsmoAction5Pro
+        }
+        if signature.matches(["action6", "oa6"]) {
+            return .djiOsmoAction6
+        }
+        if signature.words.contains("nano")
+            || signature.normalized.contains("osmonano")
+            || (signature.hasDJIBrand && signature.normalized.contains("nano")) {
+            return .djiOsmoNano
+        }
+        if signature.matches(["osmo360", "dji360"]) {
+            return .djiOsmo360
+        }
+        if signature.matches(["action4", "oa4"]) {
+            return .djiOsmoAction4
+        }
+        if signature.matches(["action3", "oa3"]) {
+            return .djiOsmoAction3
+        }
+        if signature.matches(["action2", "oa2"]) {
+            return .djiAction2
+        }
+        if signature.matches(["pocket3", "op3"]) {
+            return .djiOsmoPocket3
+        }
+        if signature.normalized == "action"
+            || signature.normalized == "osmoaction"
+            || signature.normalized == "djiosmoaction"
+            || signature.normalized == "oa1" {
+            return .djiOsmoAction
+        }
+
+        return .unknown
+    }
+
+    private struct Signature {
+        var normalized: String
+        var words: Set<String>
+
+        init(_ name: String) {
+            let lowercasedName = name.lowercased()
+            normalized = lowercasedName.filter { $0.isLetter || $0.isNumber }
+            words = Set(
+                lowercasedName
+                    .split { !$0.isLetter && !$0.isNumber }
+                    .map(String.init)
+            )
+        }
+
+        var hasDJIBrand: Bool {
+            words.contains("dji") || normalized.hasPrefix("dji")
+        }
+
+        var hasCameraBrand: Bool {
+            hasDJIBrand
+                || words.contains("osmo")
+                || normalized.hasPrefix("osmoaction")
+                || normalized.hasPrefix("osmonano")
+                || normalized.hasPrefix("osmo360")
+                || normalized.hasPrefix("osmopocket")
+        }
+
+        func matches(_ aliases: [String]) -> Bool {
+            if hasCameraBrand, aliases.contains(where: normalized.contains) {
+                return true
+            }
+            return aliases.contains(where: normalized.hasPrefix)
+        }
+    }
+}
+
 extension CameraModel {
     var isOpenGoProCompatible: Bool {
         switch self {
@@ -361,6 +442,7 @@ struct CameraBehaviorProfile: Equatable {
         name: String
     ) -> CameraBehaviorProfile {
         let normalizedName = name.lowercased().filter { $0.isLetter || $0.isNumber }
+        let inferredDJIModel = DJICameraNameClassifier.model(for: name)
 
         if model.isOpenGoProCompatible
             || normalizedName.contains("hero13")
@@ -395,11 +477,7 @@ struct CameraBehaviorProfile: Equatable {
             )
         }
 
-        if model == .djiOsmoAction5Pro
-            || normalizedName.contains("action5pro")
-            || normalizedName.contains("osmoaction5pro")
-            || normalizedName.contains("action5")
-            || normalizedName.contains("oa5") {
+        if model == .djiOsmoAction5Pro || inferredDJIModel == .djiOsmoAction5Pro {
             return CameraBehaviorProfile(
                 kind: .djiOsmoAction5Pro,
                 assumesRecordingAfterUnconfirmedDJIStart: false,
@@ -412,10 +490,7 @@ struct CameraBehaviorProfile: Equatable {
             )
         }
 
-        if model == .djiOsmoAction4
-            || normalizedName.contains("action4")
-            || normalizedName.contains("osmoaction4")
-            || normalizedName.contains("oa4") {
+        if model == .djiOsmoAction4 || inferredDJIModel == .djiOsmoAction4 {
             return CameraBehaviorProfile(
                 kind: .djiOsmoAction4,
                 assumesRecordingAfterUnconfirmedDJIStart: false,
@@ -428,10 +503,7 @@ struct CameraBehaviorProfile: Equatable {
             )
         }
 
-        if model == .djiOsmoAction6
-            || normalizedName.contains("action6")
-            || normalizedName.contains("osmoaction6")
-            || normalizedName.contains("oa6") {
+        if model == .djiOsmoAction6 || inferredDJIModel == .djiOsmoAction6 {
             return CameraBehaviorProfile(
                 kind: .djiOsmoAction6,
                 assumesRecordingAfterUnconfirmedDJIStart: true,
@@ -444,7 +516,7 @@ struct CameraBehaviorProfile: Equatable {
             )
         }
 
-        if model == .djiOsmoNano || normalizedName.contains("nano") {
+        if model == .djiOsmoNano || inferredDJIModel == .djiOsmoNano {
             return CameraBehaviorProfile(
                 kind: .djiOsmoNano,
                 assumesRecordingAfterUnconfirmedDJIStart: true,
@@ -457,10 +529,7 @@ struct CameraBehaviorProfile: Equatable {
             )
         }
 
-        if model == .djiOsmoPocket3
-            || normalizedName.contains("pocket3")
-            || normalizedName.contains("osmopocket3")
-            || normalizedName.contains("op3") {
+        if model == .djiOsmoPocket3 || inferredDJIModel == .djiOsmoPocket3 {
             return CameraBehaviorProfile(
                 kind: .djiOsmoPocket3,
                 assumesRecordingAfterUnconfirmedDJIStart: false,
@@ -590,17 +659,31 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
         }
 
         if brand == .dji {
-            return normalizedName.contains("action4")
-                || normalizedName.contains("osmoaction4")
-                || normalizedName.contains("oa4")
-                || normalizedName.contains("action5pro")
-                || normalizedName.contains("osmoaction5pro")
-                || normalizedName.contains("action5")
-                || normalizedName.contains("oa5")
-                || normalizedName.contains("action6")
-                || normalizedName.contains("osmoaction6")
-                || normalizedName.contains("oa6")
-                || normalizedName.contains("nano")
+            switch DJICameraNameClassifier.model(for: name) {
+            case .djiOsmoAction4,
+                 .djiOsmoAction5Pro,
+                 .djiOsmoAction6,
+                 .djiOsmoNano:
+                return true
+            case .goproLitHero,
+                 .goproMax2,
+                 .goproHero13Black,
+                 .goproHero,
+                 .goproHero12Black,
+                 .goproHero11BlackMini,
+                 .goproHero11Black,
+                 .goproHero10Black,
+                 .goproHero9Black,
+                 .goproMax,
+                 .goproHero8Black,
+                 .djiOsmo360,
+                 .djiOsmoAction3,
+                 .djiAction2,
+                 .djiOsmoAction,
+                 .djiOsmoPocket3,
+                 .unknown:
+                return false
+            }
         }
 
         return false

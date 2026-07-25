@@ -37,6 +37,38 @@ extension Color {
         light: UIColor(red: 0.80, green: 0.88, blue: 1.00, alpha: 1),
         dark: UIColor(red: 0.16, green: 0.25, blue: 0.42, alpha: 1)
     )
+    static let acrCardGlassFill = Color.adaptive(
+        light: UIColor(red: 1.00, green: 1.00, blue: 1.00, alpha: 0.68),
+        dark: UIColor(red: 0.08, green: 0.10, blue: 0.15, alpha: 0.07)
+    )
+    static let acrControlGlassFill = Color.adaptive(
+        light: UIColor(red: 0.98, green: 0.99, blue: 1.00, alpha: 0.78),
+        dark: UIColor(red: 0.08, green: 0.10, blue: 0.15, alpha: 0.07)
+    )
+    static let acrGlassHighlight = Color.adaptive(
+        light: UIColor(red: 1.00, green: 1.00, blue: 1.00, alpha: 0.92),
+        dark: UIColor(red: 1.00, green: 1.00, blue: 1.00, alpha: 0.20)
+    )
+    static let acrAtmosphericTop = Color.adaptive(
+        light: UIColor(red: 1.00, green: 1.00, blue: 1.00, alpha: 0.48),
+        dark: UIColor(red: 1.00, green: 1.00, blue: 1.00, alpha: 0.018)
+    )
+    static let acrAtmosphericVignette = Color.adaptive(
+        light: UIColor(red: 0.30, green: 0.42, blue: 0.58, alpha: 0.045),
+        dark: UIColor(red: 0.00, green: 0.00, blue: 0.00, alpha: 0.20)
+    )
+    static let acrCardShadow = Color.adaptive(
+        light: UIColor(red: 0.10, green: 0.18, blue: 0.30, alpha: 0.10),
+        dark: UIColor(red: 0.00, green: 0.00, blue: 0.00, alpha: 0.26)
+    )
+    static let acrControlShadow = Color.adaptive(
+        light: UIColor(red: 0.10, green: 0.18, blue: 0.30, alpha: 0.14),
+        dark: UIColor(red: 0.00, green: 0.00, blue: 0.00, alpha: 0.34)
+    )
+    static let acrToolbarIcon = Color.adaptive(
+        light: UIColor(red: 0.10, green: 0.36, blue: 0.84, alpha: 1),
+        dark: UIColor(red: 0.94, green: 0.96, blue: 1.00, alpha: 1)
+    )
     static let acrCommandTop = Color.adaptive(
         light: UIColor(red: 0.09, green: 0.14, blue: 0.21, alpha: 1),
         dark: UIColor(red: 0.13, green: 0.18, blue: 0.26, alpha: 1)
@@ -111,9 +143,9 @@ struct ACRAtmosphericBackground: View {
 
             LinearGradient(
                 colors: [
-                    Color.white.opacity(0.018),
+                    Color.acrAtmosphericTop,
                     .clear,
-                    Color.black.opacity(0.20),
+                    Color.acrAtmosphericVignette,
                 ],
                 startPoint: .top,
                 endPoint: .bottom
@@ -135,7 +167,7 @@ extension View {
 
         if #available(iOS 26.0, *) {
             self
-                .background(fill.opacity(0.07), in: shape)
+                .background(Color.acrCardGlassFill, in: shape)
                 .glassEffect(
                     interactive
                         ? .clear.tint(Color.acrGlassTint.opacity(0.15)).interactive()
@@ -146,7 +178,7 @@ extension View {
                     shape.stroke(
                         LinearGradient(
                             colors: [
-                                Color.white.opacity(0.20),
+                                Color.acrGlassHighlight,
                                 stroke.opacity(0.54),
                                 Color.acrAvailable.opacity(0.10),
                             ],
@@ -157,7 +189,7 @@ extension View {
                     )
                 }
                 .shadow(color: Color.acrAvailable.opacity(0.055), radius: 18, y: 8)
-                .shadow(color: Color.black.opacity(0.26), radius: 14, y: 9)
+                .shadow(color: Color.acrCardShadow, radius: 14, y: 8)
         } else {
             self
                 .background(fill, in: shape)
@@ -173,7 +205,7 @@ extension View {
 
         if #available(iOS 26.0, *) {
             self
-                .background(Color.acrSurface.opacity(0.07), in: shape)
+                .background(Color.acrControlGlassFill, in: shape)
                 .glassEffect(
                     .clear.tint(Color.acrGlassTint.opacity(0.15)),
                     in: .rect(cornerRadius: ACRDesign.controlBarCornerRadius)
@@ -182,7 +214,7 @@ extension View {
                     shape.stroke(
                         LinearGradient(
                             colors: [
-                                Color.white.opacity(0.22),
+                                Color.acrGlassHighlight,
                                 Color.acrLine.opacity(0.52),
                                 Color.acrAvailable.opacity(0.12),
                             ],
@@ -193,7 +225,7 @@ extension View {
                     )
                 }
                 .shadow(color: Color.acrAvailable.opacity(0.075), radius: 22, y: 8)
-                .shadow(color: Color.black.opacity(0.34), radius: 20, y: 12)
+                .shadow(color: Color.acrControlShadow, radius: 16, y: 8)
         } else {
             self
                 .background(.regularMaterial, in: shape)

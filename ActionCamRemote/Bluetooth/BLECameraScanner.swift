@@ -50,10 +50,6 @@ private struct KnownCameraProfile {
     var capabilities: Set<CameraCapability>
 }
 
-private enum DJIRSDKBLEUUID {
-    static let service = CBUUID(string: "FFF0")
-}
-
 final class BLECameraScanner: NSObject {
     private lazy var centralManager = CBCentralManager(delegate: self, queue: nil)
     private var wantsScanning = false
@@ -189,11 +185,11 @@ extension BLECameraScanner: CBCentralManagerDelegate {
         advertisementData: [String: Any],
         rssi RSSI: NSNumber
     ) {
-        guard let candidate = identifyCamera(
+        guard let candidate = identifyRememberedCamera(
             peripheral: peripheral,
             advertisementData: advertisementData,
             rssi: RSSI.intValue
-        ) ?? identifyRememberedCamera(
+        ) ?? identifyCamera(
             peripheral: peripheral,
             advertisementData: advertisementData,
             rssi: RSSI.intValue
@@ -263,8 +259,7 @@ private extension BLECameraScanner {
     ) -> DiscoveredCameraCandidate? {
         let advertisedName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
         let services = advertisedServiceUUIDs(from: advertisementData)
-        let hasDJIAdvertisementSignature = isDJIAdvertisement(advertisementData, advertisedServices: services)
-        let name = advertisedName ?? peripheral.name ?? (hasDJIAdvertisementSignature ? "DJI Osmo Camera" : "Unnamed Camera")
+        let name = advertisedName ?? peripheral.name ?? "Unnamed Camera"
         let lowercasedName = name.lowercased()
 
         if services.contains(GoProBLEUUID.serviceControlAndQuery) || lowercasedName.contains("gopro") {
@@ -281,7 +276,7 @@ private extension BLECameraScanner {
             )
         }
 
-        if hasDJIAdvertisementSignature || hasDJINameSignature(name) {
+        if DJICameraNameClassifier.isCredibleCameraName(name) {
             let model = inferDJIModel(from: name)
             return DiscoveredCameraCandidate(
                 id: peripheral.identifier,
@@ -584,36 +579,6 @@ private extension BLECameraScanner {
         }
     }
 
-    func isDJIAdvertisement(_ advertisementData: [String: Any], advertisedServices: [CBUUID]) -> Bool {
-        if advertisedServices.contains(DJIRSDKBLEUUID.service) {
-            return true
-        }
-
-        guard let manufacturerData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
-              manufacturerData.count >= 5 else {
-            return false
-        }
-
-        return manufacturerData[manufacturerData.startIndex] == 0xAA
-            && manufacturerData[manufacturerData.index(manufacturerData.startIndex, offsetBy: 1)] == 0x08
-            && manufacturerData[manufacturerData.index(manufacturerData.startIndex, offsetBy: 4)] == 0xFA
-    }
-
-    func hasDJINameSignature(_ name: String) -> Bool {
-        let lowercasedName = name.lowercased()
-        let normalizedName = lowercasedName.filter { $0.isLetter || $0.isNumber }
-        let words = lowercasedName.split { !$0.isLetter && !$0.isNumber }
-
-        return words.contains("dji")
-            || normalizedName.hasPrefix("dji")
-            || normalizedName.hasPrefix("osmo")
-            || normalizedName.hasPrefix("action")
-            || normalizedName.hasPrefix("oa")
-            || normalizedName.hasPrefix("nano")
-            || normalizedName.hasPrefix("pocket3")
-            || normalizedName.hasPrefix("op3")
-    }
-
     func inferConnectableState(from advertisementData: [String: Any]) -> Bool? {
         if let isConnectable = advertisementData[CBAdvertisementDataIsConnectable] as? Bool {
             return isConnectable
@@ -627,53 +592,6 @@ private extension BLECameraScanner {
     }
 
     func inferDJIModel(from name: String) -> CameraModel {
-        let lowercasedName = name.lowercased()
-        let normalizedName = lowercasedName.filter { $0.isLetter || $0.isNumber }
-        if normalizedName.contains("action5pro")
-            || normalizedName.contains("osmoaction5pro")
-            || normalizedName.contains("action5")
-            || normalizedName.contains("oa5") {
-            return .djiOsmoAction5Pro
-        }
-        if normalizedName.contains("action6")
-            || normalizedName.contains("oa6")
-            || normalizedName.contains("osmoaction6") {
-            return .djiOsmoAction6
-        }
-        if lowercasedName.contains("nano") {
-            return .djiOsmoNano
-        }
-        if normalizedName.contains("osmo360")
-            || normalizedName.contains("dji360") {
-            return .djiOsmo360
-        }
-        if normalizedName.contains("action4")
-            || normalizedName.contains("oa4")
-            || normalizedName.contains("osmoaction4") {
-            return .djiOsmoAction4
-        }
-        if normalizedName.contains("action3")
-            || normalizedName.contains("oa3")
-            || normalizedName.contains("osmoaction3") {
-            return .djiOsmoAction3
-        }
-        if normalizedName.contains("action2")
-            || normalizedName.contains("oa2")
-            || normalizedName.contains("djiaction2") {
-            return .djiAction2
-        }
-        if lowercasedName.contains("pocket 3")
-            || lowercasedName.contains("pocket3")
-            || lowercasedName.contains("pocket")
-            || lowercasedName.contains("op3") {
-            return .djiOsmoPocket3
-        }
-        if normalizedName == "action"
-            || normalizedName == "osmoaction"
-            || normalizedName == "djiosmoaction"
-            || normalizedName == "oa1" {
-            return .djiOsmoAction
-        }
-        return .unknown
+        DJICameraNameClassifier.model(for: name)
     }
 }

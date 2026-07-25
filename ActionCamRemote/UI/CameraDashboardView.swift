@@ -47,6 +47,7 @@ struct CameraDashboardView: View {
                     } label: {
                         Image(systemName: "plus")
                     }
+                    .foregroundStyle(Color.acrToolbarIcon)
                     .accessibilityLabel("Manage cameras")
                     .help("Manage cameras")
                 }
@@ -163,7 +164,12 @@ private struct MulticamRecordBar: View {
                     )
                 .overlay {
                     RoundedRectangle(cornerRadius: ACRDesign.buttonCornerRadius, style: .continuous)
-                        .stroke(Color.white.opacity(isEnabled ? 0.20 : 0.06), lineWidth: 1)
+                        .stroke(
+                            isEnabled
+                                ? Color.white.opacity(0.20)
+                                : Color.acrLine.opacity(0.46),
+                            lineWidth: 1
+                        )
                 }
                 .shadow(
                     color: isEnabled ? Color.acrRecord.opacity(0.38) : .clear,
@@ -221,8 +227,10 @@ private struct CameraListView: View {
     var onShowCameraDetails: (DiscoveredCamera) -> Void
 
     var body: some View {
+        let cameras = dashboardCameras
+
         VStack(alignment: .leading, spacing: 8) {
-            if store.pairedCameras.isEmpty {
+            if cameras.isEmpty {
                 VStack(spacing: 14) {
                     Image(systemName: "camera.badge.ellipsis")
                         .font(.largeTitle)
@@ -255,11 +263,14 @@ private struct CameraListView: View {
                     alignment: .leading,
                     spacing: 7
                 ) {
-                    ForEach(Array(store.pairedCameras.enumerated()), id: \.element.id) { index, camera in
+                    ForEach(Array(cameras.enumerated()), id: \.element.id) { index, camera in
                         CameraRowView(
                             camera: camera,
                             isShowingDiagnostics: isShowingDiagnostics,
-                            matchesConnectedPeerHeight: shouldMatchConnectedPeerHeight(at: index),
+                            matchesConnectedPeerHeight: shouldMatchConnectedPeerHeight(
+                                at: index,
+                                in: cameras
+                            ),
                             onShowDetails: {
                                 onShowCameraDetails(camera)
                             }
@@ -270,8 +281,22 @@ private struct CameraListView: View {
         }
     }
 
-    private func shouldMatchConnectedPeerHeight(at index: Int) -> Bool {
-        let cameras = store.pairedCameras
+    private var dashboardCameras: [DiscoveredCamera] {
+        store.pairedCameras
+            .enumerated()
+            .sorted { lhs, rhs in
+                if lhs.element.isConnected != rhs.element.isConnected {
+                    return lhs.element.isConnected
+                }
+                return lhs.offset < rhs.offset
+            }
+            .map(\.element)
+    }
+
+    private func shouldMatchConnectedPeerHeight(
+        at index: Int,
+        in cameras: [DiscoveredCamera]
+    ) -> Bool {
         guard horizontalSizeClass == .regular,
               cameras.indices.contains(index),
               !cameras[index].isConnected else {

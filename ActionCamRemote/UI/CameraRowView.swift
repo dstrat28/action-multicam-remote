@@ -22,7 +22,7 @@ struct CameraRowView: View {
             }
             .padding(.horizontal, 16)
             .padding(.top, camera.isConnected ? 10 : 9)
-            .padding(.bottom, camera.isConnected ? 10 : 9)
+            .padding(.bottom, camera.isConnected ? 10 : 13)
 
             if camera.isConnected, showsCaptureBar {
                 Divider()

@@ -8,6 +8,15 @@
 - Recording-state screenshot: `/Users/ds/.codex/visualizations/2026/07/25/019f9a64-e08e-7cc1-9550-3009bb21715d/action-cam-option-3-qa/13-compact-recording-release.png`
 - Combined comparison: `/Users/ds/.codex/visualizations/2026/07/25/019f9a64-e08e-7cc1-9550-3009bb21715d/action-cam-option-3-qa/12-reference-vs-compact-release.png`
 - Focused alignment comparison: `/Users/ds/.codex/visualizations/2026/07/25/019f9a64-e08e-7cc1-9550-3009bb21715d/action-cam-option-3-qa/15-selection-alignment-before-after.png`
+- Light-mode regression source capture: `/Users/ds/.codex/visualizations/2026/07/25/019f9a64-e08e-7cc1-9550-3009bb21715d/action-cam-light-mode-qa/01-light-before.png`
+- Refined light-mode implementation: `/Users/ds/.codex/visualizations/2026/07/25/019f9a64-e08e-7cc1-9550-3009bb21715d/action-cam-light-mode-qa/03-light-connected-after.png`
+- Light-mode before/after comparison: `/Users/ds/.codex/visualizations/2026/07/25/019f9a64-e08e-7cc1-9550-3009bb21715d/action-cam-light-mode-qa/05-light-before-after.png`
+- Paired light/dark regression comparison: `/Users/ds/.codex/visualizations/2026/07/25/019f9a64-e08e-7cc1-9550-3009bb21715d/action-cam-light-mode-qa/06-light-dark-paired.png`
+- Light-mode recording state: `/Users/ds/.codex/visualizations/2026/07/25/019f9a64-e08e-7cc1-9550-3009bb21715d/action-cam-light-mode-qa/07-light-recording.png`
+- Disconnected-card padding before: `/Users/ds/.codex/visualizations/2026/07/25/019f9a64-e08e-7cc1-9550-3009bb21715d/action-cam-light-mode-qa/08-disconnected-padding-before.png`
+- Disconnected-card padding after: `/Users/ds/.codex/visualizations/2026/07/25/019f9a64-e08e-7cc1-9550-3009bb21715d/action-cam-light-mode-qa/09-disconnected-padding-after.png`
+- Focused disconnected-card comparison: `/Users/ds/.codex/visualizations/2026/07/25/019f9a64-e08e-7cc1-9550-3009bb21715d/action-cam-light-mode-qa/10-disconnected-padding-before-after.png`
+- Dark-mode spacing regression check: `/Users/ds/.codex/visualizations/2026/07/25/019f9a64-e08e-7cc1-9550-3009bb21715d/action-cam-light-mode-qa/11-dark-padding-regression.png`
 - Target device: iPhone 17 Pro simulator, iOS 26.4, dark appearance
 - State: one connected, selected GoPro HERO13 ready to record
 
@@ -24,6 +33,8 @@
 The combined comparison shows the same app-owned composition and state: large title and add control, connected summary, one compact camera surface, capture settings and row-level Record action, large quiet middle area, and a persistent bottom multicam dock. The camera card now closely matches the concept's vertical density as well as its blue-black atmosphere, clear glass depth, directional rim light, soft radii, cobalt selection, green connection state, and luminous red recording action.
 
 At the normalized comparison size, the title, camera thumbnail, status, battery, capture settings, icons, card edge, row action, and bottom dock are all readable. The focused trailing-column crop verifies the final selection alignment at native screenshot scale. The user-requested thumbnail constraint was also verified directly in code at 46 x 42 points.
+
+The light-mode before/after comparison uses the same simulator, viewport, disconnected state, camera, and app content. It shows the muddy lower vignette removed, the card and floating dock separated cleanly from the background, and the toolbar accent restored. The paired light/dark comparison uses the same connected state and confirms that hierarchy, card density, trailing alignment, imagery, and recording actions remain equivalent across appearances.
 
 ## Required fidelity surfaces
 
@@ -113,9 +124,23 @@ The user identified that the selection glyph was not visually right-aligned with
 
 The accessibility frame and all card spacing were preserved; only the frame alignment changed to `.trailing`. The focused before/after comparison shows the selection glyph now sharing the trailing column with the chevron and Record action. No density, copy, control size, or UX-flow change was introduced.
 
+### Fifth light-appearance pass
+
+The first visual-design pass had only been evaluated in dark appearance. A new native Light-mode capture exposed three P2 appearance regressions: the dark full-screen vignette became a muddy gray lower half, clear glass surfaces lost edge separation against the pale background, and the floating dock inherited an oversized dark shadow. The add control also lacked the blue accent used elsewhere in the interface.
+
+The fix added appearance-aware atmospheric, glass-fill, highlight, shadow, and toolbar-icon tokens. Light mode now uses a restrained blue-gray vignette, higher-opacity white glass, crisp highlight edges, and soft navy elevation; dark mode retains its original blue-black palette and darker depth treatment. The disabled record control also gained an adaptive outline so its boundary remains legible on white glass.
+
+Post-fix evidence includes the same-state before/after comparison, a same-state paired Light/Dark comparison, and a Light-mode recording capture. The card layout, copy, product imagery, fonts, 44-point controls, and UX flows are unchanged. No actionable P0, P1, or P2 issue remains in either appearance.
+
+### Sixth disconnected-card balance pass
+
+The disconnected card used matching 9-point top and bottom insets, but its second-line status glyph and baseline made the lower edge look visually tighter than the upper edge. Because disconnected cards do not have the connected card's capture row, the imbalance was especially noticeable in the compact two-camera state.
+
+Disconnected-card bottom padding increased from 9 to 13 points. The top inset, connected-card measurements, 44-point controls, 46 x 42-point product imagery, 7-point list spacing, and all UX behavior remain unchanged. The focused before/after comparison isolates the GoPro card at native screenshot scale; Light and Dark Release captures verify that the added four points balance the status row without materially reducing the intended three-plus-camera density. No actionable P0, P1, or P2 issue remains.
+
 ## Verification gaps
 
-- The visual target is dark-mode-first; light appearance was not part of this comparison.
+- Light and dark appearances were both checked on the iPhone 17 Pro simulator; other device classes were not part of this appearance pass.
 - Largest Dynamic Type sizes and iPad layouts were not part of this selected-screen fidelity pass.
 - Simulator demo commands validate UI state transitions, not real camera BLE behavior.
 
