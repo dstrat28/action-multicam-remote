@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 
 struct CameraDashboardView: View {
+    @Environment(CameraStore.self) private var store
     @State private var isManagingCameras = false
     @State private var manageCameraDetent: PresentationDetent = .large
     @State private var selectedCameraDetails: CameraDetailSelection?
@@ -41,22 +42,26 @@ struct CameraDashboardView: View {
             }
             .navigationTitle(Text("Multicam Remote").fontDesign(.rounded))
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        isManagingCameras = true
-                    } label: {
-                        Image(systemName: "plus")
+                if !store.pairedCameras.isEmpty {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button {
+                            isManagingCameras = true
+                        } label: {
+                            Image(systemName: "plus")
+                        }
+                        .foregroundStyle(Color.acrToolbarIcon)
+                        .accessibilityLabel("Manage cameras")
+                        .help("Manage cameras")
                     }
-                    .foregroundStyle(Color.acrToolbarIcon)
-                    .accessibilityLabel("Manage cameras")
-                    .help("Manage cameras")
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
-                MulticamRecordBar()
-                    .padding(.horizontal, 16)
-                    .padding(.top, 10)
-                    .padding(.bottom, 4)
+                if !store.pairedCameras.isEmpty {
+                    MulticamRecordBar()
+                        .padding(.horizontal, 16)
+                        .padding(.top, 10)
+                        .padding(.bottom, 4)
+                }
             }
             .sheet(isPresented: $isManagingCameras) {
                 NavigationStack {
@@ -231,32 +236,43 @@ private struct CameraListView: View {
 
         VStack(alignment: .leading, spacing: 8) {
             if cameras.isEmpty {
-                VStack(spacing: 14) {
-                    Image(systemName: "camera.badge.ellipsis")
-                        .font(.largeTitle)
-                        .foregroundStyle(Color.acrAccent)
+                Button {
+                    onManage()
+                } label: {
+                    HStack(spacing: 14) {
+                        Image(systemName: "plus")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(Color.acrAvailable)
+                            .frame(width: 44, height: 44)
+                            .background(
+                                Color.acrAvailable.opacity(0.12),
+                                in: Circle()
+                            )
 
-                    Text("No cameras yet")
-                        .font(.headline)
-                        .fontDesign(.rounded)
+                        Text("Add Camera")
+                            .font(.headline.weight(.semibold))
+                            .fontDesign(.rounded)
+                            .foregroundStyle(Color.acrInk)
 
-                    Text("Pair a DJI or GoPro camera to start controlling a session.")
-                        .font(.subheadline)
-                        .foregroundStyle(Color.acrMutedText)
-                        .multilineTextAlignment(.center)
+                        Spacer(minLength: 8)
 
-                    Button {
-                        onManage()
-                    } label: {
-                        Label("Add Camera", systemImage: "plus")
+                        Image(systemName: "chevron.right")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(Color.acrMutedText)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.acrAccent)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 12)
+                    .frame(minHeight: 72)
+                    .contentShape(Rectangle())
+                    .acrCard(
+                        fill: Color.acrSurface,
+                        stroke: Color.acrLine.opacity(0.8),
+                        interactive: true
+                    )
                 }
+                .buttonStyle(.plain)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 34)
-                .padding(.horizontal, 22)
-                .acrCard(fill: Color.acrSurface, stroke: Color.acrLine.opacity(0.8))
+                .accessibilityLabel("Add Camera")
             } else {
                 LazyVGrid(
                     columns: [GridItem(.adaptive(minimum: 330), spacing: 10, alignment: .top)],
@@ -279,6 +295,7 @@ private struct CameraListView: View {
                 }
             }
         }
+        .padding(.top, 8)
     }
 
     private var dashboardCameras: [DiscoveredCamera] {
