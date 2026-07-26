@@ -23,10 +23,10 @@ final class CameraStore {
     @ObservationIgnored private let availabilityFreshnessInterval: TimeInterval = 10
     @ObservationIgnored private let djiWakeAdvertisementGapInterval: TimeInterval = 5
     @ObservationIgnored private let autoConnectRetryCooldownInterval: TimeInterval = 12
+    @ObservationIgnored private let goProDisconnectReconnectDelay: TimeInterval = 3
     @ObservationIgnored private let availabilityTimeoutDelay: Duration = .seconds(10)
     @ObservationIgnored private let action6ProtocolStalenessInterval: TimeInterval = 5
     @ObservationIgnored private let nanoProtocolStalenessInterval: TimeInterval = 12
-    @ObservationIgnored private let nanoAwakeStabilizationInterval: TimeInterval = 1
     @ObservationIgnored private let goProProtocolStalenessInterval: TimeInterval = 12
     @ObservationIgnored private let modeSwitchDelay: Duration = .milliseconds(1600)
     @ObservationIgnored private let defaultConnectionTimeoutDelay: Duration = .seconds(9)
@@ -38,7 +38,8 @@ final class CameraStore {
     @ObservationIgnored private let defaultStartStateGuardInterval: TimeInterval = 5
     @ObservationIgnored private let maxManualPairConnectionFailures = 3
     @ObservationIgnored private let pocket3StartStateGuardInterval: TimeInterval = 1.5
-    @ObservationIgnored private let stopStateGuardInterval: TimeInterval = 2.5
+    @ObservationIgnored private let defaultStopStateGuardInterval: TimeInterval = 2.5
+    @ObservationIgnored private let nanoStopStateGuardInterval: TimeInterval = 8
     @ObservationIgnored private var wakeRetryTasksByCameraID: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var startRecordingTasksByCameraID: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var videoModeTasksByCameraID: [UUID: Task<Void, Never>] = [:]
@@ -57,7 +58,6 @@ final class CameraStore {
     @ObservationIgnored private var lastDJIAdvertisementByCameraID: [UUID: Date] = [:]
     @ObservationIgnored private var awakeAdvertisementByCameraID: [UUID: Bool] = [:]
     @ObservationIgnored private var awakeAdvertisementSeenAtByCameraID: [UUID: Date] = [:]
-    @ObservationIgnored private var nanoAwakeSinceByCameraID: [UUID: Date] = [:]
     @ObservationIgnored private var ignoreStoppedUntilByCameraID: [UUID: Date] = [:]
     @ObservationIgnored private var ignoreRecordingUntilByCameraID: [UUID: Date] = [:]
     @ObservationIgnored private var pendingStartCameraIDs: Set<UUID> = []
@@ -413,7 +413,6 @@ final class CameraStore {
         lastDJIAdvertisementByCameraID.removeValue(forKey: camera.id)
         awakeAdvertisementByCameraID.removeValue(forKey: camera.id)
         awakeAdvertisementSeenAtByCameraID.removeValue(forKey: camera.id)
-        nanoAwakeSinceByCameraID.removeValue(forKey: camera.id)
         clearStateGuards(for: camera.id)
         pendingStartCameraIDs.remove(camera.id)
         pendingStopCameraIDs.remove(camera.id)
@@ -563,9 +562,6 @@ private extension CameraStore {
             awakeAdvertisementByCameraID[candidate.id] = isAwake
             awakeAdvertisementSeenAtByCameraID[candidate.id] = now
             if isAwake, isNanoAdvertisement {
-                if previousAwakeAdvertisement != true {
-                    nanoAwakeSinceByCameraID[candidate.id] = now
-                }
                 sleepingDJICameraIDs.remove(candidate.id)
                 availabilitySuppressedUntilByCameraID.removeValue(forKey: candidate.id)
                 autoConnectSuppressedUntilByCameraID.removeValue(forKey: candidate.id)
@@ -574,7 +570,6 @@ private extension CameraStore {
                     lastConnectionAttemptByID.removeValue(forKey: candidate.id)
                 }
             } else if !isAwake, isNanoAdvertisement {
-                nanoAwakeSinceByCameraID.removeValue(forKey: candidate.id)
                 sleepingDJICameraIDs.insert(candidate.id)
                 availabilitySuppressedUntilByCameraID[candidate.id] = now.addingTimeInterval(
                     availabilityFreshnessInterval
@@ -756,7 +751,7 @@ private extension CameraStore {
             }
             if !hasQueuedCommand {
                 if camera.behavior.kind == .djiOsmoNano,
-                   !hasStableNanoAwakeAdvertisement(for: camera.id, now: now) {
+                   freshAwakeAdvertisement(for: camera.id, now: now) != true {
                     return false
                 }
 
@@ -795,8 +790,9 @@ private extension CameraStore {
         }
 
         if camera.brand == .gopro {
-            guard camera.isAvailableToConnect else { return false }
-            return freshAwakeAdvertisement(for: camera.id, now: now) == true
+            // A fresh connectable GoPro advertisement is sufficient. Open GoPro
+            // cameras remain connectable while asleep, and connecting wakes them.
+            return camera.isAvailableToConnect
         }
 
         return false
@@ -841,15 +837,6 @@ private extension CameraStore {
         return isAwake
     }
 
-    func hasStableNanoAwakeAdvertisement(for id: UUID, now: Date) -> Bool {
-        guard freshAwakeAdvertisement(for: id, now: now) == true,
-              let awakeSince = nanoAwakeSinceByCameraID[id] else {
-            return false
-        }
-
-        return now.timeIntervalSince(awakeSince) >= nanoAwakeStabilizationInterval
-    }
-
     func protectStartTransition(for camera: DiscoveredCamera) {
         ignoreStoppedUntilByCameraID[camera.id] = Date().addingTimeInterval(startStateGuardInterval(for: camera))
         ignoreRecordingUntilByCameraID.removeValue(forKey: camera.id)
@@ -860,8 +847,14 @@ private extension CameraStore {
     }
 
     func protectStopTransition(for camera: DiscoveredCamera) {
-        ignoreRecordingUntilByCameraID[camera.id] = Date().addingTimeInterval(stopStateGuardInterval)
+        ignoreRecordingUntilByCameraID[camera.id] = Date().addingTimeInterval(stopStateGuardInterval(for: camera))
         ignoreStoppedUntilByCameraID.removeValue(forKey: camera.id)
+    }
+
+    func stopStateGuardInterval(for camera: DiscoveredCamera) -> TimeInterval {
+        camera.behavior.kind == .djiOsmoNano
+            ? nanoStopStateGuardInterval
+            : defaultStopStateGuardInterval
     }
 
     func clearStateGuards(for id: UUID) {
@@ -1310,7 +1303,6 @@ private extension CameraStore {
         cancelConnectedStalenessTimeout(for: id)
         lastProtocolActivityByCameraID.removeValue(forKey: id)
         sleepingDJICameraIDs.insert(id)
-        nanoAwakeSinceByCameraID.removeValue(forKey: id)
         lastDJIAdvertisementByCameraID[id] = Date()
         availabilitySuppressedUntilByCameraID[id] = Date().addingTimeInterval(availabilityFreshnessInterval)
         autoConnectSuppressedUntilByCameraID[id] = Date().addingTimeInterval(availabilityFreshnessInterval)
@@ -2085,7 +2077,9 @@ private extension CameraStore {
                previousState == .connected,
                !pendingStartCameraIDs.contains(id),
                !pendingStopCameraIDs.contains(id) {
-                autoConnectSuppressedUntilByCameraID[id] = Date().addingTimeInterval(90)
+                autoConnectSuppressedUntilByCameraID[id] = Date().addingTimeInterval(
+                    goProDisconnectReconnectDelay
+                )
             }
             if pendingStartCameraIDs.contains(id) {
                 cameras[index].recordingState = .starting
