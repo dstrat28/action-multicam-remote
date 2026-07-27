@@ -95,6 +95,11 @@ enum ACRDesign {
 }
 
 struct ACRPrimaryActionButton: View {
+    enum Appearance: Equatable {
+        case filled
+        case outlined
+    }
+
     enum Size: Equatable {
         case compact
         case large
@@ -134,6 +139,7 @@ struct ACRPrimaryActionButton: View {
     var isEnabled: Bool = true
     var isLoading: Bool = false
     var size: Size = .compact
+    var appearance: Appearance = .filled
     var action: () -> Void
 
     var body: some View {
@@ -141,7 +147,7 @@ struct ACRPrimaryActionButton: View {
             HStack(spacing: 6) {
                 if isLoading {
                     ProgressView()
-                        .tint(.white)
+                        .tint(contentColor)
                         .controlSize(.small)
                 } else {
                     Image(systemName: systemImage)
@@ -153,7 +159,7 @@ struct ACRPrimaryActionButton: View {
             }
             .font(size.font)
             .fontDesign(.rounded)
-            .foregroundStyle(isEnabled || isLoading ? Color.white : Color.acrMutedText)
+            .foregroundStyle(contentColor)
             .frame(minWidth: size.minimumWidth)
             .frame(height: size.height)
             .padding(.horizontal, size.horizontalPadding)
@@ -163,15 +169,12 @@ struct ACRPrimaryActionButton: View {
             )
             .overlay {
                 RoundedRectangle(cornerRadius: ACRDesign.buttonCornerRadius, style: .continuous)
-                    .stroke(
-                        isEnabled || isLoading
-                            ? Color.white.opacity(0.20)
-                            : Color.acrLine.opacity(0.46),
-                        lineWidth: 1
-                    )
+                    .stroke(buttonStroke, lineWidth: strokeWidth)
             }
             .shadow(
-                color: isEnabled ? tint.opacity(size == .large ? 0.12 : 0.08) : .clear,
+                color: showsFilledTreatment
+                    ? tint.opacity(size == .large ? 0.12 : 0.08)
+                    : .clear,
                 radius: size == .large ? 6 : 3,
                 y: size == .large ? 2 : 1
             )
@@ -181,14 +184,47 @@ struct ACRPrimaryActionButton: View {
         .accessibilityLabel(title)
     }
 
+    private var isActive: Bool {
+        isEnabled || isLoading
+    }
+
+    private var showsFilledTreatment: Bool {
+        isActive && appearance == .filled
+    }
+
+    private var contentColor: Color {
+        guard isActive else { return Color.acrMutedText }
+        return appearance == .filled ? .white : tint
+    }
+
+    private var buttonStroke: Color {
+        guard isActive else { return Color.acrLine.opacity(0.46) }
+        return appearance == .filled ? Color.white.opacity(0.20) : tint.opacity(0.82)
+    }
+
+    private var strokeWidth: CGFloat {
+        isActive && appearance == .outlined ? 1.5 : 1
+    }
+
     private var buttonFill: LinearGradient {
         LinearGradient(
-            colors: isEnabled || isLoading
-                ? [tint.opacity(0.82), tint, tint.opacity(0.78)]
-                : [Color.secondary.opacity(0.24), Color.secondary.opacity(0.18)],
+            colors: buttonFillColors,
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )
+    }
+
+    private var buttonFillColors: [Color] {
+        guard isActive else {
+            return [Color.secondary.opacity(0.24), Color.secondary.opacity(0.18)]
+        }
+
+        switch appearance {
+        case .filled:
+            return [tint.opacity(0.82), tint, tint.opacity(0.78)]
+        case .outlined:
+            return [tint.opacity(0.08), tint.opacity(0.03)]
+        }
     }
 }
 

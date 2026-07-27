@@ -609,6 +609,7 @@ private struct CameraRecordButton: View {
             isEnabled: camera.primaryRecordCommand != nil,
             isLoading: isConnectInProgress
                 || camera.recordingState == .starting,
+            appearance: camera.recordingState == .recording ? .filled : .outlined,
             action: performRecordAction
         )
     }
