@@ -55,6 +55,7 @@ final class BLECameraScanner: NSObject {
     private var wantsScanning = false
     private var peripheralsByID: [UUID: CBPeripheral] = [:]
     private var clientsByID: [UUID: any BLECameraDeviceClient] = [:]
+    private var forcedReconnectOptionsByID: [UUID: [String: Any]] = [:]
     private var knownCamerasByID: [UUID: KnownCameraProfile] = [:]
     private var lastAdvertisementLogByID: [UUID: Date] = [:]
 
@@ -122,7 +123,8 @@ final class BLECameraScanner: NSObject {
     func connect(
         to id: UUID,
         client: any BLECameraDeviceClient,
-        enableAutoReconnect: Bool = false
+        enableAutoReconnect: Bool = false,
+        forceReconnect: Bool = false
     ) throws {
         guard let peripheral = peripheralsByID[id] else {
             throw BLEScannerError.peripheralNotFound
@@ -131,6 +133,15 @@ final class BLECameraScanner: NSObject {
         clientsByID[id] = client
         peripheral.delegate = client
         onEvent?(.connectionChanged(id, .connecting))
+
+        if forceReconnect, peripheral.state != .disconnected {
+            forcedReconnectOptionsByID[id] = connectOptions(enableAutoReconnect: enableAutoReconnect)
+            onEvent?(.log("\(peripheral.name ?? "Camera"): closing the stale BLE link before an explicit wake connection."))
+            if peripheral.state != .disconnecting {
+                centralManager.cancelPeripheralConnection(peripheral)
+            }
+            return
+        }
 
         if peripheral.state == .connected {
             onEvent?(.log("\(peripheral.name ?? "Camera"): reusing existing BLE connection."))
@@ -219,6 +230,9 @@ extension BLECameraScanner: CBCentralManagerDelegate {
     ) {
         let message = error?.localizedDescription ?? "Connection failed."
         clientsByID[peripheral.identifier]?.didDisconnect(error: error)
+        if beginForcedReconnectIfPending(for: peripheral) {
+            return
+        }
         clientsByID[peripheral.identifier] = nil
         onEvent?(.log("\(peripheral.name ?? "Camera"): BLE connection failed: \(message)"))
         onEvent?(.connectionChanged(peripheral.identifier, .failed(message)))
@@ -411,23 +425,42 @@ private extension BLECameraScanner {
         error: Error?,
         isReconnecting: Bool
     ) {
-        clientsByID[peripheral.identifier]?.didDisconnect(error: error)
+        let id = peripheral.identifier
+        clientsByID[id]?.didDisconnect(error: error)
 
-        if isReconnecting {
-            onEvent?(.log("\(peripheral.name ?? "Camera"): BLE disconnected; iOS is reconnecting."))
-            onEvent?(.connectionChanged(peripheral.identifier, .reconnecting))
+        if beginForcedReconnectIfPending(for: peripheral) {
             return
         }
 
-        clientsByID[peripheral.identifier] = nil
+        if isReconnecting {
+            onEvent?(.log("\(peripheral.name ?? "Camera"): BLE disconnected; iOS is reconnecting."))
+            onEvent?(.connectionChanged(id, .reconnecting))
+            return
+        }
+
+        clientsByID[id] = nil
 
         if let error {
             onEvent?(.log("\(peripheral.name ?? "Camera"): BLE disconnected: \(error.localizedDescription)"))
-            onEvent?(.connectionChanged(peripheral.identifier, .failed(error.localizedDescription)))
+            onEvent?(.connectionChanged(id, .failed(error.localizedDescription)))
         } else {
             onEvent?(.log("\(peripheral.name ?? "Camera"): BLE disconnected."))
-            onEvent?(.connectionChanged(peripheral.identifier, .disconnected))
+            onEvent?(.connectionChanged(id, .disconnected))
         }
+    }
+
+    func beginForcedReconnectIfPending(for peripheral: CBPeripheral) -> Bool {
+        let id = peripheral.identifier
+        guard let reconnectOptions = forcedReconnectOptionsByID.removeValue(forKey: id),
+              let client = clientsByID[id] else {
+            return false
+        }
+
+        peripheral.delegate = client
+        onEvent?(.log("\(peripheral.name ?? "Camera"): starting a fresh BLE wake connection."))
+        onEvent?(.connectionChanged(id, .connecting))
+        centralManager.connect(peripheral, options: reconnectOptions)
+        return true
     }
 
     func inferGoProModel(from name: String, advertisementData: [String: Any]? = nil) -> CameraModel {

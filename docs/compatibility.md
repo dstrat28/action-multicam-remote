@@ -1,6 +1,6 @@
 # Camera Compatibility Notes
 
-Updated: 2026-07-23
+Updated: 2026-07-26
 
 ## Architecture
 
@@ -27,12 +27,13 @@ Implemented:
 - recording-state reads;
 - hardware model detection;
 - Video preset/group switching;
-- explicit wake/connect/start flow from Available state.
+- automatic connection after the camera is powered on.
 
 Important behavior:
 
-- The app avoids passive auto-connect for remembered GoPros because a BLE connection can wake or keep the camera awake.
-- A GoPro can still be selected and started from Available state; that path is an explicit user command.
+- Sleeping GoPros are shown as Not Connected and cannot be selected or controlled.
+- The app waits for the GoPro advertisement to report that its processor is awake, then connects automatically.
+- Remembered DJI cameras silently probe passive advertisements because Action 4/5/6 do not provide a reliable awake bit. The card remains Not Connected until the protocol confirms the camera is awake, then it becomes Connected automatically.
 
 ## Other Open GoPro BLE Cameras
 
@@ -56,7 +57,7 @@ Implemented:
 Known limits:
 
 - These models have not been verified locally with hardware.
-- Wake-from-off, pairing UX, mode switching, and setting/status labels may vary by firmware or model.
+- Pairing UX, mode switching, and setting/status labels may vary by firmware or model. Wake-from-off is not exposed.
 - MAX/MAX 2 behavior may require additional camera-specific mode handling because 360 camera settings differ from HERO cameras.
 
 ## DJI Osmo Action 4
@@ -75,12 +76,13 @@ Implemented:
 - pairing and BLE connection through the shared DJI R SDK handshake path;
 - conservative recording-state behavior matching the unverified Action 5 profile;
 - existing front-view Action-series product thumbnail.
+- sleeping cameras are shown as Not Connected; iPhone sleep wake is not exposed.
 
 Known limits:
 
 - Connection, record start/stop, and recording-state interpretation require direct Action 4 hardware verification.
 - Put the camera in Video mode on-device before testing recording.
-- Wake, mode switching, and settings control are not claimed.
+- DJI's [official R SDK wake procedure](https://github.com/dji-sdk/Osmo-GPS-Controller-Demo/blob/main/docs/protocol_data_segment.md#camera-power-mode-settings-001a) requires a two-second raw BLE advertisement containing `WKP` plus the reversed camera MAC. iOS apps cannot construct that advertisement or read the camera's BLE MAC, so wake is not claimed.
 
 ## DJI Osmo Action 5 Pro
 
@@ -91,6 +93,7 @@ Implemented:
 - name-based model detection for Action 5, Action 5 Pro, and OA5 advertisements;
 - pairing and BLE connection through the shared DJI R SDK handshake path;
 - conservative recording-state behavior that does not inherit Action 6-specific assumptions.
+- sleeping cameras are shown as Not Connected; iPhone sleep wake is not exposed.
 
 Known limits:
 
@@ -98,6 +101,7 @@ Known limits:
 - Legacy DUML routing and fallback commands are not claimed as model-specific Action 5 support.
 - Put the camera in Video mode on-device before testing recording.
 - Settings control is not mapped.
+- DJI's [official R SDK wake procedure](https://github.com/dji-sdk/Osmo-GPS-Controller-Demo/blob/main/docs/protocol_data_segment.md#camera-power-mode-settings-001a) requires a two-second raw BLE advertisement containing `WKP` plus the reversed camera MAC. iOS apps cannot construct that advertisement or read the camera's BLE MAC, so the app does not expose Wake for DJI cameras.
 
 ## DJI Osmo Action 6
 
@@ -110,10 +114,12 @@ Implemented:
 - record start/stop while the camera is awake and in Video mode;
 - Action 6 recording-state reads from the short `0x70` system-state response;
 - protection against stale compact status packets that report stopped while the camera is actually recording.
+- sleeping cameras are shown as Not Connected; iPhone sleep wake is not exposed.
 
 Known limits:
 
-- Sleep wake has not been observed to work over BLE. DJI Mimo also did not find the Action 6 while it was off in local testing, so this may be a camera/firmware limitation rather than an app bug.
+- DJI documents a separate two-second raw BLE wake advertisement before commands can resume. iOS cannot construct that advertisement or access the camera's BLE MAC, so the app does not expose Wake even though DJI's hardware remote can wake the camera.
+- DJI documents wake only for a single camera in its own remote-controller mode. Multicam tests in this app deliberately address each selected camera through its separate BLE client rather than claiming DJI remote multi-device wake support.
 - Mode switching is not reliable enough to expose as supported. Put the camera in Video mode on-device before recording.
 - Settings control is not mapped.
 

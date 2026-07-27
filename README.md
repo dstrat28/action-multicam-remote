@@ -22,11 +22,11 @@ Release and TestFlight setup notes live in [`docs/testflight.md`](docs/testfligh
 
 | Camera | Status | Notes |
 | --- | --- | --- |
-| GoPro HERO13 Black | Tested | BLE discovery, wake/connect, start/stop recording, recording status, model detection, and Video preset switching are implemented through Open GoPro BLE. |
+| GoPro HERO13 Black | Tested | BLE discovery, automatic connection while powered on, start/stop recording, recording status, model detection, and Video preset switching are implemented through Open GoPro BLE. |
 | GoPro LIT HERO, MAX 2, HERO12 Black, HERO11 Black Mini, HERO11 Black, HERO10 Black, HERO9 Black | Compatible, untested | These models are listed in the public Open GoPro BLE API and use the same BLE client path. Model detection is enabled, but hardware behavior has not been verified locally. |
-| DJI Osmo Action 4 | Experimental, untested | [DJI documents](https://repair.dji.com/help/content?customId=01700008289&lang=en&paperDocType=ARTICLE&re=US&spaceId=17) Bluetooth single- and multi-camera control through its GPS remote. The app enables pairing and the conservative DJI R SDK control path for hardware validation, but record commands and status handling remain unverified. |
-| DJI Osmo Action 5 Pro | Experimental, untested | BLE discovery, pairing, and connection are enabled through the DJI R SDK handshake path for hardware validation. Record commands and status handling have not yet been verified on this model. |
-| DJI Osmo Action 6 | Tested, experimental | BLE connect, start/stop recording in Video mode, and recording-state reads are implemented. Sleep wake has not been observed to work over BLE. DJI mode/settings commands are not considered reliable. |
+| DJI Osmo Action 4 | Experimental, untested | [DJI documents](https://repair.dji.com/help/content?customId=01700008289&lang=en&paperDocType=ARTICLE&re=US&spaceId=17) Bluetooth wake and recording control through its GPS remote. Awake connection and recording use the shared Action 4/5/6 path, but sleeping cameras are shown as Not Connected because iPhone sleep wake is not supported. Direct Action 4 behavior is unverified. |
+| DJI Osmo Action 5 Pro | Experimental, hardware validation in progress | BLE discovery, pairing, connection, and record control are enabled through the DJI R SDK path. Awake behavior is under direct validation; sleeping cameras are shown as Not Connected because iPhone sleep wake is not supported. |
+| DJI Osmo Action 6 | Tested, experimental | BLE connect, start/stop recording in Video mode, and recording-state reads are implemented. Sleeping cameras are shown as Not Connected because DJI's documented wake mechanism requires a raw BLE advertisement that iOS apps cannot reproduce. DJI mode/settings commands are not considered reliable. |
 | DJI Osmo Nano | Tested, experimental | BLE connect, start/stop recording while connected, and recording status are implemented with Nano-specific state handling. Sleep wake may be possible over BLE, but local testing was too unreliable to expose it in the app. DJI mode/settings commands are not considered reliable. |
 | DJI Osmo Pocket 3 | Not supported | The app recognizes Pocket 3 devices but disables pairing, selection, and record controls. Local testing found BLE status traffic, but no working BLE-only record command; DJI's documented phone-control path uses Bluetooth plus Wi-Fi. |
 | Recent GoPro and DJI action cameras outside the supported list | Not supported | HERO, MAX, HERO8 Black, Osmo 360, Osmo Action 3, DJI Action 2, and the original Osmo Action are recognized and shown with product thumbnails, but remain disabled until their BLE behavior is tested and mapped. Unknown cameras use a neutral camera icon. |
@@ -34,7 +34,7 @@ Release and TestFlight setup notes live in [`docs/testflight.md`](docs/testfligh
 ## What Works
 
 - Pair and remember cameras.
-- Show remembered cameras as Connected, Available, or Not Connected.
+- Show remembered cameras as Connected, Connecting, or Not Connected.
 - Select cameras for multicam control.
 - Start all selected cameras.
 - Stop all selected recording cameras.
@@ -48,7 +48,10 @@ Release and TestFlight setup notes live in [`docs/testflight.md`](docs/testfligh
 - DJI recording should be started only when the camera is already in Video mode.
 - DJI Osmo Nano sleep wake may be possible over BLE, but local testing was buggy enough that the app treats sleeping DJI cameras as Not Connected instead of Available.
 - GoPro HERO13 Black is tested directly. Other documented Open GoPro BLE cameras are enabled as compatible but untested.
-- DJI Osmo Action 4 and Action 5 Pro are enabled as experimental hardware-validation profiles. Action 6 and Nano remain the directly tested DJI models.
+- Sleeping GoPros are shown as Not Connected and do not offer Wake. They auto-connect after being powered on.
+- DJI Osmo Action 4, Action 5 Pro, and Action 6 are shown as Not Connected while sleeping and do not offer Wake. DJI's official R SDK wake procedure broadcasts `WKP` plus the camera MAC for two seconds; iOS does not expose the raw BLE advertising and MAC access needed to replicate it.
+- DJI cameras auto-connect when their protocol confirms they are awake. Because Action 4/5/6 can continue advertising while asleep, passive BLE probes remain hidden and the card stays Not Connected until that confirmation arrives.
+- Action 4 follows DJI's documented support and the shared Action 5 profile but remains untested on local hardware.
 - DJI Osmo Pocket 3 is intentionally disabled for now. It appears to require DJI Mimo's Bluetooth plus Wi-Fi control path rather than the BLE-only path this app uses for simultaneous multicam control.
 - The app does not provide live preview or media browsing. Those workflows usually require Wi-Fi and are outside the current Bluetooth-first scope.
 - iOS Simulator cannot connect to physical Bluetooth cameras; use a real iPhone or iPad for hardware testing.

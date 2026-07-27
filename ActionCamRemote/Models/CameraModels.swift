@@ -566,6 +566,10 @@ struct CameraBehaviorProfile: Equatable {
             trustsDJIStoppedStatusToClearActiveRecording: false
         )
     }
+
+    var supportsExperimentalDJISleepWake: Bool {
+        false
+    }
 }
 
 struct DiscoveredCamera: Identifiable, Equatable, Codable {
@@ -698,7 +702,8 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     }
 
     var isAvailableToConnect: Bool {
-        brand == .gopro && connectionState == .discovered
+        connectionState == .discovered
+            && (brand == .gopro || supportsExperimentalDJISleepWake)
     }
 
     var needsGoProPairingMode: Bool {
@@ -708,7 +713,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     }
 
     var isControllable: Bool {
-        isSupportedByApp && (isConnected || isAvailableToConnect)
+        isSupportedByApp && isConnected
     }
 
     var normalizedName: String {
@@ -731,13 +736,13 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
         behavior.kind == .djiOsmoAction4
     }
 
-    var canAttemptWakeFromNotConnected: Bool {
-        false
+    var supportsExperimentalDJISleepWake: Bool {
+        behavior.supportsExperimentalDJISleepWake
     }
 
     var displayConnectionLabel: String {
         guard isSupportedByApp else { return "Unsupported" }
-        if brand == .dji, connectionState == .discovered {
+        if connectionState == .discovered {
             return CameraConnectionState.disconnected.label
         }
         return connectionState.label
@@ -747,13 +752,13 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
         isSupportedByApp
             && isPaired
             && supportsBatchRecord
-            && (isControllable || canAttemptWakeFromNotConnected)
+            && isControllable
     }
 
     var canStartRecording: Bool {
         isPaired
             && supportsBatchRecord
-            && (isControllable || canAttemptWakeFromNotConnected)
+            && isControllable
             && canStartRecordingInCurrentMode
             && recordingState != .recording
             && recordingState != .starting

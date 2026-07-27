@@ -3,13 +3,12 @@ import SwiftUI
 struct CameraRowView: View {
     @Environment(CameraStore.self) private var store
     var camera: DiscoveredCamera
-    var isShowingDiagnostics: Bool
     var matchesConnectedPeerHeight: Bool = false
     var onShowDetails: () -> Void = {}
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: camera.isConnected ? 6 : 5) {
+            VStack(alignment: .leading, spacing: isReadyConnected ? 6 : 5) {
                 identityRow
                 connectionRow
 
@@ -17,14 +16,14 @@ struct CameraRowView: View {
             }
             .contentShape(Rectangle())
             .onTapGesture {
-                guard camera.isConnected else { return }
+                guard isReadyConnected else { return }
                 onShowDetails()
             }
             .padding(.horizontal, 16)
-            .padding(.top, camera.isConnected ? 10 : 9)
-            .padding(.bottom, camera.isConnected ? 10 : 13)
+            .padding(.top, isReadyConnected ? 10 : 9)
+            .padding(.bottom, isReadyConnected ? 10 : 13)
 
-            if camera.isConnected, showsCaptureBar {
+            if showsCaptureBar {
                 Divider()
                     .overlay(Color.acrLine.opacity(0.58))
                     .padding(.horizontal, 16)
@@ -53,7 +52,7 @@ struct CameraRowView: View {
             alignment: .top
         )
         .clipShape(RoundedRectangle(cornerRadius: ACRDesign.cardCornerRadius, style: .continuous))
-        .acrCard(fill: Color.acrSurface, stroke: rowStroke, interactive: camera.isConnected)
+        .acrCard(fill: Color.acrSurface, stroke: rowStroke, interactive: isReadyConnected)
     }
 
     private var selectionColor: Color {
@@ -64,6 +63,9 @@ struct CameraRowView: View {
     }
 
     private var rowAccent: Color {
+        if isConnectInProgress {
+            return .acrWarning
+        }
         return camera.connectionState.statusColor
     }
 
@@ -125,7 +127,7 @@ struct CameraRowView: View {
 
             batteryStatus
 
-            if camera.isConnected {
+            if isReadyConnected {
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.bold))
                     .foregroundStyle(Color.acrMutedText.opacity(0.7))
@@ -136,7 +138,10 @@ struct CameraRowView: View {
     }
 
     private var connectionIndicatorColor: Color {
-        connectionText == CameraConnectionState.disconnected.label
+        if isConnectInProgress {
+            return .acrWarning
+        }
+        return connectionText == CameraConnectionState.disconnected.label
             ? Color.secondary.opacity(0.55)
             : rowAccent
     }
@@ -150,36 +155,20 @@ struct CameraRowView: View {
                 .lineLimit(2)
         }
 
-        #if DEBUG
-        if isShowingDiagnostics {
-            if camera.unsupportedReason == nil,
-               let detail = camera.connectionState.detail {
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(Color.acrMutedText)
-                    .lineLimit(2)
-            }
-
-            if let diagnosticDetail = store.cameraDiagnosticDetail(for: camera),
-               shouldShowDiagnosticDetail {
-                Text(diagnosticDetail)
-                    .font(.caption)
-                    .foregroundStyle(Color.acrMutedText)
-                    .lineLimit(2)
-            }
-        }
-        #endif
     }
 
     private var connectionText: String {
         if camera.recordingState == .recording {
             return "Recording"
         }
+        if isConnectInProgress {
+            return "Connecting"
+        }
         return camera.displayConnectionLabel
     }
 
     private var captureSummary: String? {
-        guard camera.isConnected else { return nil }
+        guard isReadyConnected else { return nil }
         guard let telemetry else { return camera.currentMode?.rawValue }
 
         let settings: [String] = [telemetry.videoResolution, telemetry.frameRate, telemetry.framing]
@@ -194,7 +183,10 @@ struct CameraRowView: View {
     }
 
     private var showsCaptureBar: Bool {
-        captureSummary != nil || (camera.isPaired && camera.supportsBatchRecord)
+        captureSummary != nil
+            || (camera.isPaired
+                && camera.supportsBatchRecord
+                && (isReadyConnected || isConnectInProgress))
     }
 
     @ViewBuilder
@@ -233,16 +225,18 @@ struct CameraRowView: View {
     }
 
     private var telemetry: CameraTelemetry? {
-        guard camera.isConnected else { return nil }
+        guard isReadyConnected else { return nil }
         return camera.telemetry
     }
 
-    private var shouldShowDiagnosticDetail: Bool {
-        camera.isKnownAction4
-            || camera.isKnownAction5Pro
-            || camera.isKnownAction6
-            || camera.connectionState != .connected
+    private var isReadyConnected: Bool {
+        store.isCameraReadyConnected(camera)
     }
+
+    private var isConnectInProgress: Bool {
+        store.isCameraConnectInProgress(camera)
+    }
+
 }
 
 struct CameraProductThumbnail: View {
@@ -608,43 +602,32 @@ private struct CameraRecordButton: View {
     var camera: DiscoveredCamera
 
     var body: some View {
-        Button {
-            performRecordAction()
-        } label: {
-            Text(camera.primaryRecordTitle)
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(recordButtonForeground)
-                .lineLimit(1)
-                .minimumScaleFactor(0.82)
-                .padding(.horizontal, 13)
-                .frame(minWidth: 96)
-                .frame(height: 44)
-                .background(
-                    recordButtonFill,
-                    in: RoundedRectangle(cornerRadius: ACRDesign.buttonCornerRadius, style: .continuous)
-                )
-                .overlay {
-                    RoundedRectangle(cornerRadius: ACRDesign.buttonCornerRadius, style: .continuous)
-                        .stroke(recordButtonStroke, lineWidth: 1)
-                }
+        ACRPrimaryActionButton(
+            title: title,
+            systemImage: systemImage,
+            tint: .acrRecord,
+            isEnabled: camera.primaryRecordCommand != nil,
+            isLoading: isConnectInProgress
+                || camera.recordingState == .starting,
+            action: performRecordAction
+        )
+    }
+
+    private var title: String {
+        if isConnectInProgress {
+            return "Connecting"
         }
-        .buttonStyle(.plain)
-        .disabled(camera.primaryRecordCommand == nil)
-        .accessibilityLabel(camera.primaryRecordTitle)
+        if camera.recordingState == .starting {
+            return "Starting"
+        }
+        if camera.recordingState == .recording {
+            return "Stop"
+        }
+        return "Record"
     }
 
-    private var recordButtonFill: Color {
-        guard camera.primaryRecordCommand != nil else { return Color.secondary.opacity(0.08) }
-        return camera.recordingState == .recording ? .acrRecord : .clear
-    }
-
-    private var recordButtonForeground: Color {
-        guard camera.primaryRecordCommand != nil else { return .acrMutedText }
-        return camera.recordingState == .recording ? .white : .acrRecord
-    }
-
-    private var recordButtonStroke: Color {
-        camera.primaryRecordCommand == nil ? Color.acrLine : Color.acrRecord
+    private var systemImage: String {
+        return camera.recordingState == .recording ? "stop.fill" : "record.circle.fill"
     }
 
     private func performRecordAction() {
@@ -657,6 +640,11 @@ private struct CameraRecordButton: View {
             break
         }
     }
+
+    private var isConnectInProgress: Bool {
+        store.isCameraConnectInProgress(camera)
+    }
+
 }
 
 private enum CameraDetailFormat {

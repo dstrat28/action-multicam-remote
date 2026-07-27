@@ -94,6 +94,104 @@ enum ACRDesign {
     static let insetCornerRadius: CGFloat = 12
 }
 
+struct ACRPrimaryActionButton: View {
+    enum Size: Equatable {
+        case compact
+        case large
+
+        var minimumWidth: CGFloat {
+            switch self {
+            case .compact: 90
+            case .large: 148
+            }
+        }
+
+        var horizontalPadding: CGFloat {
+            switch self {
+            case .compact: 10
+            case .large: 12
+            }
+        }
+
+        var height: CGFloat {
+            switch self {
+            case .compact: 44
+            case .large: 58
+            }
+        }
+
+        var font: Font {
+            switch self {
+            case .compact: .subheadline.weight(.semibold)
+            case .large: .headline.weight(.semibold)
+            }
+        }
+    }
+
+    var title: String
+    var systemImage: String
+    var tint: Color
+    var isEnabled: Bool = true
+    var isLoading: Bool = false
+    var size: Size = .compact
+    var action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if isLoading {
+                    ProgressView()
+                        .tint(.white)
+                        .controlSize(.small)
+                } else {
+                    Image(systemName: systemImage)
+                }
+
+                Text(title)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+            }
+            .font(size.font)
+            .fontDesign(.rounded)
+            .foregroundStyle(isEnabled || isLoading ? Color.white : Color.acrMutedText)
+            .frame(minWidth: size.minimumWidth)
+            .frame(height: size.height)
+            .padding(.horizontal, size.horizontalPadding)
+            .background(
+                buttonFill,
+                in: RoundedRectangle(cornerRadius: ACRDesign.buttonCornerRadius, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: ACRDesign.buttonCornerRadius, style: .continuous)
+                    .stroke(
+                        isEnabled || isLoading
+                            ? Color.white.opacity(0.20)
+                            : Color.acrLine.opacity(0.46),
+                        lineWidth: 1
+                    )
+            }
+            .shadow(
+                color: isEnabled ? tint.opacity(size == .large ? 0.12 : 0.08) : .clear,
+                radius: size == .large ? 6 : 3,
+                y: size == .large ? 2 : 1
+            )
+        }
+        .buttonStyle(.plain)
+        .disabled(!isEnabled || isLoading)
+        .accessibilityLabel(title)
+    }
+
+    private var buttonFill: LinearGradient {
+        LinearGradient(
+            colors: isEnabled || isLoading
+                ? [tint.opacity(0.82), tint, tint.opacity(0.78)]
+                : [Color.secondary.opacity(0.24), Color.secondary.opacity(0.18)],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+}
+
 struct ACRGlassEffectContainer<Content: View>: View {
     var spacing: CGFloat
     private var content: Content

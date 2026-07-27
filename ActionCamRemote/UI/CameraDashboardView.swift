@@ -1,12 +1,16 @@
 import SwiftUI
+#if DEBUG
 import UIKit
+#endif
 
 struct CameraDashboardView: View {
     @Environment(CameraStore.self) private var store
     @State private var isManagingCameras = false
     @State private var manageCameraDetent: PresentationDetent = .large
     @State private var selectedCameraDetails: CameraDetailSelection?
+    #if DEBUG
     @State private var isShowingDiagnostics = false
+    #endif
 
     var body: some View {
         NavigationStack {
@@ -19,18 +23,14 @@ struct CameraDashboardView: View {
                             SessionReadiness()
 
                             CameraListView(
-                                isShowingDiagnostics: activeDiagnosticsVisibility,
                                 onManage: {
                                     isManagingCameras = true
                                 },
                                 onShowCameraDetails: { camera in
-                                    guard camera.isConnected else { return }
+                                    guard store.isCameraReadyConnected(camera) else { return }
                                     selectedCameraDetails = CameraDetailSelection(id: camera.id)
                                 }
                             )
-                            #if DEBUG
-                            DiagnosticsView(isExpanded: $isShowingDiagnostics)
-                            #endif
                         }
                     }
                     .frame(maxWidth: .infinity)
@@ -42,8 +42,19 @@ struct CameraDashboardView: View {
             }
             .navigationTitle(Text("Multicam Remote").fontDesign(.rounded))
             .toolbar {
-                if !store.pairedCameras.isEmpty {
-                    ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItemGroup(placement: .topBarTrailing) {
+                    #if DEBUG
+                    Button {
+                        isShowingDiagnostics = true
+                    } label: {
+                        Image(systemName: "waveform.path.ecg")
+                    }
+                    .foregroundStyle(Color.acrToolbarIcon)
+                    .accessibilityLabel("Open diagnostics")
+                    .help("Diagnostics")
+                    #endif
+
+                    if !store.pairedCameras.isEmpty {
                         Button {
                             isManagingCameras = true
                         } label: {
@@ -76,15 +87,16 @@ struct CameraDashboardView: View {
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
             }
+            #if DEBUG
+            .sheet(isPresented: $isShowingDiagnostics) {
+                NavigationStack {
+                    DiagnosticsSheet()
+                }
+                .presentationDetents([.large])
+                .presentationDragIndicator(.visible)
+            }
+            #endif
         }
-    }
-
-    private var activeDiagnosticsVisibility: Bool {
-        #if DEBUG
-        isShowingDiagnostics
-        #else
-        false
-        #endif
     }
 }
 
@@ -112,13 +124,13 @@ private struct SessionReadiness: View {
     }
 
     private var sessionSummary: String {
-        let count = store.connectedCameras.count
+        let count = store.readyConnectedCameras.count
         guard count > 0 else { return "No cameras connected" }
         return count == 1 ? "1 camera connected" : "\(count) cameras connected"
     }
 
     private var statusColor: Color {
-        store.connectedCameras.isEmpty ? .secondary : .acrReady
+        store.readyConnectedCameras.isEmpty ? .secondary : .acrReady
     }
 }
 
@@ -150,41 +162,14 @@ private struct MulticamRecordBar: View {
     }
 
     private var actionButton: some View {
-        Button {
-            performAction()
-        } label: {
-            HStack(spacing: 5) {
-                Image(systemName: systemImage)
-                Text(title)
-            }
-                .font(.headline.weight(.semibold))
-                .fontDesign(.rounded)
-                .foregroundStyle(isEnabled ? Color.white : Color.acrMutedText)
-                .frame(minWidth: 148)
-                .frame(height: 58)
-                .padding(.horizontal, 12)
-                .background(
-                        buttonFill,
-                        in: RoundedRectangle(cornerRadius: ACRDesign.buttonCornerRadius, style: .continuous)
-                    )
-                .overlay {
-                    RoundedRectangle(cornerRadius: ACRDesign.buttonCornerRadius, style: .continuous)
-                        .stroke(
-                            isEnabled
-                                ? Color.white.opacity(0.20)
-                                : Color.acrLine.opacity(0.46),
-                            lineWidth: 1
-                        )
-                }
-                .shadow(
-                    color: isEnabled ? Color.acrRecord.opacity(0.38) : .clear,
-                    radius: 16,
-                    y: 6
-                )
-        }
-        .buttonStyle(.plain)
-        .disabled(!isEnabled)
-        .accessibilityLabel(title)
+        ACRPrimaryActionButton(
+            title: title,
+            systemImage: systemImage,
+            tint: .acrRecord,
+            isEnabled: isEnabled,
+            size: .large,
+            action: performAction
+        )
     }
 
     private var title: String {
@@ -197,16 +182,6 @@ private struct MulticamRecordBar: View {
 
     private var isEnabled: Bool {
         store.canStopMulticamRecording || store.canStartMulticamRecording
-    }
-
-    private var buttonFill: LinearGradient {
-        LinearGradient(
-            colors: isEnabled
-                ? [Color(red: 1.00, green: 0.22, blue: 0.28), Color.acrRecord, Color(red: 0.78, green: 0.04, blue: 0.12)]
-                : [Color.secondary.opacity(0.24), Color.secondary.opacity(0.18)],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
     }
 
     private var selectionSummary: String {
@@ -227,7 +202,6 @@ private struct MulticamRecordBar: View {
 private struct CameraListView: View {
     @Environment(CameraStore.self) private var store
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
-    var isShowingDiagnostics: Bool
     var onManage: () -> Void
     var onShowCameraDetails: (DiscoveredCamera) -> Void
 
@@ -282,7 +256,6 @@ private struct CameraListView: View {
                     ForEach(Array(cameras.enumerated()), id: \.element.id) { index, camera in
                         CameraRowView(
                             camera: camera,
-                            isShowingDiagnostics: isShowingDiagnostics,
                             matchesConnectedPeerHeight: shouldMatchConnectedPeerHeight(
                                 at: index,
                                 in: cameras
@@ -302,12 +275,24 @@ private struct CameraListView: View {
         store.pairedCameras
             .enumerated()
             .sorted { lhs, rhs in
-                if lhs.element.isConnected != rhs.element.isConnected {
-                    return lhs.element.isConnected
+                let lhsRank = presentationSortRank(for: lhs.element)
+                let rhsRank = presentationSortRank(for: rhs.element)
+                if lhsRank != rhsRank {
+                    return lhsRank < rhsRank
                 }
                 return lhs.offset < rhs.offset
             }
             .map(\.element)
+    }
+
+    private func presentationSortRank(for camera: DiscoveredCamera) -> Int {
+        if store.isCameraReadyConnected(camera) {
+            return 0
+        }
+        if store.isCameraConnectInProgress(camera) {
+            return 1
+        }
+        return 2
     }
 
     private func shouldMatchConnectedPeerHeight(
@@ -316,12 +301,13 @@ private struct CameraListView: View {
     ) -> Bool {
         guard horizontalSizeClass == .regular,
               cameras.indices.contains(index),
-              !cameras[index].isConnected else {
+              !store.isCameraReadyConnected(cameras[index]) else {
             return false
         }
 
         let peerIndex = index.isMultiple(of: 2) ? index + 1 : index - 1
-        return cameras.indices.contains(peerIndex) && cameras[peerIndex].isConnected
+        return cameras.indices.contains(peerIndex)
+            && store.isCameraReadyConnected(cameras[peerIndex])
     }
 }
 
@@ -460,39 +446,96 @@ private struct PairingCameraRow: View {
     }
 }
 
-private struct DiagnosticsView: View {
+#if DEBUG
+private struct DiagnosticsSheet: View {
+    @Environment(\.dismiss) private var dismiss
     @Environment(CameraStore.self) private var store
-    @Binding var isExpanded: Bool
     @State private var didCopyDiagnostics = false
 
     var body: some View {
-        DisclosureGroup(isExpanded: $isExpanded) {
+        ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                HStack {
-                    Button {
-                        UIPasteboard.general.string = store.diagnosticsText
-                        didCopyDiagnostics = true
-                    } label: {
-                        Label(didCopyDiagnostics ? "Copied" : "Copy Diagnostics", systemImage: didCopyDiagnostics ? "checkmark" : "doc.on.doc")
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-
-                    Spacer()
-                }
-
+                CameraDiagnosticsView()
                 DJIStatusProbeView()
                 RecentResultsView()
                 EventLogView()
             }
-            .padding(.top, 10)
-        } label: {
-            Label("Diagnostics", systemImage: "waveform.path.ecg")
-                .font(.headline)
-                .foregroundStyle(Color.acrInk)
+            .frame(maxWidth: 680)
+            .frame(maxWidth: .infinity)
+            .padding(16)
         }
-        .padding()
-        .acrCard(fill: Color.acrSurface.opacity(0.78), stroke: Color.acrLine.opacity(0.9))
+        .background(Color.acrAppBackground)
+        .navigationTitle("Diagnostics")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    UIPasteboard.general.string = store.diagnosticsText
+                    didCopyDiagnostics = true
+                } label: {
+                    Label(
+                        didCopyDiagnostics ? "Copied" : "Copy",
+                        systemImage: didCopyDiagnostics ? "checkmark" : "doc.on.doc"
+                    )
+                }
+            }
+
+            ToolbarItem(placement: .topBarTrailing) {
+                Button("Done") {
+                    dismiss()
+                }
+            }
+        }
+    }
+}
+
+private struct CameraDiagnosticsView: View {
+    @Environment(CameraStore.self) private var store
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Camera State")
+                .font(.headline)
+
+            if store.pairedCameras.isEmpty {
+                Text("No paired cameras.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .acrInsetPanel()
+            } else {
+                ForEach(store.pairedCameras) { camera in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack {
+                            Text(camera.name)
+                                .font(.subheadline.weight(.semibold))
+
+                            Spacer()
+
+                            Text(camera.displayConnectionLabel)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(camera.connectionState.statusColor)
+                        }
+
+                        if let detail = camera.connectionState.detail {
+                            Text(detail)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+
+                        if let diagnostic = store.cameraDiagnosticDetail(for: camera) {
+                            Text(diagnostic)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .acrInsetPanel()
+                }
+            }
+        }
     }
 }
 
@@ -632,6 +675,7 @@ private struct EventLogView: View {
         }
     }
 }
+#endif
 
 #Preview {
     CameraDashboardView()
