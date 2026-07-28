@@ -54,6 +54,10 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
     private var hasSentPairingComplete = false
     private var hasSentThirdPartyClientInfo = false
     private var hasClaimedExternalControl = false
+#if DEBUG
+    private var lastPowerStatusDebugLabel: String?
+    private var lastPowerStatusDebugLogDate = Date.distantPast
+#endif
     private let onStatus: (UUID, CameraConnectionState, String?) -> Void
     private let onCameraStatus: (UUID, CameraStatusUpdate) -> Void
     private let onLog: (String) -> Void
@@ -352,6 +356,7 @@ private extension GoProBLEClient {
         static let remainingPhotosStatusID: UInt8 = 0x22
         static let sdCardRemainingStatusID: UInt8 = 0x36
         static let batteryPercentStatusID: UInt8 = 0x46
+        static let usbConnectedStatusID: UInt8 = 0x73
         static let flatModeStatusID: UInt8 = 0x59
         static let presetGroupStatusID: UInt8 = 0x60
         static let sdCardCapacityStatusID: UInt8 = 0x75
@@ -372,6 +377,7 @@ private extension GoProBLEClient {
             remainingVideoTimeStatusID,
             sdCardRemainingStatusID,
             batteryPercentStatusID,
+            usbConnectedStatusID,
             flatModeStatusID,
             presetGroupStatusID,
             sdCardCapacityStatusID
@@ -709,7 +715,11 @@ private extension GoProBLEClient {
         if responseID == GoProQuery.getStatusValues
             || responseID == GoProQuery.registerStatusUpdates
             || responseID == GoProQuery.statusUpdateNotification {
-            let values = GoProPacket.parseTLVValues(in: valuesPayload)
+            let parsedValues = GoProPacket.parseTLVValues(in: valuesPayload)
+#if DEBUG
+            logPowerStatusDebugValues(parsedValues, rawPayload: Data(valuesPayload))
+#endif
+            let values = parsedValues
                 .filter { Set(GoProQuery.statusIDs).contains($0.key) }
 
             if let busy = values[GoProQuery.busyStatusID]?.first {
@@ -761,6 +771,27 @@ private extension GoProBLEClient {
         executeDeferredCommandIfReady()
     }
 
+#if DEBUG
+    func logPowerStatusDebugValues(_ values: [UInt8: Data], rawPayload: Data) {
+        let valueLabel: (UInt8) -> String = { id in
+            values[id]?.hexString ?? "missing"
+        }
+        let label = "USB 0x73=\(valueLabel(GoProQuery.usbConnectedStatusID)), "
+            + "battery 0x46=\(valueLabel(GoProQuery.batteryPercentStatusID)), "
+            + "bars 0x02=\(valueLabel(GoProQuery.batteryBarsStatusID))"
+        let now = Date()
+
+        guard label != lastPowerStatusDebugLabel
+            || now.timeIntervalSince(lastPowerStatusDebugLogDate) >= 5 else {
+            return
+        }
+
+        onLog("\(cameraName): GoPro power status \(label), raw TLV \(rawPayload.hexString).")
+        lastPowerStatusDebugLabel = label
+        lastPowerStatusDebugLogDate = now
+    }
+#endif
+
     func markProtocolReadyIfNeeded() {
         guard !isProtocolReady, hasReceivedBusyStatus, hasReceivedEncodingStatus else { return }
         isProtocolReady = true
@@ -783,8 +814,22 @@ private extension GoProBLEClient {
             telemetry.batteryPercent = batteryPercent
         }
 
-        if let bars = values[GoProQuery.batteryBarsStatusID]?.boundedInt(max: 4) {
-            telemetry.batteryBars = bars
+        let batteryBars = values[GoProQuery.batteryBarsStatusID]?.boundedInt(max: 4)
+        if let batteryBars {
+            telemetry.batteryBars = batteryBars
+        }
+
+        let usbConnected = values[GoProQuery.usbConnectedStatusID]?.first
+        if let batteryBars {
+            // GoPro reports the otherwise undocumented fourth battery-bars value while
+            // externally powered. Status 115 describes a USB data connection and stays
+            // false when the camera is connected to a wall charger or power bank.
+            telemetry.isExternalPowerConnected = batteryBars == 4 || (usbConnected ?? 0) != 0
+        } else if let usbConnected, usbConnected != 0 {
+            // A positive USB connection is still valid on hosts that establish USB data.
+            // Ignore a lone false value so it cannot clear a charging state reported by
+            // the battery-bars notification.
+            telemetry.isExternalPowerConnected = true
         }
 
         if let remainingVideoSeconds = values[GoProQuery.remainingVideoTimeStatusID]?.unsignedInteger,

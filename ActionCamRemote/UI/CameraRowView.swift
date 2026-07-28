@@ -193,22 +193,34 @@ struct CameraRowView: View {
     private var batteryStatus: some View {
         if let telemetry {
             if let percent = telemetry.batteryPercent {
-                Label("\(percent)%", systemImage: batteryIcon)
-                    .accessibilityLabel("Camera battery \(percent) percent")
+                Label {
+                    Text("\(percent)%")
+                        .foregroundStyle(Color.acrInk)
+                } icon: {
+                    batteryIconView
+                }
+                    .accessibilityLabel(batteryAccessibilityLabel("Camera battery \(percent) percent"))
                     .font(.subheadline.weight(.medium))
-                    .foregroundStyle(Color.acrInk)
                     .lineLimit(1)
             } else if let bars = telemetry.batteryBars {
-                Label("\(bars)/4", systemImage: batteryIcon)
-                    .accessibilityLabel("Camera battery \(bars) of 4 bars")
+                Label {
+                    Text("\(bars)/4")
+                        .foregroundStyle(Color.acrInk)
+                } icon: {
+                    batteryIconView
+                }
+                    .accessibilityLabel(batteryAccessibilityLabel("Camera battery \(bars) of 4 bars"))
                     .font(.subheadline.weight(.medium))
-                    .foregroundStyle(Color.acrInk)
                     .lineLimit(1)
             }
         }
     }
 
     private var batteryIcon: String {
+        if telemetry?.isExternalPowerConnected == true {
+            return "battery.100percent.bolt"
+        }
+
         guard let percent = telemetry?.batteryPercent else { return "battery.50percent" }
         switch percent {
         case ...12:
@@ -222,6 +234,25 @@ struct CameraRowView: View {
         default:
             return "battery.100percent"
         }
+    }
+
+    @ViewBuilder
+    private var batteryIconView: some View {
+        if telemetry?.isExternalPowerConnected == true {
+            Image(systemName: batteryIcon)
+                .symbolRenderingMode(.palette)
+                .foregroundStyle(Color.black, Color.green)
+        } else {
+            Image(systemName: batteryIcon)
+                .symbolRenderingMode(.monochrome)
+                .foregroundStyle(Color.acrInk)
+        }
+    }
+
+    private func batteryAccessibilityLabel(_ batteryLabel: String) -> String {
+        telemetry?.isExternalPowerConnected == true
+            ? "\(batteryLabel), external power connected"
+            : batteryLabel
     }
 
     private var telemetry: CameraTelemetry? {

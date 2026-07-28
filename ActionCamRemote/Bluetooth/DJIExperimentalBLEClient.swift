@@ -58,6 +58,8 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
     private var lastGPSFlushDebugLogDate = Date.distantPast
     private var hasLoggedGPSFrame = false
     private let gpsDebugLogInterval: TimeInterval = 5
+    private var lastRSDKStatusPayload: Data?
+    private var lastDumlCameraStatePayload: Data?
 #endif
     private let maxRSDKHandshakePairingRetries = 15
     private var lastVideoRecordTime: UInt32?
@@ -892,6 +894,10 @@ private extension DJIExperimentalBLEClient {
     }
 
     func applyRSDKStatusPush(_ payload: Data) {
+#if DEBUG
+        logRSDKStatusPayloadChange(payload)
+#endif
+
         guard let status = DJIRSDKStatusPush(payload: payload) else {
             onLog("\(cameraName): DJI R SDK status push could not be parsed: \(payload.hexString)")
             return
@@ -910,6 +916,35 @@ private extension DJIExperimentalBLEClient {
             lastRSDKStatusSummaryLogDate = now
         }
     }
+
+#if DEBUG
+    func logRSDKStatusPayloadChange(_ payload: Data) {
+        defer { lastRSDKStatusPayload = payload }
+
+        guard let previousPayload = lastRSDKStatusPayload else {
+            onLog("\(cameraName): DJI R SDK status raw baseline (\(payload.count) bytes): \(payload.hexString)")
+            return
+        }
+
+        guard previousPayload != payload else { return }
+
+        let byteCount = max(previousPayload.count, payload.count)
+        let changes = (0 ..< byteCount).compactMap { offset -> String? in
+            let previousByte = previousPayload.byte(at: offset)
+            let currentByte = payload.byte(at: offset)
+            guard previousByte != currentByte else { return nil }
+
+            let previousLabel = previousByte.map(\.hexByte) ?? "--"
+            let currentLabel = currentByte.map(\.hexByte) ?? "--"
+            return "\(offset):\(previousLabel)->\(currentLabel)"
+        }
+
+        onLog(
+            "\(cameraName): DJI R SDK status raw changed [\(changes.joined(separator: ", "))] "
+                + "(\(payload.count) bytes): \(payload.hexString)"
+        )
+    }
+#endif
 
     var writeTargets: [DJIWritableCharacteristic] {
         let candidates = writeCandidates.filter { !$0.isRSDKControlTarget }
@@ -1397,10 +1432,15 @@ private extension DJIExperimentalBLEClient {
     func logDumlStatusPush(from value: Data) {
         guard let packet = DJIDUMLIncomingPacket(data: value),
               !packet.isResponse,
-              packet.isCameraStatePush,
-              let state = DJICameraStateSummary(payload: packet.payload) else {
+              packet.isCameraStatePush else {
             return
         }
+
+#if DEBUG
+        logDumlCameraStatePayloadChange(packet.payload)
+#endif
+
+        guard let state = DJICameraStateSummary(payload: packet.payload) else { return }
 
         let now = Date()
         if state.debugLabel != lastCameraStateSummaryLabel
@@ -1410,15 +1450,67 @@ private extension DJIExperimentalBLEClient {
             lastCameraStateSummaryLogDate = now
         }
 
-        guard shouldApplyLegacyDumlRecordingStatus else { return }
-        onCameraStatus(cameraID, cameraStatusUpdate(from: state))
+        let telemetry = cameraTelemetry(from: state)
+        if shouldApplyLegacyDumlRecordingStatus {
+            var update = cameraStatusUpdate(from: state)
+            update.telemetry = telemetry
+            onCameraStatus(cameraID, update)
+        } else if let telemetry {
+            // R SDK is authoritative for recording, but its documented status frame
+            // does not include external power. Continue merging compact DUML telemetry.
+            onCameraStatus(cameraID, CameraStatusUpdate(telemetry: telemetry))
+        }
     }
+
+#if DEBUG
+    func logDumlCameraStatePayloadChange(_ payload: Data) {
+        defer { lastDumlCameraStatePayload = payload }
+
+        guard let previousPayload = lastDumlCameraStatePayload else {
+            onLog("\(cameraName): DJI legacy camera-state raw baseline (\(payload.count) bytes): \(payload.hexString)")
+            return
+        }
+
+        guard previousPayload != payload else { return }
+
+        let byteCount = max(previousPayload.count, payload.count)
+        let changes = (0 ..< byteCount).compactMap { offset -> String? in
+            let previousByte = previousPayload.byte(at: offset)
+            let currentByte = payload.byte(at: offset)
+            guard previousByte != currentByte else { return nil }
+
+            let previousLabel = previousByte.map(\.hexByte) ?? "--"
+            let currentLabel = currentByte.map(\.hexByte) ?? "--"
+            return "\(offset):\(previousLabel)->\(currentLabel)"
+        }
+
+        onLog(
+            "\(cameraName): DJI legacy camera-state raw changed [\(changes.joined(separator: ", "))] "
+                + "(\(payload.count) bytes): \(payload.hexString)"
+        )
+    }
+#endif
 
     var shouldApplyLegacyDumlRecordingStatus: Bool {
         // Action cameras can emit legacy DUML state alongside the newer R SDK
         // stream. Once R SDK is ready, mixing both sources lets stale DUML
         // "stopped" packets overwrite a current R SDK "recording" state.
         !hasCompletedRSDKHandshake
+    }
+
+    func cameraTelemetry(from state: DJICameraStateSummary) -> CameraTelemetry? {
+        var telemetry = state.telemetry ?? CameraTelemetry()
+
+        switch cameraBehavior.kind {
+        case .djiOsmoAction4, .djiOsmoAction5Pro, .djiOsmoAction6:
+            telemetry.isExternalPowerConnected = state.compactExternalPowerConnected
+        case .djiOsmoNano:
+            telemetry.isExternalPowerConnected = state.compactNanoExternalPowerConnected
+        case .djiOsmoPocket3, .genericDJI, .goProOpen, .unknown:
+            telemetry.isExternalPowerConnected = nil
+        }
+
+        return telemetry.isEmpty ? nil : telemetry
     }
 
     func cameraStatusUpdate(from state: DJICameraStateSummary) -> CameraStatusUpdate {
@@ -1750,6 +1842,7 @@ private struct DJICameraStateSummary {
     var cameraType: UInt8
     var version: UInt8
     var batteryPercent: UInt8?
+    var compactStateByte: UInt8?
 
     init?(payload: Data) {
         if payload.count >= 37,
@@ -1771,6 +1864,7 @@ private struct DJICameraStateSummary {
             self.cameraType = cameraType
             self.version = version
             self.batteryPercent = nil
+            self.compactStateByte = nil
             return
         }
 
@@ -1792,6 +1886,7 @@ private struct DJICameraStateSummary {
         self.cameraType = 0
         self.version = 0
         self.batteryPercent = payload.byte(at: 20)
+        self.compactStateByte = payload.byte(at: 2)
     }
 
     var captureMode: CaptureMode? {
@@ -1826,6 +1921,21 @@ private struct DJICameraStateSummary {
         format == .compact && mode == 0x01 && recordBits != 0
     }
 
+    var compactExternalPowerConnected: Bool? {
+        guard format == .compact else { return nil }
+        return (flags & 0x0040) != 0
+    }
+
+    var compactNanoExternalPowerConnected: Bool? {
+        guard format == .compact else { return nil }
+
+        // Nano's camera and screen have separate batteries. The screen attachment
+        // settles with both this flag and the trailing state value set. Once attached,
+        // the screen battery is an external power source for the camera regardless of
+        // whether the screen itself is connected to wall power.
+        return (flags & 0x0040) != 0 && videoRecordTime == 1
+    }
+
     var debugLabel: String {
         let sdCardBits = (flags & 0x3C00) >> 10
         switch format {
@@ -1833,7 +1943,8 @@ private struct DJICameraStateSummary {
             return "mode \(DJIExperimentalBLEClient.cameraStateModeLabel(mode)), recordBits \(recordBits), sdBits \(sdCardBits), remainingTime \(remainedTime)s, videoRecordTime \(videoRecordTime)s, sdFree \(sdCardFreeSize)/\(sdCardTotalSize), cameraType 0x\(cameraType.hexByte), version \(version), flags 0x\(flags.hexWord)"
         case .compact:
             let batteryByte = batteryPercent.map(String.init) ?? "unknown"
-            return "compact mode byte \(DJIExperimentalBLEClient.cameraStateModeLabel(mode)), recordBits \(recordBits), videoRecordTime \(videoRecordTime)s, remainingTime \(remainedTime)s, batteryByte \(batteryByte), flags 0x\(flags.hexWord)"
+            let stateByte = compactStateByte.map(\.hexByte) ?? "unknown"
+            return "compact mode byte \(DJIExperimentalBLEClient.cameraStateModeLabel(mode)), recordBits \(recordBits), videoRecordTime \(videoRecordTime)s, remainingTime \(remainedTime)s, batteryByte \(batteryByte), stateByte2 0x\(stateByte), flags 0x\(flags.hexWord)"
         }
     }
 

@@ -246,6 +246,7 @@ enum CameraPowerState: Equatable {
 struct CameraTelemetry: Equatable, Codable {
     var batteryPercent: Int? = nil
     var batteryBars: Int? = nil
+    var isExternalPowerConnected: Bool? = nil
     var storageState: String? = nil
     var remainingVideoSeconds: UInt32? = nil
     var remainingPhotos: UInt32? = nil
@@ -262,6 +263,7 @@ struct CameraTelemetry: Equatable, Codable {
     var isEmpty: Bool {
         batteryPercent == nil
             && batteryBars == nil
+            && isExternalPowerConnected == nil
             && storageState == nil
             && remainingVideoSeconds == nil
             && remainingPhotos == nil
@@ -339,6 +341,9 @@ struct CameraTelemetry: Equatable, Codable {
     mutating func merge(_ update: CameraTelemetry) {
         if let batteryPercent = update.batteryPercent { self.batteryPercent = batteryPercent }
         if let batteryBars = update.batteryBars { self.batteryBars = batteryBars }
+        if let isExternalPowerConnected = update.isExternalPowerConnected {
+            self.isExternalPowerConnected = isExternalPowerConnected
+        }
         if let storageState = update.storageState { self.storageState = storageState }
         if let remainingVideoSeconds = update.remainingVideoSeconds { self.remainingVideoSeconds = remainingVideoSeconds }
         if let remainingPhotos = update.remainingPhotos { self.remainingPhotos = remainingPhotos }
