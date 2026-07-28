@@ -1,3 +1,4 @@
+import CoreLocation
 import Foundation
 
 @main
@@ -42,7 +43,12 @@ enum DJIGPSPayloadRegression {
         precondition(payload.uint32(at: 32) == 2_250, "Vertical accuracy scaling is incorrect")
         precondition(payload.uint32(at: 36) == 4_750, "Horizontal accuracy scaling is incorrect")
         precondition(payload.uint32(at: 40) == 30, "Speed accuracy scaling is incorrect")
-        precondition(payload.uint32(at: 44) == 0, "iOS must report unknown satellite count as zero")
+        precondition(payload.uint32(at: 44) == 0, "Explicit unknown satellite count must remain zero")
+
+        let phoneFix = DJIGPSFix(location: CLLocation(latitude: 37.7749, longitude: -122.4194))
+        let phonePayload = DJIGPSPayloadEncoder.payload(for: phoneFix)
+        precondition(phoneFix.satelliteCount == 4, "Phone GPS must use the production satellite fallback")
+        precondition(phonePayload.uint32(at: 44) == 4, "Phone GPS payload must include the satellite fallback")
 
         print("DJI GPS payload regression checks passed.")
     }

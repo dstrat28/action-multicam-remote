@@ -55,7 +55,9 @@ struct DJIGPSFix: Equatable {
         eastVelocityMetersPerSecond = hasDirection ? speed * sin(courseRadians) : 0
         downwardVelocityMetersPerSecond = 0
         speedAccuracyMetersPerSecond = max(location.speedAccuracy, 0)
-        satelliteCount = 0
+        // Core Location does not expose satellite count, but DJI rejects zero
+        // as an invalid fix. Four is the minimum plausible count for a 3D fix.
+        satelliteCount = 4
     }
 }
 

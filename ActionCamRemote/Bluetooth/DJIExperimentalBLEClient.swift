@@ -421,7 +421,7 @@ private extension DJIExperimentalBLEClient {
         let fixAge = now.timeIntervalSince(fix.timestamp)
         onLog(
             String(
-                format: "%@: GPS debug write #%d: %@; payload=%dB, packet=%dB, fixAge=%.2fs, lat=%.7f, lon=%.7f, hAcc=%.1fm, immediate=%d, queued=%d, flushed=%d, pending=%d, characteristic=%@",
+                format: "%@: GPS debug write #%d: %@; payload=%dB, packet=%dB, fixAge=%.2fs, lat=%.7f, lon=%.7f, hAcc=%.1fm, satellites=%u, immediate=%d, queued=%d, flushed=%d, pending=%d, characteristic=%@",
                 cameraName,
                 gpsWriteAttemptCount,
                 dispositionLabel,
@@ -431,6 +431,7 @@ private extension DJIExperimentalBLEClient {
                 fix.latitude,
                 fix.longitude,
                 fix.horizontalAccuracyMeters,
+                fix.satelliteCount,
                 gpsImmediateWriteCount,
                 gpsQueuedWriteCount,
                 gpsFlushedWriteCount,

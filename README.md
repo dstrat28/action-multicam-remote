@@ -8,6 +8,8 @@ Multicam is built for simultaneous multi-camera capture control. On iPhone and i
 
 GoPro support is built on the public Open GoPro BLE API. DJI Action/Nano support is experimental and based on observed BLE/DUML behavior because DJI does not publish an equivalent camera-control API for these cameras. GoPro HERO13 Black and DJI Osmo Action 5 Pro, Action 6, and Nano have been tested directly; other documented Open GoPro BLE cameras and DJI Action 4 are enabled as compatible but untested.
 
+DJI Osmo Action 4, Action 5 Pro, and Action 6 can optionally receive GPS telemetry from the iPhone for recording metadata and DJI Mimo dashboard overlays. The app sends location, altitude, direction, and speed while the camera is connected. This path has been verified end to end with an Action 6; Action 4 and Action 5 Pro remain unverified for phone GPS.
+
 Multicam is an independent project and is not affiliated with, endorsed by, or sponsored by GoPro, DJI, or their affiliates.
 
 ## Status
@@ -26,7 +28,7 @@ Release and TestFlight setup notes live in [`docs/testflight.md`](docs/testfligh
 | GoPro LIT HERO, MAX 2, HERO12 Black, HERO11 Black Mini, HERO11 Black, HERO10 Black, HERO9 Black | Compatible, untested | These models are listed in the public Open GoPro BLE API and use the same BLE client path. Model detection is enabled, but hardware behavior has not been verified locally. |
 | DJI Osmo Action 4 | Experimental, untested | [DJI documents](https://repair.dji.com/help/content?customId=01700008289&lang=en&paperDocType=ARTICLE&re=US&spaceId=17) Bluetooth wake and recording control through its GPS remote. Awake connection and recording use the shared Action 4/5/6 path, but sleeping cameras are shown as Not Connected because iPhone sleep wake is not supported. Direct Action 4 behavior is unverified. |
 | DJI Osmo Action 5 Pro | Tested, experimental | BLE discovery, pairing, connection, and start/stop recording through the DJI R SDK path have been verified directly on Action 5 Pro hardware. Sleeping cameras are shown as Not Connected because iPhone sleep wake is not supported. |
-| DJI Osmo Action 6 | Tested, experimental | BLE connect, start/stop recording in Video mode, and recording-state reads are implemented. Sleeping cameras are shown as Not Connected because DJI's documented wake mechanism requires a raw BLE advertisement that iOS apps cannot reproduce. DJI mode/settings commands are not considered reliable. |
+| DJI Osmo Action 6 | Tested, experimental | BLE connect, start/stop recording in Video mode, recording-state reads, and optional iPhone GPS metadata for DJI Mimo dashboards are implemented and verified. Sleeping cameras are shown as Not Connected because DJI's documented wake mechanism requires a raw BLE advertisement that iOS apps cannot reproduce. DJI mode/settings commands are not considered reliable. |
 | DJI Osmo Nano | Tested, experimental | BLE connect, start/stop recording while connected, and recording status are implemented with Nano-specific state handling. Sleep wake may be possible over BLE, but local testing was too unreliable to expose it in the app. DJI mode/settings commands are not considered reliable. |
 | DJI Osmo Pocket 3 | Not supported | The app recognizes Pocket 3 devices but disables pairing, selection, and record controls. Local testing found BLE status traffic, but no working BLE-only record command; DJI's documented phone-control path uses Bluetooth plus Wi-Fi. |
 | Recent GoPro and DJI action cameras outside the supported list | Not supported | HERO, MAX, HERO8 Black, Osmo 360, Osmo Action 3, DJI Action 2, and the original Osmo Action are recognized and shown with product thumbnails, but remain disabled until their BLE behavior is tested and mapped. Unknown cameras use a neutral camera icon. |
@@ -40,11 +42,13 @@ Release and TestFlight setup notes live in [`docs/testflight.md`](docs/testfligh
 - Stop all selected recording cameras.
 - Individually start/stop each camera.
 - View connected cameras and start/stop all ready cameras from Apple Watch.
+- Optionally send iPhone GPS, altitude, direction, and speed to connected DJI Action 4/5/6 cameras for recording metadata.
 - Keep diagnostic BLE logs collapsed unless needed for hardware debugging.
 
 ## Known Limits
 
 - DJI support is experimental and may vary by firmware.
+- Phone GPS requires When In Use location permission and the iPhone app to remain open and connected while recording. Recorded video files contain precise location telemetry when this option is enabled.
 - DJI mode switching and settings editing are intentionally limited until the BLE command mapping is proven.
 - DJI recording should be started only when the camera is already in Video mode.
 - DJI Osmo Nano sleep wake may be possible over BLE, but local testing was buggy enough that the app treats sleeping DJI cameras as Not Connected instead of Available.
