@@ -1,7 +1,7 @@
 import Foundation
 
 enum FeatureAvailability {
-    static let djiPhoneGPS = false
+    static let djiPhoneGPS = true
 }
 
 enum CameraBrand: String, CaseIterable, Identifiable, Codable {
