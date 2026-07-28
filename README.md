@@ -1,18 +1,18 @@
 # Multicam
 
-Native iOS app for controlling multiple action cameras over Bluetooth.
+Native iPhone, iPad, and Apple Watch app for controlling multiple action cameras over Bluetooth.
 
-Multicam is built for simultaneous multi-camera capture control. It can pair remembered cameras, reconnect to available cameras, select which cameras should be controlled, and start/stop recording across selected cameras.
+Multicam is built for simultaneous multi-camera capture control. On iPhone and iPad, it can pair remembered cameras, reconnect to available cameras, select which cameras should be controlled, and start/stop recording across selected cameras. The Apple Watch app shows the connected cameras and can start or stop recording across all cameras that are ready.
 
 [Download Action Multicam Remote on the App Store](https://apps.apple.com/us/app/action-multicam-remote/id6784017391).
 
-GoPro support is built on the public Open GoPro BLE API. DJI Action/Nano support is experimental and based on observed BLE/DUML behavior because DJI does not publish an equivalent camera-control API for these cameras. GoPro HERO13 Black is tested directly; other documented Open GoPro BLE cameras are enabled as compatible but untested.
+GoPro support is built on the public Open GoPro BLE API. DJI Action/Nano support is experimental and based on observed BLE/DUML behavior because DJI does not publish an equivalent camera-control API for these cameras. GoPro HERO13 Black and DJI Osmo Action 5 Pro, Action 6, and Nano have been tested directly; other documented Open GoPro BLE cameras and DJI Action 4 are enabled as compatible but untested.
 
 Multicam is an independent project and is not affiliated with, endorsed by, or sponsored by GoPro, DJI, or their affiliates.
 
 ## Status
 
-This is an early hardware-driven project. The app currently targets iOS 17+ and uses CoreBluetooth plus SwiftUI.
+This is an early hardware-driven project. The app currently targets iOS 17+ and watchOS 10+, using CoreBluetooth, WatchConnectivity, and SwiftUI.
 
 ## App Store
 
@@ -25,7 +25,7 @@ Release and TestFlight setup notes live in [`docs/testflight.md`](docs/testfligh
 | GoPro HERO13 Black | Tested | BLE discovery, automatic connection while powered on, start/stop recording, recording status, model detection, and Video preset switching are implemented through Open GoPro BLE. |
 | GoPro LIT HERO, MAX 2, HERO12 Black, HERO11 Black Mini, HERO11 Black, HERO10 Black, HERO9 Black | Compatible, untested | These models are listed in the public Open GoPro BLE API and use the same BLE client path. Model detection is enabled, but hardware behavior has not been verified locally. |
 | DJI Osmo Action 4 | Experimental, untested | [DJI documents](https://repair.dji.com/help/content?customId=01700008289&lang=en&paperDocType=ARTICLE&re=US&spaceId=17) Bluetooth wake and recording control through its GPS remote. Awake connection and recording use the shared Action 4/5/6 path, but sleeping cameras are shown as Not Connected because iPhone sleep wake is not supported. Direct Action 4 behavior is unverified. |
-| DJI Osmo Action 5 Pro | Experimental, hardware validation in progress | BLE discovery, pairing, connection, and record control are enabled through the DJI R SDK path. Awake behavior is under direct validation; sleeping cameras are shown as Not Connected because iPhone sleep wake is not supported. |
+| DJI Osmo Action 5 Pro | Tested, experimental | BLE discovery, pairing, connection, and start/stop recording through the DJI R SDK path have been verified directly on Action 5 Pro hardware. Sleeping cameras are shown as Not Connected because iPhone sleep wake is not supported. |
 | DJI Osmo Action 6 | Tested, experimental | BLE connect, start/stop recording in Video mode, and recording-state reads are implemented. Sleeping cameras are shown as Not Connected because DJI's documented wake mechanism requires a raw BLE advertisement that iOS apps cannot reproduce. DJI mode/settings commands are not considered reliable. |
 | DJI Osmo Nano | Tested, experimental | BLE connect, start/stop recording while connected, and recording status are implemented with Nano-specific state handling. Sleep wake may be possible over BLE, but local testing was too unreliable to expose it in the app. DJI mode/settings commands are not considered reliable. |
 | DJI Osmo Pocket 3 | Not supported | The app recognizes Pocket 3 devices but disables pairing, selection, and record controls. Local testing found BLE status traffic, but no working BLE-only record command; DJI's documented phone-control path uses Bluetooth plus Wi-Fi. |
@@ -39,6 +39,7 @@ Release and TestFlight setup notes live in [`docs/testflight.md`](docs/testfligh
 - Start all selected cameras.
 - Stop all selected recording cameras.
 - Individually start/stop each camera.
+- View connected cameras and start/stop all ready cameras from Apple Watch.
 - Keep diagnostic BLE logs collapsed unless needed for hardware debugging.
 
 ## Known Limits
@@ -53,6 +54,7 @@ Release and TestFlight setup notes live in [`docs/testflight.md`](docs/testfligh
 - DJI cameras auto-connect when their protocol confirms they are awake. Because Action 4/5/6 can continue advertising while asleep, passive BLE probes remain hidden and the card stays Not Connected until that confirmation arrives.
 - Action 4 follows DJI's documented support and the shared Action 5 profile but remains untested on local hardware.
 - DJI Osmo Pocket 3 is intentionally disabled for now. It appears to require DJI Mimo's Bluetooth plus Wi-Fi control path rather than the BLE-only path this app uses for simultaneous multicam control.
+- Apple Watch commands are relayed through the paired iPhone; the Watch does not connect directly to cameras.
 - The app does not provide live preview or media browsing. Those workflows usually require Wi-Fi and are outside the current Bluetooth-first scope.
 - iOS Simulator cannot connect to physical Bluetooth cameras; use a real iPhone or iPad for hardware testing.
 
@@ -62,6 +64,7 @@ Requirements:
 
 - Xcode 15 or newer.
 - iOS 17 or newer deployment target.
+- watchOS 10 or newer for the included Apple Watch app.
 - A physical iPhone or iPad for camera testing.
 
 Open `ActionCamRemote.xcodeproj` in Xcode, select the `ActionCamRemote` scheme, choose your signing team, then build and run on a device.
@@ -94,6 +97,7 @@ xcodebuild \
 - `ActionCamRemote/Bluetooth`: CoreBluetooth scanner plus brand-specific BLE clients.
 - `ActionCamRemote/Services`: app-level store/coordinator.
 - `ActionCamRemote/UI`: SwiftUI app surfaces.
+- `MulticamWatchApp`: Apple Watch remote UI and WatchConnectivity session model.
 - `docs/compatibility.md`: protocol notes, status, and next proof gates.
 
 ## Safety
