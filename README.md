@@ -51,6 +51,7 @@ Release and TestFlight setup notes live in [`docs/testflight.md`](docs/testfligh
 - DJI support is experimental and may vary by firmware.
 - Phone GPS requires When In Use location permission and the iPhone app to remain open and connected while recording. Recorded video files contain precise location telemetry when this option is enabled.
 - DJI mode switching and settings editing are intentionally limited until the BLE command mapping is proven.
+- DJI Action 4/5/6 and Osmo 360 require a completed R SDK handshake before control commands are sent; legacy recording fallbacks are retained only for Osmo Nano.
 - DJI recording should be started only when the camera is already in Video mode.
 - DJI Osmo Nano sleep wake may be possible over BLE, but local testing was buggy enough that the app treats sleeping DJI cameras as Not Connected instead of Available.
 - GoPro HERO13 Black is tested directly. Other documented Open GoPro BLE cameras are enabled as compatible but untested.

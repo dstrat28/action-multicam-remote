@@ -602,6 +602,10 @@ struct CameraBehaviorProfile: Equatable {
             false
         }
     }
+
+    var usesLegacyDJIControl: Bool {
+        kind == .djiOsmoNano
+    }
 }
 
 struct DiscoveredCamera: Identifiable, Equatable, Codable {

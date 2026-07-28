@@ -102,7 +102,7 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
         if cameraBehavior.kind == .djiOsmoNano {
             onLog("\(cameraName): DJI Nano BLE connected; discovering legacy DUML characteristics.")
         } else {
-            onLog("\(cameraName): DJI BLE connected; discovering R SDK and legacy DUML characteristics.")
+            onLog("\(cameraName): DJI BLE connected; discovering R SDK characteristics.")
         }
         onStatus(cameraID, .connecting, "BLE link established; discovering DJI control characteristics.")
     }
@@ -159,10 +159,16 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
             if canUseRSDKControl {
                 return sendRSDKRecordCommand(.start, to: peripheral, label: command)
             }
+            guard cameraBehavior.usesLegacyDJIControl else {
+                return rSDKNotReadyResult(for: command)
+            }
             return sendRecordCommand(.start, to: peripheral, label: command)
         case .stopRecording:
             if canUseRSDKControl {
                 return sendRSDKRecordCommand(.stop, to: peripheral, label: command)
+            }
+            guard cameraBehavior.usesLegacyDJIControl else {
+                return rSDKNotReadyResult(for: command)
             }
             return sendRecordCommand(.stop, to: peripheral, label: command)
         case .toggleRecording:
@@ -174,16 +180,20 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
             if canUseRSDKControl {
                 return sendRSDKVideoModeCommand(to: peripheral, label: command)
             }
+            guard cameraBehavior.usesLegacyDJIControl else {
+                return rSDKNotReadyResult(for: command)
+            }
             return sendVideoModeCommand(to: peripheral, label: command)
         case .keepAlive:
             if canUseRSDKControl {
                 sendRSDKStatusSubscription(to: peripheral, shouldLog: true)
                 sendRSDKVersionQuery(to: peripheral)
                 return result(for: command, status: .sent, message: "Refreshed DJI R SDK status subscription.")
-            } else {
+            } else if cameraBehavior.usesLegacyDJIControl {
                 sendStatusProbe(to: peripheral, includeExtendedProbes: true, shouldLog: true)
                 return result(for: command, status: .sent, message: "Sent DJI diagnostic status probe.")
             }
+            return rSDKNotReadyResult(for: command)
         case .cycleMode, .applySetting:
             return result(
                 for: command,
@@ -279,10 +289,8 @@ extension DJIExperimentalBLEClient {
             }
         } else if rSDKWriteCharacteristic != nil {
             onStatus(cameraID, .connecting, "DJI R SDK characteristics ready; waiting for protocol handshake.")
-        } else if !writeCandidates.isEmpty {
-            onStatus(cameraID, .connected, "DJI record characteristics ready: \(writeTargets.count)")
-            scheduleInitialStatusProbe(to: peripheral)
-            startStatusPolling(to: peripheral)
+        } else if cameraBehavior.usesDJIRSDKControl {
+            onStatus(cameraID, .connecting, "Waiting for DJI R SDK control characteristics.")
         }
 
         bootstrapRSDKIfReady(to: peripheral)
@@ -371,6 +379,14 @@ private extension DJIExperimentalBLEClient {
 
     var canUseRSDKControl: Bool {
         hasCompletedRSDKHandshake && rSDKWriteCharacteristic != nil
+    }
+
+    func rSDKNotReadyResult(for command: CameraCommand) -> CameraCommandResult {
+        result(
+            for: command,
+            status: .skipped,
+            message: "DJI R SDK control is not ready. Wait for the camera to finish connecting."
+        )
     }
 
 #if DEBUG
@@ -472,7 +488,7 @@ private extension DJIExperimentalBLEClient {
     }
 
     func shouldTrackLegacyWriteCandidate(_ candidate: DJIWritableCharacteristic) -> Bool {
-        !candidate.isRSDKControlTarget
+        cameraBehavior.usesLegacyDJIControl && !candidate.isRSDKControlTarget
     }
 
     func trackRSDKCharacteristic(
@@ -956,6 +972,10 @@ private extension DJIExperimentalBLEClient {
         to peripheral: CBPeripheral,
         label command: CameraCommand
     ) -> CameraCommandResult {
+        guard cameraBehavior.usesLegacyDJIControl else {
+            return rSDKNotReadyResult(for: command)
+        }
+
         let targets = writeTargets
         guard !targets.isEmpty else {
             return result(
@@ -993,44 +1013,6 @@ private extension DJIExperimentalBLEClient {
     }
 
     func djiRecordPackets(for action: RecordAction) -> [DJICommandPacket] {
-        if shouldSendDirectCameraRecordOnly {
-            var packets = action.isStarting ? djiVideoModePackets() : []
-            packets.append(
-                DJICommandPacket(
-                    label: "camera do record \(action.isStarting ? "on" : "off")",
-                    command: nextDumlPacket(
-                        commandSet: 0x02,
-                        commandID: 0x02,
-                        payload: Data([action.isStarting ? 0x01 : 0x00])
-                    )
-                )
-            )
-
-            packets.append(
-                DJICommandPacket(
-                    label: action.isStarting ? "special start video" : "special stop video",
-                    command: nextDumlPacket(
-                        commandSet: 0x01,
-                        commandID: action.isStarting ? 0x21 : 0x22,
-                        payload: Data()
-                    )
-                )
-            )
-
-            packets.append(
-                DJICommandPacket(
-                    label: "camera shutter \(action.isStarting ? "on" : "off")",
-                    command: nextDumlPacket(
-                        commandSet: 0x02,
-                        commandID: 0x7C,
-                        payload: Data([action.isStarting ? 0x01 : 0x00])
-                    )
-                )
-            )
-
-            return packets
-        }
-
         var packets = [
             DJICommandPacket(
                 label: action.isStarting ? "special start video" : "special stop video",
@@ -1050,7 +1032,7 @@ private extension DJIExperimentalBLEClient {
             )
         ]
 
-        if shouldSendShutterControlPacket || (action.isStopping && shouldUseNanoStopFallbacks) {
+        if action.isStopping {
             packets.append(
                 DJICommandPacket(
                     label: "camera shutter \(action.isStarting ? "on" : "off")",
@@ -1070,6 +1052,10 @@ private extension DJIExperimentalBLEClient {
         to peripheral: CBPeripheral,
         label command: CameraCommand
     ) -> CameraCommandResult {
+        guard cameraBehavior.usesLegacyDJIControl else {
+            return rSDKNotReadyResult(for: command)
+        }
+
         let targets = writeTargets
         guard !targets.isEmpty else {
             return result(
@@ -1206,7 +1192,7 @@ private extension DJIExperimentalBLEClient {
     }
 
     func djiVideoModePackets(routing: DJIDUMLRouting? = nil) -> [DJICommandPacket] {
-        var packets = [
+        [
             DJICommandPacket(
                 label: routing.map { "route \($0.debugLabel) camera work mode video" } ?? "camera work mode video",
                 command: nextDumlPacket(
@@ -1217,49 +1203,6 @@ private extension DJIExperimentalBLEClient {
                 )
             )
         ]
-
-        if shouldUseActionVideoModeFallbacks {
-            packets.append(contentsOf: [
-                DJICommandPacket(
-                    label: "camera work mode video alt",
-                    command: nextDumlPacket(
-                        routing: routing,
-                        commandSet: 0x02,
-                        commandID: 0x10,
-                        payload: Data([0x00])
-                    )
-                ),
-                DJICommandPacket(
-                    label: "camera set mode video",
-                    command: nextDumlPacket(
-                        routing: routing,
-                        commandSet: 0x02,
-                        commandID: 0x1C,
-                        payload: Data([0x00])
-                    )
-                ),
-                DJICommandPacket(
-                    label: "camera set mode record",
-                    command: nextDumlPacket(
-                        routing: routing,
-                        commandSet: 0x02,
-                        commandID: 0x1C,
-                        payload: Data([0x01])
-                    )
-                )
-            ])
-        }
-
-        return packets
-    }
-
-    var shouldSendDirectCameraRecordOnly: Bool {
-        cameraBehavior.kind == .djiOsmoAction6
-    }
-
-    var shouldSendShutterControlPacket: Bool {
-        cameraBehavior.kind == .djiOsmoAction6
-            || cameraBehavior.kind == .djiOsmoPocket3
     }
 
     var shouldUseNanoStopFallbacks: Bool {
@@ -1268,10 +1211,6 @@ private extension DJIExperimentalBLEClient {
 
     var stopCommandBurstCount: Int {
         shouldUseNanoStopFallbacks ? 3 : 2
-    }
-
-    var shouldUseActionVideoModeFallbacks: Bool {
-        cameraBehavior.kind == .djiOsmoAction6
     }
 
     var cameraBehavior: CameraBehaviorProfile {
@@ -1284,10 +1223,6 @@ private extension DJIExperimentalBLEClient {
             model: cameraModel,
             name: cameraName
         )
-
-        if profile.kind == .djiOsmoAction6 {
-            return DJIDUMLRouting(appAddress: 0x25, cameraAddress: 0x01)
-        }
 
         if profile.kind == .djiOsmoPocket3 {
             return DJIDUMLRouting(appAddress: 0x02, cameraAddress: 0x04)

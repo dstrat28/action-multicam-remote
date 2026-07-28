@@ -7,6 +7,7 @@ enum DJIWakeEligibilityRegression {
             let camera = makeCamera(model: model, state: .discovered)
             precondition(camera.isSupportedByApp, "\(model.rawValue) should use the shared DJI R SDK profile")
             precondition(camera.behavior.usesDJIRSDKControl, "\(model.rawValue) should use DJI R SDK control")
+            precondition(!camera.behavior.usesLegacyDJIControl, "\(model.rawValue) must not use legacy DJI command fallbacks")
             precondition(!camera.supportsExperimentalDJISleepWake, "\(model.rawValue) must not expose the unsuccessful DJI wake experiment")
             precondition(camera.supportsDJIPhoneGPS, "\(model.rawValue) should expose opt-in phone GPS")
             precondition(!camera.canSelectForBatch, "\(model.rawValue) must not remain selectable while sleeping")
@@ -22,6 +23,7 @@ enum DJIWakeEligibilityRegression {
 
         let nano = makeCamera(model: .djiOsmoNano, state: .discovered)
         precondition(!nano.supportsExperimentalDJISleepWake, "Nano wake behavior remains isolated from the Action wake experiment")
+        precondition(nano.behavior.usesLegacyDJIControl, "Nano should retain its verified legacy DJI control path")
         precondition(!nano.supportsDJIPhoneGPS, "Nano must not expose the incompatible R SDK GPS option")
         precondition(nano.displayConnectionLabel == "Not Connected", "Nano must not show an Available state")
 
