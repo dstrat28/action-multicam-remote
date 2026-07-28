@@ -25,6 +25,7 @@
 		ACR000000000000000000116 /* WatchRemoteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000018 /* WatchRemoteView.swift */; };
 		ACR000000000000000000117 /* Multicam Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000019 /* Multicam Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		ACR000000000000000000118 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000014 /* Assets.xcassets */; };
+		ACR000000000000000000119 /* PhoneGPSProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000020 /* PhoneGPSProvider.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -71,6 +72,7 @@
 		ACR000000000000000000017 /* WatchSessionModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchSessionModel.swift; sourceTree = "<group>"; };
 		ACR000000000000000000018 /* WatchRemoteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchRemoteView.swift; sourceTree = "<group>"; };
 		ACR000000000000000000019 /* Multicam Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Multicam Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		ACR000000000000000000020 /* PhoneGPSProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhoneGPSProvider.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -148,6 +150,7 @@
 				ACR000000000000000000007 /* CameraStore.swift */,
 				ACR000000000000000000011 /* PreviewData.swift */,
 				ACR000000000000000000015 /* WatchConnectivityController.swift */,
+				ACR000000000000000000020 /* PhoneGPSProvider.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -284,6 +287,7 @@
 				ACR000000000000000000110 /* CameraRowView.swift in Sources */,
 				ACR000000000000000000111 /* PreviewData.swift in Sources */,
 				ACR000000000000000000113 /* WatchConnectivityController.swift in Sources */,
+				ACR000000000000000000119 /* PhoneGPSProvider.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

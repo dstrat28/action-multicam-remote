@@ -6,6 +6,7 @@ enum DJIWakeEligibilityRegression {
         for model in [CameraModel.djiOsmoAction4, .djiOsmoAction5Pro, .djiOsmoAction6] {
             let camera = makeCamera(model: model, state: .discovered)
             precondition(!camera.supportsExperimentalDJISleepWake, "\(model.rawValue) must not expose the unsuccessful DJI wake experiment")
+            precondition(camera.supportsDJIPhoneGPS, "\(model.rawValue) should expose opt-in phone GPS")
             precondition(!camera.canSelectForBatch, "\(model.rawValue) must not remain selectable while sleeping")
             precondition(camera.displayConnectionLabel == "Not Connected", "\(model.rawValue) should show Not Connected while sleeping")
         }
@@ -15,6 +16,7 @@ enum DJIWakeEligibilityRegression {
 
         let nano = makeCamera(model: .djiOsmoNano, state: .discovered)
         precondition(!nano.supportsExperimentalDJISleepWake, "Nano wake behavior remains isolated from the Action wake experiment")
+        precondition(!nano.supportsDJIPhoneGPS, "Nano must not expose the incompatible R SDK GPS option")
         precondition(nano.displayConnectionLabel == "Not Connected", "Nano must not show an Available state")
 
         var goPro = DiscoveredCamera(

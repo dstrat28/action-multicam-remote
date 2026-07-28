@@ -12,6 +12,8 @@ struct WatchCamera: Identifiable, Equatable {
 final class WatchSessionModel: NSObject, ObservableObject {
     private enum Key {
         static let command = "command"
+        static let commandID = "commandID"
+        static let commandAccepted = "commandAccepted"
         static let cameras = "cameras"
         static let id = "id"
         static let name = "name"
@@ -22,8 +24,12 @@ final class WatchSessionModel: NSObject, ObservableObject {
 
     @Published private(set) var cameras: [WatchCamera] = []
     @Published private(set) var isRecording = false
-    @Published private(set) var isPhoneReachable = false
+    @Published private(set) var hasReceivedState = false
+    @Published private(set) var isCommandPending = false
     @Published private(set) var statusMessage: String?
+    private var expectedRecordingState: Bool?
+    private var pendingCommandID: String?
+    private var commandTimeoutTask: Task<Void, Never>?
 
     override init() {
         super.init()
@@ -40,41 +46,93 @@ final class WatchSessionModel: NSObject, ObservableObject {
     }
 
     func record() {
-        send(command: "record")
+        send(command: "record", expectedRecordingState: true)
     }
 
     func stop() {
-        send(command: "stop")
+        send(command: "stop", expectedRecordingState: false)
     }
 
-    private func send(command: String) {
-        guard WCSession.default.activationState == .activated,
-              WCSession.default.isReachable else {
-            statusMessage = "Open Multicam on iPhone"
+    private func send(command: String, expectedRecordingState: Bool) {
+        let session = WCSession.default
+        guard session.activationState == .activated else {
+            statusMessage = "Connecting…"
+            session.activate()
             return
         }
 
-        statusMessage = nil
-        WCSession.default.sendMessage(
-            [Key.command: command],
+        self.expectedRecordingState = expectedRecordingState
+        let commandID = UUID().uuidString
+        pendingCommandID = commandID
+        isCommandPending = true
+        statusMessage = "Sending…"
+        let message: [String: Any] = [
+            Key.command: command,
+            Key.commandID: commandID,
+        ]
+        scheduleCommandTimeout(for: commandID)
+
+        guard session.isReachable else {
+            session.transferUserInfo(message)
+            return
+        }
+
+        session.sendMessage(
+            message,
             replyHandler: { [weak self] reply in
                 Task { @MainActor in
+                    guard let self else { return }
+                    self.apply(reply)
                     if reply["accepted"] as? Bool != true {
-                        self?.statusMessage = "Command not accepted"
+                        self.finishPendingCommand(message: "Try again")
                     }
                 }
             },
             errorHandler: { [weak self] _ in
                 Task { @MainActor in
-                    self?.statusMessage = "iPhone unavailable"
+                    self?.finishPendingCommand(message: "Try again")
                 }
             }
+        )
+    }
+
+    private func scheduleCommandTimeout(for commandID: String) {
+        commandTimeoutTask?.cancel()
+        commandTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(12))
+            guard !Task.isCancelled, self?.pendingCommandID == commandID else { return }
+            self?.finishPendingCommand(message: "Check iPhone")
+        }
+    }
+
+    private func finishPendingCommand(message: String?) {
+        commandTimeoutTask?.cancel()
+        commandTimeoutTask = nil
+        pendingCommandID = nil
+        expectedRecordingState = nil
+        isCommandPending = false
+        statusMessage = message
+    }
+
+    private func requestLatestState() {
+        let session = WCSession.default
+        guard session.activationState == .activated, session.isReachable else { return }
+
+        session.sendMessage(
+            [Key.command: "refresh"],
+            replyHandler: { [weak self] reply in
+                Task { @MainActor in
+                    self?.apply(reply)
+                }
+            },
+            errorHandler: nil
         )
     }
 
     private func apply(_ context: [String: Any]) {
         guard !context.isEmpty else { return }
 
+        hasReceivedState = true
         let cameraDictionaries = context[Key.cameras] as? [[String: Any]] ?? []
         cameras = cameraDictionaries.compactMap { dictionary in
             guard let id = dictionary[Key.id] as? String,
@@ -92,6 +150,19 @@ final class WatchSessionModel: NSObject, ObservableObject {
         }
         isRecording = context[Key.recording] as? Bool
             ?? cameras.contains(where: \.isRecording)
+
+        if let pendingCommandID,
+           context[Key.commandID] as? String == pendingCommandID,
+           context[Key.commandAccepted] as? Bool == false {
+            finishPendingCommand(message: "Try again")
+            return
+        }
+
+        if let expectedRecordingState, isRecording == expectedRecordingState {
+            finishPendingCommand(message: nil)
+        } else if !isCommandPending {
+            statusMessage = nil
+        }
     }
 }
 
@@ -102,19 +173,18 @@ extension WatchSessionModel: WCSessionDelegate {
         error: Error?
     ) {
         Task { @MainActor [weak self] in
-            self?.isPhoneReachable = activationState == .activated && session.isReachable
-            if let error {
-                self?.statusMessage = error.localizedDescription
+            if error != nil {
+                self?.statusMessage = "Open iPhone app"
             }
             self?.apply(session.receivedApplicationContext)
+            self?.requestLatestState()
         }
     }
 
     nonisolated func sessionReachabilityDidChange(_ session: WCSession) {
         Task { @MainActor [weak self] in
-            self?.isPhoneReachable = session.isReachable
             if session.isReachable {
-                self?.statusMessage = nil
+                self?.requestLatestState()
             }
         }
     }
@@ -133,6 +203,18 @@ extension WatchSessionModel: WCSessionDelegate {
     ) {
         Task { @MainActor [weak self] in
             self?.apply(applicationContext)
+        }
+    }
+
+    nonisolated func session(
+        _ session: WCSession,
+        didFinish userInfoTransfer: WCSessionUserInfoTransfer,
+        error: Error?
+    ) {
+        guard error != nil else { return }
+
+        Task { @MainActor [weak self] in
+            self?.finishPendingCommand(message: "Try again")
         }
     }
 }

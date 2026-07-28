@@ -1,5 +1,9 @@
 import Foundation
 
+enum FeatureAvailability {
+    static let djiPhoneGPS = false
+}
+
 enum CameraBrand: String, CaseIterable, Identifiable, Codable {
     case gopro = "GoPro"
     case dji = "DJI"
@@ -738,6 +742,15 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
 
     var supportsExperimentalDJISleepWake: Bool {
         behavior.supportsExperimentalDJISleepWake
+    }
+
+    var supportsDJIPhoneGPS: Bool {
+        switch behavior.kind {
+        case .djiOsmoAction4, .djiOsmoAction5Pro, .djiOsmoAction6:
+            true
+        case .goProOpen, .djiOsmoNano, .djiOsmoPocket3, .genericDJI, .unknown:
+            false
+        }
     }
 
     var displayConnectionLabel: String {

@@ -2,6 +2,12 @@ import CoreBluetooth
 import Foundation
 
 final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
+    enum RSDKWriteDisposition {
+        case sent
+        case queued
+        case skipped
+    }
+
     private struct PendingRSDKWrite {
         var packet: Data
         var label: String
@@ -42,6 +48,17 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
     private var lastRSDKStatusSummaryLabel: String?
     private var lastRSDKStatusSummaryLogDate = Date.distantPast
     private var lastRSDKBufferedFrameLogLabel: String?
+#if DEBUG
+    private var gpsWriteAttemptCount = 0
+    private var gpsImmediateWriteCount = 0
+    private var gpsQueuedWriteCount = 0
+    private var gpsFlushedWriteCount = 0
+    private var lastGPSDebugLogDate = Date.distantPast
+    private var lastGPSNotReadyDebugLogDate = Date.distantPast
+    private var lastGPSFlushDebugLogDate = Date.distantPast
+    private var hasLoggedGPSFrame = false
+    private let gpsDebugLogInterval: TimeInterval = 5
+#endif
     private let maxRSDKHandshakePairingRetries = 15
     private var lastVideoRecordTime: UInt32?
     private var lastAction6StatusDiagnosticLabel: String?
@@ -116,6 +133,16 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
         lastRSDKStatusSummaryLabel = nil
         lastRSDKStatusSummaryLogDate = .distantPast
         lastRSDKBufferedFrameLogLabel = nil
+#if DEBUG
+        gpsWriteAttemptCount = 0
+        gpsImmediateWriteCount = 0
+        gpsQueuedWriteCount = 0
+        gpsFlushedWriteCount = 0
+        lastGPSDebugLogDate = .distantPast
+        lastGPSNotReadyDebugLogDate = .distantPast
+        lastGPSFlushDebugLogDate = .distantPast
+        hasLoggedGPSFrame = false
+#endif
         lastAction6StatusDiagnosticLabel = nil
         compactStoppedProtectionUntil = .distantPast
     }
@@ -162,6 +189,37 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
                 message: "DJI settings control needs a proven BLE mapping."
             )
         }
+    }
+
+    @discardableResult
+    func sendPhoneGPS(_ fix: DJIGPSFix) -> Bool {
+        guard canUseRSDKControl,
+              let peripheral,
+              cameraBehavior.kind == .djiOsmoAction4
+                || cameraBehavior.kind == .djiOsmoAction5Pro
+                || cameraBehavior.kind == .djiOsmoAction6 else {
+#if DEBUG
+            logGPSNotReadyIfNeeded()
+#endif
+            return false
+        }
+
+        let payload = DJIGPSPayloadEncoder.payload(for: fix)
+        let packet = DJIRSDKPacket.gpsData(
+            sequenceNumber: nextRSDKSequence(),
+            payload: payload
+        )
+        let disposition = writeRSDK(
+            packet,
+            to: peripheral,
+            label: "phone GPS",
+            shouldLog: false,
+            coalescesPendingWrites: true
+        )
+#if DEBUG
+        logGPSWrite(disposition, fix: fix, payload: payload, packet: packet)
+#endif
+        return disposition != .skipped
     }
 }
 
@@ -315,6 +373,72 @@ private extension DJIExperimentalBLEClient {
         hasCompletedRSDKHandshake && rSDKWriteCharacteristic != nil
     }
 
+#if DEBUG
+    func logGPSNotReadyIfNeeded(now: Date = Date()) {
+        guard now.timeIntervalSince(lastGPSNotReadyDebugLogDate) >= gpsDebugLogInterval else { return }
+        lastGPSNotReadyDebugLogDate = now
+
+        let supportedModel = cameraBehavior.kind == .djiOsmoAction4
+            || cameraBehavior.kind == .djiOsmoAction5Pro
+            || cameraBehavior.kind == .djiOsmoAction6
+        onLog(
+            "\(cameraName): GPS debug: not sent; supportedModel=\(supportedModel), peripheral=\(peripheral != nil), handshake=\(hasCompletedRSDKHandshake), writeCharacteristic=\(rSDKWriteCharacteristic?.debugLabel ?? "none")"
+        )
+    }
+
+    func logGPSWrite(
+        _ disposition: RSDKWriteDisposition,
+        fix: DJIGPSFix,
+        payload: Data,
+        packet: Data,
+        now: Date = Date()
+    ) {
+        gpsWriteAttemptCount += 1
+
+        let dispositionLabel: String
+        switch disposition {
+        case .sent:
+            gpsImmediateWriteCount += 1
+            dispositionLabel = "handed to CoreBluetooth"
+        case .queued:
+            gpsQueuedWriteCount += 1
+            dispositionLabel = "queued for BLE buffer"
+        case .skipped:
+            dispositionLabel = "skipped"
+        }
+
+        if !hasLoggedGPSFrame {
+            hasLoggedGPSFrame = true
+            onLog(
+                "\(cameraName): GPS debug frame: command=00/17, payload=\(payload.count)B, packet=\(packet.count)B, expectedSize=\(payload.count == 48 && packet.count == 66), bytes=\(packet.hexString)"
+            )
+        }
+
+        guard now.timeIntervalSince(lastGPSDebugLogDate) >= gpsDebugLogInterval else { return }
+        lastGPSDebugLogDate = now
+        let fixAge = now.timeIntervalSince(fix.timestamp)
+        onLog(
+            String(
+                format: "%@: GPS debug write #%d: %@; payload=%dB, packet=%dB, fixAge=%.2fs, lat=%.7f, lon=%.7f, hAcc=%.1fm, immediate=%d, queued=%d, flushed=%d, pending=%d, characteristic=%@",
+                cameraName,
+                gpsWriteAttemptCount,
+                dispositionLabel,
+                payload.count,
+                packet.count,
+                fixAge,
+                fix.latitude,
+                fix.longitude,
+                fix.horizontalAccuracyMeters,
+                gpsImmediateWriteCount,
+                gpsQueuedWriteCount,
+                gpsFlushedWriteCount,
+                pendingRSDKWrites.count,
+                rSDKWriteCharacteristic?.debugLabel ?? "none"
+            )
+        )
+    }
+#endif
+
     func completeLegacyDumlHandshakeIfNeeded(to peripheral: CBPeripheral) {
         guard cameraBehavior.kind == .djiOsmoNano,
               !hasCompletedRSDKHandshake,
@@ -452,29 +576,40 @@ private extension DJIExperimentalBLEClient {
         return result(for: command, status: .sent, message: "Sent DJI R SDK Video mode command.")
     }
 
-    func writeRSDK(_ packet: Data, to peripheral: CBPeripheral, label: String, shouldLog: Bool = true) {
+    @discardableResult
+    func writeRSDK(
+        _ packet: Data,
+        to peripheral: CBPeripheral,
+        label: String,
+        shouldLog: Bool = true,
+        coalescesPendingWrites: Bool = false
+    ) -> RSDKWriteDisposition {
         guard let characteristic = rSDKWriteCharacteristic else {
             onLog("\(cameraName): DJI R SDK \(label) skipped; write characteristic is not ready.")
-            return
+            return .skipped
         }
 
         let writeType: CBCharacteristicWriteType = characteristic.properties.contains(.writeWithoutResponse)
             ? .withoutResponse
             : .withResponse
         if writeType == .withoutResponse, !peripheral.canSendWriteWithoutResponse {
+            if coalescesPendingWrites {
+                pendingRSDKWrites.removeAll { $0.label == label }
+            }
             pendingRSDKWrites.append(
                 PendingRSDKWrite(packet: packet, label: label, shouldLog: shouldLog)
             )
             if shouldLog {
                 onLog("\(cameraName): DJI \(label) queued until the BLE write buffer is ready.")
             }
-            return
+            return .queued
         }
 
         peripheral.writeValue(packet, for: characteristic, type: writeType)
         if shouldLog {
             onLog("\(cameraName): DJI \(label) -> \(characteristic.debugLabel) (\(writeType.logLabel)) \(packet.hexString)")
         }
+        return .sent
     }
 
     func flushPendingRSDKWrites(to peripheral: CBPeripheral) {
@@ -486,6 +621,18 @@ private extension DJIExperimentalBLEClient {
         while peripheral.canSendWriteWithoutResponse, !pendingRSDKWrites.isEmpty {
             let write = pendingRSDKWrites.removeFirst()
             peripheral.writeValue(write.packet, for: characteristic, type: .withoutResponse)
+#if DEBUG
+            if write.label == "phone GPS" {
+                gpsFlushedWriteCount += 1
+                let now = Date()
+                if now.timeIntervalSince(lastGPSFlushDebugLogDate) >= gpsDebugLogInterval {
+                    lastGPSFlushDebugLogDate = now
+                    onLog(
+                        "\(cameraName): GPS debug: queued packet handed to CoreBluetooth; flushed=\(gpsFlushedWriteCount), pending=\(pendingRSDKWrites.count)"
+                    )
+                }
+            }
+#endif
             if write.shouldLog {
                 onLog("\(cameraName): DJI \(write.label) -> \(characteristic.debugLabel) (withoutResponse) \(write.packet.hexString)")
             }
@@ -1218,20 +1365,24 @@ private extension DJIExperimentalBLEClient {
             return "mode \(Self.cameraStateModeLabel(mode))"
         case 0x70:
             if let state = DJICameraStateSummary(payload: statusPayload) {
-                onCameraStatus(cameraID, cameraStatusUpdate(from: state))
+                if shouldApplyLegacyDumlRecordingStatus {
+                    onCameraStatus(cameraID, cameraStatusUpdate(from: state))
+                }
                 return state.debugLabel
             }
 
             if let shortState = DJIAction6ShortState(payload: statusPayload),
                cameraBehavior.kind == .djiOsmoAction6,
                cameraBehavior.trustsDJICompactRecordingStatus {
-                onCameraStatus(
-                    cameraID,
-                    CameraStatusUpdate(
-                        recordingState: shortState.recordingState,
-                        canClearActiveRecording: true
+                if shouldApplyLegacyDumlRecordingStatus {
+                    onCameraStatus(
+                        cameraID,
+                        CameraStatusUpdate(
+                            recordingState: shortState.recordingState,
+                            canClearActiveRecording: true
+                        )
                     )
-                )
+                }
                 return shortState.debugLabel
             }
 
@@ -1259,7 +1410,15 @@ private extension DJIExperimentalBLEClient {
             lastCameraStateSummaryLogDate = now
         }
 
+        guard shouldApplyLegacyDumlRecordingStatus else { return }
         onCameraStatus(cameraID, cameraStatusUpdate(from: state))
+    }
+
+    var shouldApplyLegacyDumlRecordingStatus: Bool {
+        // Action cameras can emit legacy DUML state alongside the newer R SDK
+        // stream. Once R SDK is ready, mixing both sources lets stale DUML
+        // "stopped" packets overwrite a current R SDK "recording" state.
+        !hasCompletedRSDKHandshake
     }
 
     func cameraStatusUpdate(from state: DJICameraStateSummary) -> CameraStatusUpdate {
@@ -1367,6 +1526,8 @@ private extension DJIExperimentalBLEClient {
               let recordingState = packet.recordingStateHint else {
             return
         }
+
+        guard shouldApplyLegacyDumlRecordingStatus else { return }
 
         if recordingState == .recording, !cameraBehavior.trustsDJIRecordingHints {
             onLog(
@@ -2141,6 +2302,23 @@ private enum DJIRSDKPacket {
             commandType: DJIRSDKCommandType.noResponse,
             commandSet: 0x1D,
             commandID: 0x05,
+            payload: payload
+        )
+    }
+
+    static func gpsData(sequenceNumber: UInt16, fix: DJIGPSFix) -> Data {
+        gpsData(
+            sequenceNumber: sequenceNumber,
+            payload: DJIGPSPayloadEncoder.payload(for: fix)
+        )
+    }
+
+    static func gpsData(sequenceNumber: UInt16, payload: Data) -> Data {
+        return frame(
+            sequenceNumber: sequenceNumber,
+            commandType: DJIRSDKCommandType.noResponse,
+            commandSet: 0x00,
+            commandID: 0x17,
             payload: payload
         )
     }

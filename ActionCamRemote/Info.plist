@@ -24,6 +24,8 @@
 	<true/>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Multicam uses Bluetooth to discover and control nearby cameras.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Multicam uses this iPhone’s location to send optional GPS telemetry to connected DJI cameras.</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 	<key>UIApplicationSceneManifest</key>
@@ -33,6 +35,10 @@
 	</dict>
 	<key>UILaunchScreen</key>
 	<dict/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>bluetooth-central</string>
+	</array>
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
 		<string>UIInterfaceOrientationPortrait</string>

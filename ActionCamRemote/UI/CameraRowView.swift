@@ -420,6 +420,10 @@ private struct CameraDetailContent: View {
 
                 CameraCaptureSettingsSection(camera: camera)
 
+                if FeatureAvailability.djiPhoneGPS, camera.supportsDJIPhoneGPS {
+                    DJIPhoneGPSSection(camera: camera)
+                }
+
                 CameraDetailSection(title: "Signal", systemImage: "antenna.radiowaves.left.and.right") {
                     CameraInfoRow(label: "Strength", value: camera.signalLabel)
                     CameraInfoRow(label: "Signal Level", value: "\(camera.rssi) dBm")
@@ -433,6 +437,31 @@ private struct CameraDetailContent: View {
         .background(Color.acrAppBackground)
         .navigationTitle("Camera Info")
         .navigationBarTitleDisplayMode(.inline)
+    }
+}
+
+private struct DJIPhoneGPSSection: View {
+    @Environment(CameraStore.self) private var store
+
+    var camera: DiscoveredCamera
+
+    var body: some View {
+        CameraDetailSection(title: "GPS", systemImage: "location.fill") {
+            Toggle(
+                "Use Phone GPS",
+                isOn: Binding(
+                    get: { store.isDJIPhoneGPSEnabled(for: camera) },
+                    set: { store.setDJIPhoneGPSEnabled($0, for: camera) }
+                )
+            )
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(Color.acrInk)
+            .tint(Color.acrAccent)
+
+            Text("Sends this iPhone’s GPS data to the camera for video recordings.")
+                .font(.caption)
+                .foregroundStyle(Color.acrMutedText)
+        }
     }
 }
 

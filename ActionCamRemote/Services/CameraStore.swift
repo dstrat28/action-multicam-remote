@@ -13,11 +13,14 @@ final class CameraStore {
     var bluetoothStateLabel = "Unknown"
     var isDemoMode = false
     var cameraDiagnosticsByID: [UUID: String] = [:]
+    private(set) var djiPhoneGPSCameraIDs: Set<UUID> = []
 
     @ObservationIgnored private let scanner: BLECameraScanner
+    @ObservationIgnored private let phoneGPSProvider = PhoneGPSProvider()
     @ObservationIgnored private var clients: [UUID: any BLECameraDeviceClient] = [:]
     @ObservationIgnored private var demoDiscoveryIndex = 0
     @ObservationIgnored private let pairedCamerasStorageKey = "pairedCameras.v1"
+    @ObservationIgnored private let djiPhoneGPSStorageKey = "djiPhoneGPSCameraIDs.v1"
     @ObservationIgnored private var lastConnectionAttemptByID: [UUID: Date] = [:]
     @ObservationIgnored private let signalRefreshInterval: TimeInterval = 8
     @ObservationIgnored private let availabilityFreshnessInterval: TimeInterval = 10
@@ -82,6 +85,16 @@ final class CameraStore {
             }
         }
 
+        phoneGPSProvider.onTransmissionTick = { [weak self] fix in
+            self?.pushPhoneGPS(fix)
+        }
+#if DEBUG
+        phoneGPSProvider.onDebugLog = { [weak self] message in
+            self?.appendLog("GPS debug: \(message)")
+        }
+#endif
+
+        loadDJIPhoneGPSCameraIDs()
         loadPairedCameras()
         syncKnownCamerasWithScanner()
 
@@ -95,6 +108,31 @@ final class CameraStore {
 
     var selectedCameras: [DiscoveredCamera] {
         cameras.filter(\.isSelected)
+    }
+
+    func isDJIPhoneGPSEnabled(for camera: DiscoveredCamera) -> Bool {
+        FeatureAvailability.djiPhoneGPS
+            && camera.supportsDJIPhoneGPS
+            && djiPhoneGPSCameraIDs.contains(camera.id)
+    }
+
+    func setDJIPhoneGPSEnabled(_ isEnabled: Bool, for camera: DiscoveredCamera) {
+        guard FeatureAvailability.djiPhoneGPS, camera.supportsDJIPhoneGPS else { return }
+
+        if isEnabled {
+            djiPhoneGPSCameraIDs.insert(camera.id)
+            phoneGPSProvider.requestWhenInUseAuthorization()
+        } else {
+            djiPhoneGPSCameraIDs.remove(camera.id)
+        }
+
+        persistDJIPhoneGPSCameraIDs()
+        reconcilePhoneGPSStreaming()
+#if DEBUG
+        appendLog(
+            "GPS debug: \(camera.name) \(isEnabled ? "enabled" : "disabled"), connection=\(camera.connectionState.label)"
+        )
+#endif
     }
 
     var pairedCameras: [DiscoveredCamera] {
@@ -446,8 +484,13 @@ final class CameraStore {
             cameras.remove(at: index)
         }
 
+        if djiPhoneGPSCameraIDs.remove(camera.id) != nil {
+            persistDJIPhoneGPSCameraIDs()
+        }
+
         sortCamerasForEditing()
         persistPairedCameras()
+        reconcilePhoneGPSStreaming()
         appendLog("Removed \(camera.name).")
     }
 
@@ -2166,6 +2209,7 @@ private extension CameraStore {
                 cameras[index].connectionState = .disconnected
                 cameras[index].recordingState = cameras[index].supportsBatchRecord ? .unknown : .unavailable
                 cameras[index].currentMode = nil
+                reconcilePhoneGPSStreaming()
                 return
             case .discovered, .unsupported:
                 passiveDJIProbeCameraIDs.remove(id)
@@ -2338,6 +2382,8 @@ private extension CameraStore {
         if previousState != appliedState, cameras[index].isPaired {
             sortCamerasForEditing()
         }
+
+        reconcilePhoneGPSStreaming()
     }
 
     func appliedConnectionState(
@@ -2437,6 +2483,38 @@ private extension CameraStore {
             sortCamerasForEditing()
         } catch {
             appendLog("Could not load remembered cameras: \(error.localizedDescription)")
+        }
+    }
+
+    func loadDJIPhoneGPSCameraIDs() {
+        let storedIDs = UserDefaults.standard.stringArray(forKey: djiPhoneGPSStorageKey) ?? []
+        djiPhoneGPSCameraIDs = Set(storedIDs.compactMap(UUID.init(uuidString:)))
+    }
+
+    func persistDJIPhoneGPSCameraIDs() {
+        let storedIDs = djiPhoneGPSCameraIDs.map(\.uuidString).sorted()
+        UserDefaults.standard.set(storedIDs, forKey: djiPhoneGPSStorageKey)
+    }
+
+    func reconcilePhoneGPSStreaming() {
+        guard FeatureAvailability.djiPhoneGPS else {
+            phoneGPSProvider.setActive(false)
+            return
+        }
+
+        let hasConnectedTarget = cameras.contains { camera in
+            camera.supportsDJIPhoneGPS
+                && camera.connectionState == .connected
+                && djiPhoneGPSCameraIDs.contains(camera.id)
+        }
+        phoneGPSProvider.setActive(hasConnectedTarget)
+    }
+
+    func pushPhoneGPS(_ fix: DJIGPSFix) {
+        for camera in cameras where camera.supportsDJIPhoneGPS
+            && camera.connectionState == .connected
+            && djiPhoneGPSCameraIDs.contains(camera.id) {
+            (clients[camera.id] as? DJIExperimentalBLEClient)?.sendPhoneGPS(fix)
         }
     }
 

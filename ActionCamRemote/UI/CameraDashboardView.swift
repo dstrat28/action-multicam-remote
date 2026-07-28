@@ -40,7 +40,7 @@ struct CameraDashboardView: View {
                 }
                 .background(Color.clear)
             }
-            .navigationTitle(Text("Multicam Remote").fontDesign(.rounded))
+            .navigationTitle("Multicam Remote")
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     #if DEBUG
@@ -167,13 +167,17 @@ private struct MulticamRecordBar: View {
             systemImage: systemImage,
             tint: .acrRecord,
             isEnabled: isEnabled,
+            isLoading: isStarting,
             size: .large,
             action: performAction
         )
     }
 
     private var title: String {
-        store.canStopMulticamRecording ? "Stop" : "Record"
+        if isStarting {
+            return "Starting"
+        }
+        return store.canStopMulticamRecording ? "Stop" : "Record"
     }
 
     private var systemImage: String {
@@ -182,6 +186,10 @@ private struct MulticamRecordBar: View {
 
     private var isEnabled: Bool {
         store.canStopMulticamRecording || store.canStartMulticamRecording
+    }
+
+    private var isStarting: Bool {
+        store.selectedControllableCameras.contains { $0.recordingState == .starting }
     }
 
     private var selectionSummary: String {
