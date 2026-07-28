@@ -481,6 +481,33 @@ final class CameraStore {
         send(.stopRecording, to: targets)
     }
 
+    @discardableResult
+    func startWatchRecording() -> Bool {
+        let targets = readyConnectedCameras.filter {
+            $0.supportsBatchRecord && $0.isReadyForMulticamStart
+        }
+        guard !targets.isEmpty else {
+            appendLog("No connected cameras are ready for Apple Watch recording.")
+            return false
+        }
+        startRecordingSequence(for: targets)
+        return true
+    }
+
+    @discardableResult
+    func stopWatchRecording() -> Bool {
+        let targets = cameras.filter {
+            $0.supportsBatchRecord
+                && ($0.recordingState == .recording || $0.recordingState == .starting)
+        }
+        guard !targets.isEmpty else {
+            appendLog("No cameras are recording from Apple Watch.")
+            return false
+        }
+        targets.forEach(stopRecording)
+        return true
+    }
+
     func startRecording(_ camera: DiscoveredCamera) {
         startRecordingSequence(for: [camera])
     }

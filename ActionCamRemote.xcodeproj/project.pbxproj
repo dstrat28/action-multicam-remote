@@ -19,7 +19,37 @@
 		ACR000000000000000000110 /* CameraRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000010 /* CameraRowView.swift */; };
 		ACR000000000000000000111 /* PreviewData.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000011 /* PreviewData.swift */; };
 		ACR000000000000000000112 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000014 /* Assets.xcassets */; };
+		ACR000000000000000000113 /* WatchConnectivityController.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000015 /* WatchConnectivityController.swift */; };
+		ACR000000000000000000114 /* MulticamWatchApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000016 /* MulticamWatchApp.swift */; };
+		ACR000000000000000000115 /* WatchSessionModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000017 /* WatchSessionModel.swift */; };
+		ACR000000000000000000116 /* WatchRemoteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000018 /* WatchRemoteView.swift */; };
+		ACR000000000000000000117 /* Multicam Watch App.app in Embed Watch Content */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000019 /* Multicam Watch App.app */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		ACR000000000000000000118 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000014 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		ACR000000000000000000610 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = ACR000000000000000000600 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = ACR000000000000000000410;
+			remoteInfo = "Multicam Watch App";
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		ACR000000000000000000502 /* Embed Watch Content */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "$(CONTENTS_FOLDER_PATH)/Watch";
+			dstSubfolderSpec = 16;
+			files = (
+				ACR000000000000000000117 /* Multicam Watch App.app in Embed Watch Content */,
+			);
+			name = "Embed Watch Content";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		ACR000000000000000000001 /* ActionCamRemoteApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ActionCamRemoteApp.swift; sourceTree = "<group>"; };
@@ -36,10 +66,22 @@
 		ACR000000000000000000012 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		ACR000000000000000000013 /* Multicam.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Multicam.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		ACR000000000000000000014 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		ACR000000000000000000015 /* WatchConnectivityController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchConnectivityController.swift; sourceTree = "<group>"; };
+		ACR000000000000000000016 /* MulticamWatchApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MulticamWatchApp.swift; sourceTree = "<group>"; };
+		ACR000000000000000000017 /* WatchSessionModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchSessionModel.swift; sourceTree = "<group>"; };
+		ACR000000000000000000018 /* WatchRemoteView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WatchRemoteView.swift; sourceTree = "<group>"; };
+		ACR000000000000000000019 /* Multicam Watch App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Multicam Watch App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		ACR000000000000000000200 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		ACR000000000000000000210 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -53,6 +95,7 @@
 			isa = PBXGroup;
 			children = (
 				ACR000000000000000000301 /* ActionCamRemote */,
+				ACR000000000000000000307 /* MulticamWatchApp */,
 				ACR000000000000000000302 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -75,6 +118,7 @@
 			isa = PBXGroup;
 			children = (
 				ACR000000000000000000013 /* Multicam.app */,
+				ACR000000000000000000019 /* Multicam Watch App.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -103,6 +147,7 @@
 			children = (
 				ACR000000000000000000007 /* CameraStore.swift */,
 				ACR000000000000000000011 /* PreviewData.swift */,
+				ACR000000000000000000015 /* WatchConnectivityController.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -117,6 +162,16 @@
 			path = UI;
 			sourceTree = "<group>";
 		};
+		ACR000000000000000000307 /* MulticamWatchApp */ = {
+			isa = PBXGroup;
+			children = (
+				ACR000000000000000000016 /* MulticamWatchApp.swift */,
+				ACR000000000000000000017 /* WatchSessionModel.swift */,
+				ACR000000000000000000018 /* WatchRemoteView.swift */,
+			);
+			path = MulticamWatchApp;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -127,14 +182,33 @@
 				ACR000000000000000000500 /* Sources */,
 				ACR000000000000000000200 /* Frameworks */,
 				ACR000000000000000000501 /* Resources */,
+				ACR000000000000000000502 /* Embed Watch Content */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				ACR000000000000000000611 /* PBXTargetDependency */,
+			);
+			name = ActionCamRemote;
+			productName = ActionCamRemote;
+			productReference = ACR000000000000000000013 /* Multicam.app */;
+			productType = "com.apple.product-type.application";
+		};
+		ACR000000000000000000410 /* Multicam Watch App */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = ACR000000000000000000411 /* Build configuration list for PBXNativeTarget "Multicam Watch App" */;
+			buildPhases = (
+				ACR000000000000000000510 /* Sources */,
+				ACR000000000000000000210 /* Frameworks */,
+				ACR000000000000000000511 /* Resources */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 			);
-			name = ActionCamRemote;
-			productName = ActionCamRemote;
-			productReference = ACR000000000000000000013 /* Multicam.app */;
+			name = "Multicam Watch App";
+			productName = MulticamWatchApp;
+			productReference = ACR000000000000000000019 /* Multicam Watch App.app */;
 			productType = "com.apple.product-type.application";
 		};
 /* End PBXNativeTarget section */
@@ -149,6 +223,9 @@
 				TargetAttributes = {
 					ACR000000000000000000400 = {
 						CreatedOnToolsVersion = 26.5;
+					};
+					ACR000000000000000000410 = {
+						CreatedOnToolsVersion = 26.6;
 					};
 				};
 			};
@@ -166,6 +243,7 @@
 			projectRoot = "";
 			targets = (
 				ACR000000000000000000400 /* ActionCamRemote */,
+				ACR000000000000000000410 /* Multicam Watch App */,
 			);
 		};
 /* End PBXProject section */
@@ -176,6 +254,14 @@
 			buildActionMask = 2147483647;
 			files = (
 				ACR000000000000000000112 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		ACR000000000000000000511 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				ACR000000000000000000118 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -197,10 +283,29 @@
 				ACR000000000000000000109 /* CameraDashboardView.swift in Sources */,
 				ACR000000000000000000110 /* CameraRowView.swift in Sources */,
 				ACR000000000000000000111 /* PreviewData.swift in Sources */,
+				ACR000000000000000000113 /* WatchConnectivityController.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		ACR000000000000000000510 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				ACR000000000000000000114 /* MulticamWatchApp.swift in Sources */,
+				ACR000000000000000000115 /* WatchSessionModel.swift in Sources */,
+				ACR000000000000000000116 /* WatchRemoteView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		ACR000000000000000000611 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = ACR000000000000000000410 /* Multicam Watch App */;
+			targetProxy = ACR000000000000000000610 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		ACR000000000000000000700 /* Debug */ = {
@@ -378,6 +483,66 @@
 			};
 			name = Release;
 		};
+		ACR000000000000000000712 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 3;
+				DEVELOPMENT_TEAM = 2WX2Z9452K;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Multicam;
+				INFOPLIST_KEY_WKApplication = YES;
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.ds.ActionCamRemote;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.6;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ds.ActionCamRemote.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "watchos watchsimulator";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Debug;
+		};
+		ACR000000000000000000713 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 3;
+				DEVELOPMENT_TEAM = 2WX2Z9452K;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = Multicam;
+				INFOPLIST_KEY_WKApplication = YES;
+				INFOPLIST_KEY_WKCompanionAppBundleIdentifier = com.ds.ActionCamRemote;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0.6;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ds.ActionCamRemote.watchkitapp;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = watchos;
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "watchos watchsimulator";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 4;
+				VALIDATE_PRODUCT = YES;
+				WATCHOS_DEPLOYMENT_TARGET = 10.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -395,6 +560,15 @@
 			buildConfigurations = (
 				ACR000000000000000000700 /* Debug */,
 				ACR000000000000000000701 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		ACR000000000000000000411 /* Build configuration list for PBXNativeTarget "Multicam Watch App" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				ACR000000000000000000712 /* Debug */,
+				ACR000000000000000000713 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
