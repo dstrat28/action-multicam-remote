@@ -429,6 +429,7 @@ enum CameraBehaviorKind: Equatable {
     case djiOsmoAction4
     case djiOsmoAction5Pro
     case djiOsmoAction6
+    case djiOsmo360
     case djiOsmoNano
     case djiOsmoPocket3
     case genericDJI
@@ -525,6 +526,19 @@ struct CameraBehaviorProfile: Equatable {
             )
         }
 
+        if model == .djiOsmo360 || inferredDJIModel == .djiOsmo360 {
+            return CameraBehaviorProfile(
+                kind: .djiOsmo360,
+                assumesRecordingAfterUnconfirmedDJIStart: false,
+                preservesActiveDJIRecordingAcrossReconnect: false,
+                trustsDJICompactRecordingStatus: false,
+                trustsDJIFullRecordingStatus: true,
+                trustsDJIRecordingTimerStatus: false,
+                trustsDJIRecordingHints: false,
+                trustsDJIStoppedStatusToClearActiveRecording: true
+            )
+        }
+
         if model == .djiOsmoNano || inferredDJIModel == .djiOsmoNano {
             return CameraBehaviorProfile(
                 kind: .djiOsmoNano,
@@ -578,6 +592,15 @@ struct CameraBehaviorProfile: Equatable {
 
     var supportsExperimentalDJISleepWake: Bool {
         false
+    }
+
+    var usesDJIRSDKControl: Bool {
+        switch kind {
+        case .djiOsmoAction4, .djiOsmoAction5Pro, .djiOsmoAction6, .djiOsmo360:
+            true
+        case .goProOpen, .djiOsmoNano, .djiOsmoPocket3, .genericDJI, .unknown:
+            false
+        }
     }
 }
 
@@ -633,12 +656,12 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
              .djiOsmoAction4,
              .djiOsmoAction5Pro,
              .djiOsmoAction6,
+             .djiOsmo360,
              .djiOsmoNano:
             return true
         case .goproHero,
              .goproMax,
              .goproHero8Black,
-             .djiOsmo360,
              .djiOsmoAction3,
              .djiAction2,
              .djiOsmoAction,
@@ -676,6 +699,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
             case .djiOsmoAction4,
                  .djiOsmoAction5Pro,
                  .djiOsmoAction6,
+                 .djiOsmo360,
                  .djiOsmoNano:
                 return true
             case .goproLitHero,
@@ -689,7 +713,6 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
                  .goproHero9Black,
                  .goproMax,
                  .goproHero8Black,
-                 .djiOsmo360,
                  .djiOsmoAction3,
                  .djiAction2,
                  .djiOsmoAction,
@@ -745,17 +768,16 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
         behavior.kind == .djiOsmoAction4
     }
 
+    var isKnownOsmo360: Bool {
+        behavior.kind == .djiOsmo360
+    }
+
     var supportsExperimentalDJISleepWake: Bool {
         behavior.supportsExperimentalDJISleepWake
     }
 
     var supportsDJIPhoneGPS: Bool {
-        switch behavior.kind {
-        case .djiOsmoAction4, .djiOsmoAction5Pro, .djiOsmoAction6:
-            true
-        case .goProOpen, .djiOsmoNano, .djiOsmoPocket3, .genericDJI, .unknown:
-            false
-        }
+        behavior.usesDJIRSDKControl
     }
 
     var displayConnectionLabel: String {

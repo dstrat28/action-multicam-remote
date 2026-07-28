@@ -18,6 +18,8 @@ enum DJICameraNameClassifierRegression {
             Expectation(name: "OA6", model: .djiOsmoAction6, isCredibleCamera: true),
             Expectation(name: "Osmo Action 5 Pro", model: .djiOsmoAction5Pro, isCredibleCamera: true),
             Expectation(name: "ACTION 4", model: .djiOsmoAction4, isCredibleCamera: true),
+            Expectation(name: "Osmo 360", model: .djiOsmo360, isCredibleCamera: true),
+            Expectation(name: "DJI360-A1B2", model: .djiOsmo360, isCredibleCamera: true),
             Expectation(name: "Osmo Nano", model: .djiOsmoNano, isCredibleCamera: true),
             Expectation(name: "NANO 06TD", model: .djiOsmoNano, isCredibleCamera: true),
             Expectation(name: "Pocket 3", model: .djiOsmoPocket3, isCredibleCamera: true),

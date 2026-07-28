@@ -2191,7 +2191,7 @@ private extension CameraStore {
         if passiveDJIProbeCameraIDs.contains(id) {
             switch state {
             case .connecting, .reconnecting:
-                // Action 4/5/6 advertise while asleep. Keep this transport
+                // Action 4/5/6 and Osmo 360 may advertise while asleep. Keep this transport
                 // probe invisible until the protocol reports an awake camera.
                 return
             case .connected:

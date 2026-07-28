@@ -3,12 +3,18 @@ import Foundation
 @main
 enum DJIWakeEligibilityRegression {
     static func main() {
-        for model in [CameraModel.djiOsmoAction4, .djiOsmoAction5Pro, .djiOsmoAction6] {
+        for model in [CameraModel.djiOsmoAction4, .djiOsmoAction5Pro, .djiOsmoAction6, .djiOsmo360] {
             let camera = makeCamera(model: model, state: .discovered)
+            precondition(camera.isSupportedByApp, "\(model.rawValue) should use the shared DJI R SDK profile")
+            precondition(camera.behavior.usesDJIRSDKControl, "\(model.rawValue) should use DJI R SDK control")
             precondition(!camera.supportsExperimentalDJISleepWake, "\(model.rawValue) must not expose the unsuccessful DJI wake experiment")
             precondition(camera.supportsDJIPhoneGPS, "\(model.rawValue) should expose opt-in phone GPS")
             precondition(!camera.canSelectForBatch, "\(model.rawValue) must not remain selectable while sleeping")
             precondition(camera.displayConnectionLabel == "Not Connected", "\(model.rawValue) should show Not Connected while sleeping")
+
+            let connectedCamera = makeCamera(model: model, state: .connected)
+            precondition(connectedCamera.supportsBatchRecord, "\(model.rawValue) should expose recording control")
+            precondition(connectedCamera.canSelectForBatch, "\(model.rawValue) should be selectable after R SDK connection")
         }
 
         let disconnectedAction5 = makeCamera(model: .djiOsmoAction5Pro, state: .disconnected)

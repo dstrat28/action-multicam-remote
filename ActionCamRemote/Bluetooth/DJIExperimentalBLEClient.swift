@@ -197,9 +197,7 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
     func sendPhoneGPS(_ fix: DJIGPSFix) -> Bool {
         guard canUseRSDKControl,
               let peripheral,
-              cameraBehavior.kind == .djiOsmoAction4
-                || cameraBehavior.kind == .djiOsmoAction5Pro
-                || cameraBehavior.kind == .djiOsmoAction6 else {
+              cameraBehavior.usesDJIRSDKControl else {
 #if DEBUG
             logGPSNotReadyIfNeeded()
 #endif
@@ -380,9 +378,7 @@ private extension DJIExperimentalBLEClient {
         guard now.timeIntervalSince(lastGPSNotReadyDebugLogDate) >= gpsDebugLogInterval else { return }
         lastGPSNotReadyDebugLogDate = now
 
-        let supportedModel = cameraBehavior.kind == .djiOsmoAction4
-            || cameraBehavior.kind == .djiOsmoAction5Pro
-            || cameraBehavior.kind == .djiOsmoAction6
+        let supportedModel = cameraBehavior.usesDJIRSDKControl
         onLog(
             "\(cameraName): GPS debug: not sent; supportedModel=\(supportedModel), peripheral=\(peripheral != nil), handshake=\(hasCompletedRSDKHandshake), writeCharacteristic=\(rSDKWriteCharacteristic?.debugLabel ?? "none")"
         )
@@ -1503,7 +1499,7 @@ private extension DJIExperimentalBLEClient {
         var telemetry = state.telemetry ?? CameraTelemetry()
 
         switch cameraBehavior.kind {
-        case .djiOsmoAction4, .djiOsmoAction5Pro, .djiOsmoAction6:
+        case .djiOsmoAction4, .djiOsmoAction5Pro, .djiOsmoAction6, .djiOsmo360:
             telemetry.isExternalPowerConnected = state.compactExternalPowerConnected
         case .djiOsmoNano:
             telemetry.isExternalPowerConnected = state.compactNanoExternalPowerConnected
