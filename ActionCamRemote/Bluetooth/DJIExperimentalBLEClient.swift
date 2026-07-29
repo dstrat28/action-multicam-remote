@@ -874,7 +874,7 @@ private extension DJIExperimentalBLEClient {
                 case let .recording(recordAction):
                     if recordAction.isStarting {
                         protectAgainstStaleStoppedStatusAfterStart()
-                        onCameraStatus(cameraID, CameraStatusUpdate(recordingState: .starting, shouldClearCurrentMode: true))
+                        onCameraStatus(cameraID, CameraStatusUpdate(recordingState: .starting))
                     } else {
                         onCameraStatus(cameraID, CameraStatusUpdate(recordingState: .stopped))
                     }
@@ -1720,8 +1720,7 @@ private extension DJIExperimentalBLEClient {
             cameraID,
             CameraStatusUpdate(
                 recordingState: recordingState,
-                canClearActiveRecording: canClearActiveRecording(with: recordingState),
-                shouldClearCurrentMode: recordingState == .recording
+                canClearActiveRecording: canClearActiveRecording(with: recordingState)
             )
         )
     }

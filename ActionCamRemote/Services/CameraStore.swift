@@ -1899,7 +1899,6 @@ private extension CameraStore {
                     }
 
                     if latest.brand == .dji {
-                        self.updateCameraStatus(id, update: CameraStatusUpdate(shouldClearCurrentMode: true))
                         self.send(.startRecording, to: [latest])
                         self.scheduleWakeRetryIfNeeded(for: [latest])
                         self.modeSwitchAttemptsByCameraID.removeValue(forKey: id)
@@ -1970,8 +1969,7 @@ private extension CameraStore {
                         self.updateCameraStatus(
                             latest.id,
                             update: CameraStatusUpdate(
-                                recordingState: shouldAssumeRecording ? .recording : .stopped,
-                                shouldClearCurrentMode: true
+                                recordingState: shouldAssumeRecording ? .recording : .stopped
                             )
                         )
                     }
@@ -2137,7 +2135,7 @@ private extension CameraStore {
             protectStartTransition(for: camera)
             updateCameraStatus(
                 camera.id,
-                update: CameraStatusUpdate(recordingState: .starting, shouldClearCurrentMode: true)
+                update: CameraStatusUpdate(recordingState: .starting)
             )
         case .capturePhoto:
             clearStateGuards(for: camera.id)
@@ -2327,9 +2325,7 @@ private extension CameraStore {
             canClearActiveRecording: update.canClearActiveRecording
         )
 
-        if update.shouldClearCurrentMode {
-            cameras[index].currentMode = nil
-        } else if let currentMode = update.currentMode {
+        if let currentMode = update.currentMode {
             cameras[index].currentMode = currentMode
         }
 
