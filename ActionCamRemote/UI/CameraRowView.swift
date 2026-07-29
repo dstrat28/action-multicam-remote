@@ -1137,7 +1137,7 @@ private struct CameraRecordButton: View {
             store.startRecording(camera)
         case .stopRecording:
             store.stopRecording(camera)
-        case .toggleRecording, .setMode, .cycleMode, .applySetting, .keepAlive, nil:
+        case .addHighlight, .toggleRecording, .setMode, .cycleMode, .applySetting, .keepAlive, nil:
             break
         }
     }

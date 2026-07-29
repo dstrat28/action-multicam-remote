@@ -140,10 +140,17 @@ struct ACRPrimaryActionButton: View {
     var isLoading: Bool = false
     var size: Size = .compact
     var appearance: Appearance = .filled
+    var showsTitle: Bool = true
+    var minimumContentWidth: CGFloat? = nil
+    var feedback: SensoryFeedback = .impact(weight: .medium)
     var action: () -> Void
+    @State private var feedbackTrigger = 0
 
     var body: some View {
-        Button(action: action) {
+        Button {
+            action()
+            feedbackTrigger += 1
+        } label: {
             HStack(spacing: 6) {
                 if isLoading {
                     ProgressView()
@@ -153,16 +160,18 @@ struct ACRPrimaryActionButton: View {
                     Image(systemName: systemImage)
                 }
 
-                Text(title)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.82)
+                if showsTitle {
+                    Text(title)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.82)
+                }
             }
             .font(size.font)
             .fontDesign(.rounded)
             .foregroundStyle(contentColor)
-            .frame(minWidth: size.minimumWidth)
-            .frame(height: size.height)
-            .padding(.horizontal, size.horizontalPadding)
+            .frame(minWidth: showsTitle ? (minimumContentWidth ?? size.minimumWidth) : nil)
+            .frame(width: showsTitle ? nil : size.height, height: size.height)
+            .padding(.horizontal, showsTitle ? size.horizontalPadding : 0)
             .background(
                 buttonFill,
                 in: RoundedRectangle(cornerRadius: ACRDesign.buttonCornerRadius, style: .continuous)
@@ -181,6 +190,7 @@ struct ACRPrimaryActionButton: View {
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled || isLoading)
+        .sensoryFeedback(feedback, trigger: feedbackTrigger)
         .accessibilityLabel(title)
     }
 

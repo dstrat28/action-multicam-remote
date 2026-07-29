@@ -7,12 +7,14 @@ struct WatchRemoteView: View {
 
     @EnvironmentObject private var session: WatchSessionModel
     @State private var path: [Route] = []
+    @State private var highlightFeedbackTrigger = 0
+    @State private var recordingFeedbackTrigger = 0
 
     var body: some View {
         NavigationStack(path: $path) {
             Group {
                 if session.isRecording {
-                    stopOnlyView
+                    recordingControlsView
                 } else {
                     remoteView
                 }
@@ -26,6 +28,7 @@ struct WatchRemoteView: View {
             }
         }
         .tint(.red)
+        .sensoryFeedback(.impact(weight: .medium), trigger: recordingFeedbackTrigger)
         .onChange(of: session.isRecording) { _, isRecording in
             if isRecording {
                 path.removeAll()
@@ -34,7 +37,7 @@ struct WatchRemoteView: View {
     }
 
     private var remoteView: some View {
-        VStack(spacing: 14) {
+        VStack(spacing: 8) {
             Spacer(minLength: 0)
 
             statusView
@@ -153,6 +156,7 @@ struct WatchRemoteView: View {
     private var recordButton: some View {
         Button {
             session.record()
+            recordingFeedbackTrigger += 1
         } label: {
             HStack(spacing: 7) {
                 ZStack {
@@ -180,25 +184,80 @@ struct WatchRemoteView: View {
         .accessibilityHint("Starts recording on all connected cameras")
     }
 
-    private var stopOnlyView: some View {
+    private var recordingControlsView: some View {
+        VStack(spacing: 8) {
+            Spacer(minLength: 0)
+
+            if session.canAddHighlight {
+                highlightButton
+            }
+
+            stopButton
+
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+    }
+
+    private var highlightButton: some View {
+        Button {
+            guard session.pendingCommand != "highlight" else { return }
+            session.highlight()
+            highlightFeedbackTrigger += 1
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "bookmark.fill")
+                    .frame(width: 18, height: 18)
+
+                Text("Highlight")
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
+            }
+            .font(.headline)
+            .frame(maxWidth: .infinity)
+            .frame(height: 46)
+        }
+        .buttonStyle(.bordered)
+        .buttonBorderShape(.roundedRectangle(radius: 14))
+        .tint(.yellow)
+        .allowsHitTesting(session.pendingCommand != "highlight")
+        .sensoryFeedback(.selection, trigger: highlightFeedbackTrigger)
+        .accessibilityLabel("Add Highlight")
+        .accessibilityHint("Adds a highlight tag to supported cameras that are recording")
+    }
+
+    private var stopButton: some View {
         Button {
             session.stop()
+            recordingFeedbackTrigger += 1
         } label: {
-            VStack(spacing: 10) {
-                Image(systemName: "stop.fill")
-                    .font(.system(size: 34, weight: .bold))
+            HStack(spacing: 7) {
+                ZStack {
+                    if session.pendingCommand == "stop" {
+                        ProgressView()
+                            .tint(.white)
+                            .controlSize(.small)
+                    } else {
+                        Image(systemName: "stop.fill")
+                    }
+                }
+                .frame(width: 18, height: 18)
 
-                Text("Stop")
-                    .font(.headline)
+                Text(session.pendingCommand == "stop" ? "Stopping" : "Stop")
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.82)
             }
+            .font(.headline)
             .foregroundStyle(.white)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(.red, in: Circle())
-            .padding(12)
+            .frame(maxWidth: .infinity)
+            .frame(height: 46)
         }
-        .buttonStyle(.plain)
-        .disabled(session.isCommandPending)
-        .accessibilityLabel("Stop recording")
+        .buttonStyle(.borderedProminent)
+        .buttonBorderShape(.roundedRectangle(radius: 14))
+        .tint(.red)
+        .disabled(session.pendingCommand == "stop")
+        .accessibilityLabel(session.pendingCommand == "stop" ? "Stopping recording" : "Stop recording")
         .accessibilityHint("Stops recording on all connected cameras")
     }
 }

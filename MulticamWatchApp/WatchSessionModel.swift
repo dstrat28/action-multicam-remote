@@ -20,14 +20,19 @@ final class WatchSessionModel: NSObject, ObservableObject {
         static let model = "model"
         static let isRecording = "isRecording"
         static let recording = "recording"
+        static let highlightAvailable = "highlightAvailable"
+        static let stateVersion = "stateVersion"
     }
 
     @Published private(set) var cameras: [WatchCamera] = []
     @Published private(set) var isRecording = false
     @Published private(set) var hasReceivedState = false
     @Published private(set) var isCommandPending = false
+    @Published private(set) var pendingCommand: String?
+    @Published private(set) var canAddHighlight = false
     @Published private(set) var statusMessage: String?
     private var expectedRecordingState: Bool?
+    private var latestStateVersion: TimeInterval = 0
     private var pendingCommandID: String?
     private var commandTimeoutTask: Task<Void, Never>?
 
@@ -53,7 +58,11 @@ final class WatchSessionModel: NSObject, ObservableObject {
         send(command: "stop", expectedRecordingState: false)
     }
 
-    private func send(command: String, expectedRecordingState: Bool) {
+    func highlight() {
+        send(command: "highlight", expectedRecordingState: nil)
+    }
+
+    private func send(command: String, expectedRecordingState: Bool?) {
         let session = WCSession.default
         guard session.activationState == .activated else {
             statusMessage = "Connecting…"
@@ -65,6 +74,7 @@ final class WatchSessionModel: NSObject, ObservableObject {
         let commandID = UUID().uuidString
         pendingCommandID = commandID
         isCommandPending = true
+        pendingCommand = command
         statusMessage = "Sending…"
         let message: [String: Any] = [
             Key.command: command,
@@ -85,11 +95,15 @@ final class WatchSessionModel: NSObject, ObservableObject {
                     self.apply(reply)
                     if reply["accepted"] as? Bool != true {
                         self.finishPendingCommand(message: "Try again")
+                    } else if expectedRecordingState == nil,
+                              self.pendingCommandID == commandID {
+                        self.finishPendingCommand(message: nil)
                     }
                 }
             },
             errorHandler: { [weak self] _ in
                 Task { @MainActor in
+                    guard self?.pendingCommandID == commandID else { return }
                     self?.finishPendingCommand(message: "Try again")
                 }
             }
@@ -111,6 +125,7 @@ final class WatchSessionModel: NSObject, ObservableObject {
         pendingCommandID = nil
         expectedRecordingState = nil
         isCommandPending = false
+        pendingCommand = nil
         statusMessage = message
     }
 
@@ -132,6 +147,11 @@ final class WatchSessionModel: NSObject, ObservableObject {
     private func apply(_ context: [String: Any]) {
         guard !context.isEmpty else { return }
 
+        if let stateVersion = context[Key.stateVersion] as? TimeInterval {
+            guard stateVersion >= latestStateVersion else { return }
+            latestStateVersion = stateVersion
+        }
+
         hasReceivedState = true
         let cameraDictionaries = context[Key.cameras] as? [[String: Any]] ?? []
         cameras = cameraDictionaries.compactMap { dictionary in
@@ -150,12 +170,20 @@ final class WatchSessionModel: NSObject, ObservableObject {
         }
         isRecording = context[Key.recording] as? Bool
             ?? cameras.contains(where: \.isRecording)
+        canAddHighlight = context[Key.highlightAvailable] as? Bool ?? false
 
         if let pendingCommandID,
-           context[Key.commandID] as? String == pendingCommandID,
-           context[Key.commandAccepted] as? Bool == false {
-            finishPendingCommand(message: "Try again")
-            return
+           context[Key.commandID] as? String == pendingCommandID {
+            if context[Key.commandAccepted] as? Bool == false {
+                finishPendingCommand(message: "Try again")
+                return
+            }
+
+            if context[Key.commandAccepted] as? Bool == true,
+               expectedRecordingState == nil {
+                finishPendingCommand(message: nil)
+                return
+            }
         }
 
         if let expectedRecordingState, isRecording == expectedRecordingState {
@@ -203,6 +231,15 @@ extension WatchSessionModel: WCSessionDelegate {
     ) {
         Task { @MainActor [weak self] in
             self?.apply(applicationContext)
+        }
+    }
+
+    nonisolated func session(
+        _ session: WCSession,
+        didReceiveMessage message: [String: Any]
+    ) {
+        Task { @MainActor [weak self] in
+            self?.apply(message)
         }
     }
 
