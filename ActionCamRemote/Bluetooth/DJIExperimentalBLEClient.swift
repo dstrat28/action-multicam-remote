@@ -183,6 +183,18 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
                 return rSDKNotReadyResult(for: command)
             }
             return sendRecordCommand(.stop, to: peripheral, label: command)
+        case .addHighlight:
+            guard cameraModel.supportsDJIHighlight else {
+                return result(
+                    for: command,
+                    status: .unsupported,
+                    message: "Highlight tags are not available on \(cameraModel.rawValue)."
+                )
+            }
+            guard canUseRSDKControl else {
+                return rSDKNotReadyResult(for: command)
+            }
+            return sendRSDKHighlightCommand(to: peripheral, label: command)
         case .toggleRecording:
             return result(for: command, status: .unsupported, message: "DJI toggle record is not safe without camera state confirmation.")
         case let .setMode(mode):
@@ -618,6 +630,16 @@ private extension DJIExperimentalBLEClient {
         writeRSDK(packet, to: peripheral, label: "R SDK capture photo")
 
         return result(for: command, status: .sent, message: "Sent DJI R SDK photo capture command.")
+    }
+
+    func sendRSDKHighlightCommand(
+        to peripheral: CBPeripheral,
+        label command: CameraCommand
+    ) -> CameraCommandResult {
+        let packet = DJIRSDKPacket.highlight(sequenceNumber: nextRSDKSequence())
+        let disposition = writeRSDK(packet, to: peripheral, label: "R SDK highlight tag")
+        let status: CameraCommandStatus = disposition == .queued ? .queued : .sent
+        return result(for: command, status: status, message: "Sent DJI highlight tag.")
     }
 
     func sendRSDKModeCommand(
@@ -2654,6 +2676,16 @@ private enum DJIRSDKPacket {
             commandSet: 0x1D,
             commandID: 0x04,
             payload: payload
+        )
+    }
+
+    static func highlight(sequenceNumber: UInt16) -> Data {
+        frame(
+            sequenceNumber: sequenceNumber,
+            commandType: DJIRSDKCommandType.noResponse,
+            commandSet: 0x00,
+            commandID: 0x11,
+            payload: Data([0x02, 0x01, 0x00, 0x00])
         )
     }
 

@@ -163,6 +163,12 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
                 scheduleStatusRefresh()
             }
             return result
+        case .addHighlight:
+            return result(
+                for: command,
+                status: .unsupported,
+                message: "Highlight tags are currently supported only on compatible DJI cameras."
+            )
         case .toggleRecording:
             let result = writeCommand(.pressShutterButton, label: command)
             scheduleStatusRefresh()
@@ -202,7 +208,7 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
         switch command {
         case .startRecording, .capturePhoto, .setMode, .cycleMode, .applySetting:
             true
-        case .stopRecording, .toggleRecording, .keepAlive:
+        case .stopRecording, .addHighlight, .toggleRecording, .keepAlive:
             false
         }
     }

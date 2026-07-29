@@ -1,6 +1,6 @@
 # Camera Compatibility Notes
 
-Updated: 2026-07-26
+Updated: 2026-07-28
 
 ## Architecture
 
@@ -76,11 +76,13 @@ Implemented:
 - pairing and BLE connection through the shared DJI R SDK handshake path;
 - conservative recording-state behavior matching the unverified Action 5 profile;
 - existing front-view Action-series product thumbnail.
+- synchronized highlight-tag command while recording, using the DJI R SDK QS-button key report;
 - sleeping cameras are shown as Not Connected; iPhone sleep wake is not exposed.
 
 Known limits:
 
 - Connection, record start/stop, and recording-state interpretation require direct Action 4 hardware verification.
+- Highlight tagging is unverified on local Action 4 hardware and the key-report command does not acknowledge whether the marker was applied.
 - Put the camera in Video mode on-device before testing recording.
 - DJI's [official R SDK wake procedure](https://github.com/dji-sdk/Osmo-GPS-Controller-Demo/blob/main/docs/protocol_data_segment.md#camera-power-mode-settings-001a) requires a two-second raw BLE advertisement containing `WKP` plus the reversed camera MAC. iOS apps cannot construct that advertisement or read the camera's BLE MAC, so wake is not claimed.
 
@@ -93,11 +95,13 @@ Implemented:
 - name-based model detection for Action 5, Action 5 Pro, and OA5 advertisements;
 - pairing and BLE connection through the shared DJI R SDK handshake path;
 - conservative recording-state behavior that does not inherit Action 6-specific assumptions.
+- synchronized highlight-tag command while recording, using the DJI R SDK QS-button key report;
 - sleeping cameras are shown as Not Connected; iPhone sleep wake is not exposed.
 
 Known limits:
 
 - Connection and record control require direct hardware verification.
+- Highlight tagging requires hardware verification and the key-report command does not acknowledge whether the marker was applied.
 - Legacy DUML routing and fallback commands are not claimed as model-specific Action 5 support.
 - Put the camera in Video mode on-device before testing recording.
 - Settings control is not mapped.
@@ -114,6 +118,7 @@ Implemented:
 - record start/stop while the camera is awake and in Video mode;
 - Action 6 recording-state reads from the short `0x70` system-state response;
 - protection against stale compact status packets that report stopped while the camera is actually recording.
+- synchronized highlight-tag command while recording, using the DJI R SDK QS-button key report.
 - sleeping cameras are shown as Not Connected; iPhone sleep wake is not exposed.
 
 Known limits:
@@ -122,6 +127,7 @@ Known limits:
 - DJI documents wake only for a single camera in its own remote-controller mode. Multicam tests in this app deliberately address each selected camera through its separate BLE client rather than claiming DJI remote multi-device wake support.
 - Mode switching is not reliable enough to expose as supported. Put the camera in Video mode on-device before recording.
 - Settings control is not mapped.
+- Highlight tagging has not yet been verified locally and the key-report command does not acknowledge whether the marker was applied.
 
 ## DJI Osmo Nano
 

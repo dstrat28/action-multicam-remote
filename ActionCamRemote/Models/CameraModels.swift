@@ -176,6 +176,32 @@ extension CameraModel {
             false
         }
     }
+
+    var supportsDJIHighlight: Bool {
+        switch self {
+        case .djiOsmoAction4, .djiOsmoAction5Pro, .djiOsmoAction6:
+            true
+        case .goproLitHero,
+             .goproMax2,
+             .goproHero13Black,
+             .goproHero,
+             .goproHero12Black,
+             .goproHero11BlackMini,
+             .goproHero11Black,
+             .goproHero10Black,
+             .goproHero9Black,
+             .goproMax,
+             .goproHero8Black,
+             .djiOsmo360,
+             .djiOsmoNano,
+             .djiOsmoAction3,
+             .djiAction2,
+             .djiOsmoAction,
+             .djiOsmoPocket3,
+             .unknown:
+            false
+        }
+    }
 }
 
 enum CameraCapability: String, CaseIterable, Identifiable, Codable {
@@ -896,6 +922,10 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
         behavior.usesDJIRSDKControl
     }
 
+    var supportsDJIHighlight: Bool {
+        brand == .dji && model.supportsDJIHighlight
+    }
+
     var displayConnectionLabel: String {
         guard isSupportedByApp else { return "Unsupported" }
         if connectionState == .discovered {
@@ -1273,6 +1303,7 @@ enum CameraCommand: Equatable, Codable {
     case startRecording
     case capturePhoto
     case stopRecording
+    case addHighlight
     case toggleRecording
     case setMode(CaptureMode)
     case cycleMode
@@ -1287,6 +1318,8 @@ enum CameraCommand: Equatable, Codable {
             "Capture Photo"
         case .stopRecording:
             "Stop Recording"
+        case .addHighlight:
+            "Add Highlight"
         case .toggleRecording:
             "Toggle Recording"
         case let .setMode(mode):

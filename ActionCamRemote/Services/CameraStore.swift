@@ -225,6 +225,16 @@ final class CameraStore {
         }
     }
 
+    var recordingDJIHighlightCameras: [DiscoveredCamera] {
+        readyConnectedCameras.filter {
+            $0.supportsDJIHighlight && $0.recordingState == .recording
+        }
+    }
+
+    var canAddDJIHighlight: Bool {
+        !recordingDJIHighlightCameras.isEmpty
+    }
+
     var isPhotoMulticamSession: Bool {
         !connectedRecordCameras.isEmpty
             && connectedRecordCameras.allSatisfy(\.isInPhotoMode)
@@ -587,6 +597,16 @@ final class CameraStore {
         }
 
         send(.stopRecording, to: targets)
+    }
+
+    func addDJIHighlight() {
+        let targets = recordingDJIHighlightCameras
+        guard !targets.isEmpty else {
+            appendLog("No supported DJI cameras are recording for Highlight.")
+            return
+        }
+
+        send(.addHighlight, to: targets)
     }
 
     @discardableResult
@@ -2151,7 +2171,7 @@ private extension CameraStore {
             updateCameraStatus(camera.id, update: CameraStatusUpdate(recordingState: .stopped))
         case .setMode:
             break
-        case .toggleRecording, .cycleMode, .applySetting, .keepAlive:
+        case .addHighlight, .toggleRecording, .cycleMode, .applySetting, .keepAlive:
             break
         }
     }
@@ -2165,6 +2185,8 @@ private extension CameraStore {
             switch command {
             case .startRecording, .capturePhoto, .stopRecording:
                 isSupportedDJIDemoCommand = true
+            case .addHighlight:
+                isSupportedDJIDemoCommand = camera.supportsDJIHighlight
             case let .setMode(mode):
                 isSupportedDJIDemoCommand = camera.availableCaptureModes.contains(mode)
             case .toggleRecording, .cycleMode, .applySetting, .keepAlive:
@@ -2218,7 +2240,7 @@ private extension CameraStore {
             cameras[index].telemetry = Self.demoTelemetry(for: cameras[index], mode: mode)
         case .cycleMode:
             cameras[index].currentMode = nil
-        case .applySetting, .keepAlive:
+        case .addHighlight, .applySetting, .keepAlive:
             break
         }
     }

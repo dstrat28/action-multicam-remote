@@ -41,6 +41,7 @@ Release and TestFlight setup notes live in [`docs/testflight.md`](docs/testfligh
 - Select cameras for multicam control.
 - Start all selected cameras.
 - Stop all selected recording cameras.
+- Add a synchronized highlight tag to every recording DJI Action 4, Action 5 Pro, and Action 6 camera.
 - Individually start/stop each camera.
 - View connected cameras and start/stop all ready cameras from Apple Watch.
 - Optionally send iPhone GPS, altitude, direction, and speed to connected DJI Action 4/5/6 and Osmo 360 cameras for recording metadata.
@@ -49,6 +50,7 @@ Release and TestFlight setup notes live in [`docs/testflight.md`](docs/testfligh
 ## Known Limits
 
 - DJI support is experimental and may vary by firmware.
+- DJI highlight tagging uses the R SDK QS-button key report and does not return an acknowledgement; verify the markers on non-critical footage before relying on it.
 - Phone GPS requires When In Use location permission and the iPhone app to remain open and connected while recording. Recorded video files contain precise location telemetry when this option is enabled.
 - DJI mode switching and settings editing are intentionally limited until the BLE command mapping is proven.
 - DJI Action 4/5/6 and Osmo 360 require a completed R SDK handshake before control commands are sent; legacy recording fallbacks are retained only for Osmo Nano.

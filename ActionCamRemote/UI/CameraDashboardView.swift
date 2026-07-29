@@ -141,9 +141,13 @@ private struct MulticamRecordBar: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            selectionLabel
-
-            Spacer(minLength: 4)
+            if store.canAddDJIHighlight {
+                highlightButton
+                Spacer(minLength: 4)
+            } else {
+                selectionLabel
+                Spacer(minLength: 4)
+            }
 
             actionButton
         }
@@ -153,6 +157,18 @@ private struct MulticamRecordBar: View {
         .padding(.vertical, 10)
         .acrFloatingControlBar()
         .frame(maxWidth: .infinity)
+    }
+
+    private var highlightButton: some View {
+        ACRPrimaryActionButton(
+            title: "Highlight",
+            systemImage: "bookmark.fill",
+            tint: .acrDJI,
+            size: .compact,
+            appearance: .outlined,
+            action: store.addDJIHighlight
+        )
+        .accessibilityHint("Adds a highlight tag to every supported DJI camera that is recording")
     }
 
     private var selectionLabel: some View {
