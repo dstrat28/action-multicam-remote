@@ -31,6 +31,8 @@ Review diagnostics before posting publicly. They may contain Bluetooth identifie
 
 ## Protocol Work
 
-GoPro changes should prefer public Open GoPro behavior and docs. DJI changes should stay model-scoped when possible because the app currently relies on experimental DUML-style BLE behavior that can differ across cameras.
+GoPro changes should follow the public Open GoPro BLE API. DJI Action/360 control uses DJI's R SDK handshake and status protocol, with model-scoped DUML commands where behavior differs between cameras.
 
-Keep public docs honest: mark hardware as tested only after physical-device verification.
+Keep model-specific behavior isolated, preserve the shared connection flow, and include regression coverage for packet encoding or state parsing changes. Mark a camera as hardware-tested only after verifying it on a physical device.
+
+For signed device builds, select your own Apple development team in Xcode and use bundle identifiers registered to that team. The repository's bundle identifiers belong to the published app and do not grant access to its signing credentials.
