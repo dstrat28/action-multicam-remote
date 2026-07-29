@@ -44,14 +44,16 @@ struct CameraDashboardView: View {
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
                     #if DEBUG
-                    Button {
-                        isShowingDiagnostics = true
-                    } label: {
-                        Image(systemName: "waveform.path.ecg")
+                    if !ProcessInfo.processInfo.arguments.contains("--app-store-screenshots") {
+                        Button {
+                            isShowingDiagnostics = true
+                        } label: {
+                            Image(systemName: "waveform.path.ecg")
+                        }
+                        .foregroundStyle(Color.acrToolbarIcon)
+                        .accessibilityLabel("Open diagnostics")
+                        .help("Diagnostics")
                     }
-                    .foregroundStyle(Color.acrToolbarIcon)
-                    .accessibilityLabel("Open diagnostics")
-                    .help("Diagnostics")
                     #endif
 
                     if !store.pairedCameras.isEmpty {
