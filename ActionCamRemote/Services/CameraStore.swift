@@ -6,7 +6,11 @@ import OSLog
 @MainActor
 @Observable
 final class CameraStore {
-    var cameras: [DiscoveredCamera] = []
+    var cameras: [DiscoveredCamera] = [] {
+        didSet {
+            recordingLiveActivityController.reconcile(cameras: cameras)
+        }
+    }
     var commandResults: [CameraCommandResult] = []
     var eventLog: [String] = []
     var isScanning = false
@@ -17,6 +21,9 @@ final class CameraStore {
 
     @ObservationIgnored private let scanner: BLECameraScanner
     @ObservationIgnored private let phoneGPSProvider = PhoneGPSProvider()
+    @ObservationIgnored private let recordingLiveActivityController = RecordingLiveActivityController()
+    @ObservationIgnored private var liveActivityStopObserver: NSObjectProtocol?
+    @ObservationIgnored private var liveActivityHighlightObserver: NSObjectProtocol?
     @ObservationIgnored private var clients: [UUID: any BLECameraDeviceClient] = [:]
     @ObservationIgnored private var demoDiscoveryIndex = 0
     @ObservationIgnored private let pairedCamerasStorageKey = "pairedCameras.v1"
@@ -88,6 +95,25 @@ final class CameraStore {
 
         phoneGPSProvider.onTransmissionTick = { [weak self] fix in
             self?.pushPhoneGPS(fix)
+        }
+
+        liveActivityStopObserver = NotificationCenter.default.addObserver(
+            forName: .stopRecordingFromLiveActivity,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.stopLiveActivityRecording()
+            }
+        }
+        liveActivityHighlightObserver = NotificationCenter.default.addObserver(
+            forName: .addHighlightFromLiveActivity,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in
+                self?.addHighlight()
+            }
         }
 #if DEBUG
         phoneGPSProvider.onDebugLog = { [weak self] message in
@@ -634,6 +660,20 @@ final class CameraStore {
         }
         targets.forEach(stopRecording)
         return true
+    }
+
+    func stopLiveActivityRecording() {
+        let targets = cameras.filter {
+            $0.supportsBatchRecord
+                && ($0.recordingState == .recording || $0.recordingState == .starting)
+        }
+        guard !targets.isEmpty else {
+            appendLog("No cameras are recording from the Live Activity.")
+            return
+        }
+
+        recordingLiveActivityController.markStopping(cameras: cameras)
+        targets.forEach(stopRecording)
     }
 
     func startRecording(_ camera: DiscoveredCamera) {

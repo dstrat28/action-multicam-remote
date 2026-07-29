@@ -140,13 +140,12 @@ private struct MulticamRecordBar: View {
     @Environment(CameraStore.self) private var store
 
     var body: some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: 8) {
+            selectionLabel
+            Spacer(minLength: 4)
+
             if store.canAddHighlight {
                 highlightButton
-                Spacer(minLength: 4)
-            } else {
-                selectionLabel
-                Spacer(minLength: 4)
             }
 
             actionButton
@@ -163,11 +162,14 @@ private struct MulticamRecordBar: View {
         ACRPrimaryActionButton(
             title: "Highlight",
             systemImage: "bookmark.fill",
-            tint: .acrAccent,
-            size: .compact,
+            tint: .yellow,
+            size: .large,
             appearance: .outlined,
+            showsTitle: false,
+            feedback: .success,
             action: store.addHighlight
         )
+        .accessibilityLabel("Add Highlight")
         .accessibilityHint("Adds a highlight tag to every supported camera that is recording")
     }
 
@@ -187,6 +189,7 @@ private struct MulticamRecordBar: View {
             isEnabled: isEnabled,
             isLoading: isStarting || isPhotoCaptureInProgress,
             size: .large,
+            minimumContentWidth: store.canStopMulticamRecording ? 124 : nil,
             action: performAction
         )
     }

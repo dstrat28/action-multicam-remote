@@ -6,6 +6,7 @@ final class WatchConnectivityController: NSObject {
     private enum Command: String {
         case record
         case stop
+        case highlight
         case refresh
     }
 
@@ -19,11 +20,15 @@ final class WatchConnectivityController: NSObject {
         static let model = "model"
         static let isRecording = "isRecording"
         static let recording = "recording"
+        static let highlightAvailable = "highlightAvailable"
+        static let stateVersion = "stateVersion"
     }
 
     private let store: CameraStore
     private var refreshTask: Task<Void, Never>?
     private var lastPublishedSnapshot: NSDictionary?
+    private var lastGeneratedState: NSDictionary?
+    private var stateVersion = Date().timeIntervalSinceReferenceDate
     private var lastCommandID: String?
     private var lastCommandAccepted: Bool?
 
@@ -51,11 +56,15 @@ final class WatchConnectivityController: NSObject {
     private func handle(_ command: Command) -> Bool {
         switch command {
         case .record:
-            store.startWatchRecording()
+            return store.startWatchRecording()
         case .stop:
-            store.stopWatchRecording()
+            return store.stopWatchRecording()
+        case .highlight:
+            guard store.canAddHighlight else { return false }
+            store.addHighlight()
+            return true
         case .refresh:
-            true
+            return true
         }
     }
 
@@ -77,11 +86,20 @@ final class WatchConnectivityController: NSObject {
         var snapshot: [String: Any] = [
             Key.cameras: cameras,
             Key.recording: isRecording,
+            Key.highlightAvailable: store.canAddHighlight,
         ]
         if let lastCommandID, let lastCommandAccepted {
             snapshot[Key.commandID] = lastCommandID
             snapshot[Key.commandAccepted] = lastCommandAccepted
         }
+
+        let comparableState = snapshot as NSDictionary
+        if !(lastGeneratedState?.isEqual(comparableState) ?? false) {
+            let now = Date().timeIntervalSinceReferenceDate
+            stateVersion = max(now, stateVersion.nextUp)
+            lastGeneratedState = comparableState
+        }
+        snapshot[Key.stateVersion] = stateVersion
         return snapshot
     }
 
@@ -96,8 +114,16 @@ final class WatchConnectivityController: NSObject {
         }
 
         do {
-            try WCSession.default.updateApplicationContext(snapshot)
+            let session = WCSession.default
+            try session.updateApplicationContext(snapshot)
             lastPublishedSnapshot = comparableSnapshot
+
+            // Application context is the durable latest-state fallback, but its
+            // delivery can be deferred. Push the same versioned snapshot directly
+            // whenever the Watch app is reachable so its visible UI updates now.
+            if session.isReachable {
+                session.sendMessage(snapshot, replyHandler: nil, errorHandler: nil)
+            }
         } catch {
             // A future refresh retries once the session becomes active.
         }
