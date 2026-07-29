@@ -28,6 +28,7 @@ Implemented:
 - hardware model detection;
 - Video preset/group switching;
 - automatic connection after the camera is powered on.
+- synchronized HiLight tagging while recording through the public Open GoPro BLE command.
 
 Important behavior:
 
@@ -53,6 +54,7 @@ Implemented:
 
 - model detection from documented advertisement model IDs and common model-code/name strings;
 - the same Open GoPro BLE pair/connect, shutter, status, setting, and query client used by HERO13 Black.
+- the same synchronized HiLight command used by HERO13 Black.
 
 Known limits:
 

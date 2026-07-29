@@ -184,7 +184,7 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
             }
             return sendRecordCommand(.stop, to: peripheral, label: command)
         case .addHighlight:
-            guard cameraModel.supportsDJIHighlight else {
+            guard cameraModel.supportsHighlight else {
                 return result(
                     for: command,
                     status: .unsupported,

@@ -21,18 +21,20 @@ enum DJIModeSwitchRegression {
         precondition(CaptureMode.hyperlapse.djiRSDKValue(for: .djiOsmo360) == 0x3A)
         assertRoundTrip(for: osmo360)
 
-        precondition(action4.supportsDJIHighlight)
-        precondition(CameraModel.djiOsmoAction5Pro.supportsDJIHighlight)
-        precondition(CameraModel.djiOsmoAction6.supportsDJIHighlight)
-        precondition(!osmo360.supportsDJIHighlight)
+        precondition(action4.supportsHighlight)
+        precondition(CameraModel.djiOsmoAction5Pro.supportsHighlight)
+        precondition(CameraModel.djiOsmoAction6.supportsHighlight)
+        precondition(!osmo360.supportsHighlight)
 
         let nano = makeCamera(model: .djiOsmoNano)
         precondition(nano.availableCaptureModes == [.video])
         precondition(!nano.canSwitchCaptureMode)
-        precondition(!nano.supportsDJIHighlight)
+        precondition(!nano.supportsHighlight)
 
         let goPro = makeCamera(model: .goproHero13Black)
-        precondition(!goPro.supportsDJIHighlight)
+        precondition(goPro.supportsHighlight)
+        precondition(CameraModel.goproHero12Black.supportsHighlight)
+        precondition(!CameraModel.goproHero.supportsHighlight)
         precondition(CameraCommand.addHighlight.label == "Add Highlight")
 
         var photoCamera = makeCamera(model: .djiOsmoAction5Pro)

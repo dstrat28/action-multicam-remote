@@ -164,11 +164,7 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
             }
             return result
         case .addHighlight:
-            return result(
-                for: command,
-                status: .unsupported,
-                message: "Highlight tags are currently supported only on compatible DJI cameras."
-            )
+            return writeCommand(.tagHilight, label: command)
         case .toggleRecording:
             let result = writeCommand(.pressShutterButton, label: command)
             scheduleStatusRefresh()
@@ -339,6 +335,7 @@ private extension GoProBLEClient {
         case setThirdPartyClientInfo
         case pressShutterButton
         case pressModeButton
+        case tagHilight
         case loadPresetGroup(UInt16)
 
         var payload: Data {
@@ -355,6 +352,8 @@ private extension GoProBLEClient {
                 GoProPacket.commandPayload(id: 0x1B, parameterData: [Data([0x00, 0x00])])
             case .pressModeButton:
                 GoProPacket.commandPayload(id: 0x1B, parameterData: [Data([0x01, 0x00])])
+            case .tagHilight:
+                GoProPacket.commandPayload(id: 0x18, parameters: [])
             case let .loadPresetGroup(presetGroupID):
                 GoProPacket.commandPayload(
                     id: 0x3E,

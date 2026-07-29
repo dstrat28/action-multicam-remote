@@ -38,7 +38,7 @@ enum CameraModel: String, Identifiable, Codable {
     var id: String { rawValue }
 
     var brand: CameraBrand {
-        switch self {
+        return switch self {
         case .goproLitHero,
              .goproMax2,
              .goproHero13Black,
@@ -177,8 +177,12 @@ extension CameraModel {
         }
     }
 
-    var supportsDJIHighlight: Bool {
-        switch self {
+    var supportsHighlight: Bool {
+        if isOpenGoProCompatible {
+            return true
+        }
+
+        return switch self {
         case .djiOsmoAction4, .djiOsmoAction5Pro, .djiOsmoAction6:
             true
         case .goproLitHero,
@@ -922,8 +926,8 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
         behavior.usesDJIRSDKControl
     }
 
-    var supportsDJIHighlight: Bool {
-        brand == .dji && model.supportsDJIHighlight
+    var supportsHighlight: Bool {
+        model.supportsHighlight
     }
 
     var displayConnectionLabel: String {

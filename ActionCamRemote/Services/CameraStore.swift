@@ -225,14 +225,14 @@ final class CameraStore {
         }
     }
 
-    var recordingDJIHighlightCameras: [DiscoveredCamera] {
+    var recordingHighlightCameras: [DiscoveredCamera] {
         readyConnectedCameras.filter {
-            $0.supportsDJIHighlight && $0.recordingState == .recording
+            $0.supportsHighlight && $0.recordingState == .recording
         }
     }
 
-    var canAddDJIHighlight: Bool {
-        !recordingDJIHighlightCameras.isEmpty
+    var canAddHighlight: Bool {
+        !recordingHighlightCameras.isEmpty
     }
 
     var isPhotoMulticamSession: Bool {
@@ -599,10 +599,10 @@ final class CameraStore {
         send(.stopRecording, to: targets)
     }
 
-    func addDJIHighlight() {
-        let targets = recordingDJIHighlightCameras
+    func addHighlight() {
+        let targets = recordingHighlightCameras
         guard !targets.isEmpty else {
-            appendLog("No supported DJI cameras are recording for Highlight.")
+            appendLog("No supported cameras are recording for Highlight.")
             return
         }
 
@@ -2186,7 +2186,7 @@ private extension CameraStore {
             case .startRecording, .capturePhoto, .stopRecording:
                 isSupportedDJIDemoCommand = true
             case .addHighlight:
-                isSupportedDJIDemoCommand = camera.supportsDJIHighlight
+                isSupportedDJIDemoCommand = camera.supportsHighlight
             case let .setMode(mode):
                 isSupportedDJIDemoCommand = camera.availableCaptureModes.contains(mode)
             case .toggleRecording, .cycleMode, .applySetting, .keepAlive:
