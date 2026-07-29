@@ -2,7 +2,7 @@
 
 Native iPhone, iPad, and Apple Watch app for controlling multiple action cameras over Bluetooth.
 
-Multicam is built for simultaneous multi-camera capture control. On iPhone and iPad, it can pair remembered cameras, reconnect to available cameras, select which cameras should be controlled, and start/stop recording across selected cameras. The Apple Watch app shows the connected cameras and can start or stop recording across all cameras that are ready.
+Multicam is built for simultaneous multi-camera capture control. On iPhone and iPad, it can pair remembered cameras, reconnect to available cameras, select which cameras should be controlled, switch capture modes, take photos, and start or stop recording across selected cameras. The Apple Watch app shows connected cameras and can start or stop recording and add highlight markers. While recording, a Live Activity provides status plus Stop and Highlight controls on the Lock Screen and Dynamic Island.
 
 [Download Action Multicam Remote on the App Store](https://apps.apple.com/us/app/action-multicam-remote/id6784017391).
 
@@ -14,7 +14,7 @@ Multicam is an independent project and is not affiliated with, endorsed by, or s
 
 ## Status
 
-This is an early hardware-driven project. The app currently targets iOS 17+ and watchOS 10+, using CoreBluetooth, WatchConnectivity, and SwiftUI.
+This is an early hardware-driven project. The app currently targets iOS 17+ and watchOS 10+, using CoreBluetooth, WatchConnectivity, ActivityKit, and SwiftUI.
 
 ## App Store
 
@@ -41,9 +41,12 @@ Release and TestFlight setup notes live in [`docs/testflight.md`](docs/testfligh
 - Select cameras for multicam control.
 - Start all selected cameras.
 - Stop all selected recording cameras.
+- Switch capture modes and take photos on compatible cameras.
+- View available connection, battery, charging, recording, capture mode, camera settings, storage, and remaining-media information.
 - Add a synchronized highlight tag to every compatible recording GoPro and DJI Action 4, Action 5 Pro, or Action 6 camera.
 - Individually start/stop each camera.
-- View connected cameras and start/stop all ready cameras from Apple Watch.
+- View connected cameras and start/stop all ready cameras or add a recording highlight from Apple Watch.
+- Show recording status and elapsed time in a recording-only Live Activity, with Stop and Highlight controls on the Lock Screen and Dynamic Island.
 - Optionally send iPhone GPS, altitude, direction, and speed to connected DJI Action 4/5/6 and Osmo 360 cameras for recording metadata.
 - Keep diagnostic BLE logs collapsed unless needed for hardware debugging.
 
@@ -53,9 +56,8 @@ Release and TestFlight setup notes live in [`docs/testflight.md`](docs/testfligh
 - DJI highlight tagging uses the R SDK QS-button key report and does not return an acknowledgement; verify the markers on non-critical footage before relying on it.
 - GoPro HiLight tagging uses the public Open GoPro BLE command and is available only while the camera is recording.
 - Phone GPS requires When In Use location permission and the iPhone app to remain open and connected while recording. Recorded video files contain precise location telemetry when this option is enabled.
-- DJI mode switching and settings editing are intentionally limited until the BLE command mapping is proven.
+- Capture-mode switching is available for compatible GoPro cameras and DJI Action 4/5/6 and Osmo 360 cameras. DJI Action 4 and Osmo 360 remain untested, Osmo Nano mode is display-only, and capture-setting editing is not exposed.
 - DJI Action 4/5/6 and Osmo 360 require a completed R SDK handshake before control commands are sent; legacy recording fallbacks are retained only for Osmo Nano.
-- DJI recording should be started only when the camera is already in Video mode.
 - DJI Osmo Nano sleep wake may be possible over BLE, but local testing was buggy enough that the app treats sleeping DJI cameras as Not Connected instead of Available.
 - GoPro HERO13 Black is tested directly. Other documented Open GoPro BLE cameras are enabled as compatible but untested.
 - Sleeping GoPros are shown as Not Connected and do not offer Wake. They auto-connect after being powered on.
@@ -105,8 +107,10 @@ xcodebuild \
 
 - `ActionCamRemote/Models`: shared camera, command, capability, and result types.
 - `ActionCamRemote/Bluetooth`: CoreBluetooth scanner plus brand-specific BLE clients.
+- `ActionCamRemote/LiveActivity`: shared ActivityKit state, controller, and App Intents.
 - `ActionCamRemote/Services`: app-level store/coordinator.
 - `ActionCamRemote/UI`: SwiftUI app surfaces.
+- `MulticamLiveActivity`: Lock Screen and Dynamic Island Live Activity extension.
 - `MulticamWatchApp`: Apple Watch remote UI and WatchConnectivity session model.
 - `docs/compatibility.md`: protocol notes, status, and next proof gates.
 
