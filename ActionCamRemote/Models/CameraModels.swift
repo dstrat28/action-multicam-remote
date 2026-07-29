@@ -1298,7 +1298,6 @@ struct CameraStatusUpdate: Equatable {
     var hardwareIdentifier: CameraHardwareIdentifier? = nil
     var powerState: CameraPowerState? = nil
     var canClearActiveRecording: Bool = true
-    var shouldClearCurrentMode: Bool = false
     var replacesCaptureSettings: Bool = false
     var replacesDJIRSDKStatus: Bool = false
 }
