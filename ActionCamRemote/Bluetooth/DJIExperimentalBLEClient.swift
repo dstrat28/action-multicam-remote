@@ -1624,8 +1624,16 @@ private extension DJIExperimentalBLEClient {
             recordingState: recordingState
         )
 
+        let currentMode: CaptureMode?
+        if cameraBehavior.kind == .djiOsmoNano, case .full = state.format {
+            currentMode = state.captureMode
+        } else {
+            currentMode = nil
+        }
+
         return CameraStatusUpdate(
             recordingState: recordingState,
+            currentMode: currentMode,
             telemetry: state.telemetry,
             canClearActiveRecording: canClearActiveRecording(with: recordingState)
         )
