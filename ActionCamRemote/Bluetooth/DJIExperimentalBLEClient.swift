@@ -1234,7 +1234,11 @@ private extension DJIExperimentalBLEClient {
     func updateDumlRouting(from value: Data) {
         guard let packet = DJIDUMLIncomingPacket(data: value) else { return }
 
-        if cameraBehavior.kind == .djiOsmoPocket3 {
+        if cameraBehavior.kind == .djiOsmoPocket3
+            || cameraBehavior.kind == .djiOsmoNano {
+            // Nano control uses the verified app 0x02 -> camera 0x01 route. Its
+            // display can emit unrelated packets addressed to 0x1C while the
+            // camera wakes, which must not replace that control route.
             return
         }
 
