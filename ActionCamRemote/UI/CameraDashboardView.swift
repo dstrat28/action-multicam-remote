@@ -167,21 +167,30 @@ private struct MulticamRecordBar: View {
             systemImage: systemImage,
             tint: .acrRecord,
             isEnabled: isEnabled,
-            isLoading: isStarting,
+            isLoading: isStarting || isPhotoCaptureInProgress,
             size: .large,
             action: performAction
         )
     }
 
     private var title: String {
+        if isPhotoCaptureInProgress {
+            return "Capturing"
+        }
         if isStarting {
             return "Starting"
         }
-        return store.canStopMulticamRecording ? "Stop" : "Record"
+        if store.canStopMulticamRecording {
+            return "Stop"
+        }
+        return store.isPhotoMulticamSession ? "Capture" : "Record"
     }
 
     private var systemImage: String {
-        store.canStopMulticamRecording ? "stop.fill" : "record.circle.fill"
+        if store.canStopMulticamRecording {
+            return "stop.fill"
+        }
+        return store.isPhotoMulticamSession ? "camera.fill" : "record.circle.fill"
     }
 
     private var isEnabled: Bool {
@@ -189,7 +198,15 @@ private struct MulticamRecordBar: View {
     }
 
     private var isStarting: Bool {
-        store.selectedControllableCameras.contains { $0.recordingState == .starting }
+        !store.isPhotoMulticamSession
+            && store.selectedControllableCameras.contains { $0.recordingState == .starting }
+    }
+
+    private var isPhotoCaptureInProgress: Bool {
+        store.isPhotoMulticamSession
+            && store.selectedControllableCameras.contains {
+                $0.recordingState == .starting || $0.recordingState == .recording
+            }
     }
 
     private var selectionSummary: String {
@@ -373,7 +390,7 @@ private struct PairingCameraRow: View {
                 CameraProductThumbnail(model: camera.model, brand: camera.brand, size: .small)
 
                 VStack(alignment: .leading, spacing: 3) {
-                    Text(camera.name)
+                    Text(camera.displayName)
                         .font(.headline)
                         .lineLimit(1)
                         .minimumScaleFactor(0.82)
@@ -516,7 +533,7 @@ private struct CameraDiagnosticsView: View {
                 ForEach(store.pairedCameras) { camera in
                     VStack(alignment: .leading, spacing: 4) {
                         HStack {
-                            Text(camera.name)
+                            Text(camera.displayName)
                                 .font(.subheadline.weight(.semibold))
 
                             Spacer()
@@ -561,7 +578,7 @@ private struct DJIStatusProbeView: View {
                 ForEach(cameras) { camera in
                     HStack(spacing: 10) {
                         VStack(alignment: .leading, spacing: 2) {
-                            Text(camera.name)
+                            Text(camera.displayName)
                                 .font(.subheadline.weight(.semibold))
                             Text("Tap after setting the camera mode on-device.")
                                 .font(.caption)

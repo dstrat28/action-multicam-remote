@@ -247,6 +247,10 @@ struct CameraTelemetry: Equatable, Codable {
     var batteryPercent: Int? = nil
     var batteryBars: Int? = nil
     var isExternalPowerConnected: Bool? = nil
+    var cameraStatus: String? = nil
+    var modeName: String? = nil
+    var modeParameters: String? = nil
+    var recordingElapsedSeconds: UInt32? = nil
     var storageState: String? = nil
     var remainingVideoSeconds: UInt32? = nil
     var remainingPhotos: UInt32? = nil
@@ -256,14 +260,29 @@ struct CameraTelemetry: Equatable, Codable {
     var videoResolution: String? = nil
     var frameRate: String? = nil
     var framing: String? = nil
+    var fieldOfViewType: UInt8? = nil
     var lens: String? = nil
     var hypersmooth: String? = nil
+    var photoAspectRatio: String? = nil
+    var photoBurstCount: Int? = nil
+    var countdownRemainingSeconds: UInt16? = nil
+    var timelapseIntervalTenths: UInt16? = nil
+    var timelapseDurationSeconds: UInt16? = nil
+    var photoCountdownMilliseconds: UInt32? = nil
+    var loopRecordingSeconds: UInt16? = nil
+    var temperatureStatus: String? = nil
+    var userMode: String? = nil
+    var captureSettingsUpdatedAt: Date? = nil
     var lastUpdated: Date? = nil
 
     var isEmpty: Bool {
         batteryPercent == nil
             && batteryBars == nil
             && isExternalPowerConnected == nil
+            && cameraStatus == nil
+            && modeName == nil
+            && modeParameters == nil
+            && recordingElapsedSeconds == nil
             && storageState == nil
             && remainingVideoSeconds == nil
             && remainingPhotos == nil
@@ -273,8 +292,18 @@ struct CameraTelemetry: Equatable, Codable {
             && videoResolution == nil
             && frameRate == nil
             && framing == nil
+            && fieldOfViewType == nil
             && lens == nil
             && hypersmooth == nil
+            && photoAspectRatio == nil
+            && photoBurstCount == nil
+            && countdownRemainingSeconds == nil
+            && timelapseIntervalTenths == nil
+            && timelapseDurationSeconds == nil
+            && photoCountdownMilliseconds == nil
+            && loopRecordingSeconds == nil
+            && temperatureStatus == nil
+            && userMode == nil
     }
 
     var primarySummaryItems: [String] {
@@ -344,6 +373,12 @@ struct CameraTelemetry: Equatable, Codable {
         if let isExternalPowerConnected = update.isExternalPowerConnected {
             self.isExternalPowerConnected = isExternalPowerConnected
         }
+        if let cameraStatus = update.cameraStatus { self.cameraStatus = cameraStatus }
+        if let modeName = update.modeName { self.modeName = modeName }
+        if let modeParameters = update.modeParameters { self.modeParameters = modeParameters }
+        if let recordingElapsedSeconds = update.recordingElapsedSeconds {
+            self.recordingElapsedSeconds = recordingElapsedSeconds
+        }
         if let storageState = update.storageState { self.storageState = storageState }
         if let remainingVideoSeconds = update.remainingVideoSeconds { self.remainingVideoSeconds = remainingVideoSeconds }
         if let remainingPhotos = update.remainingPhotos { self.remainingPhotos = remainingPhotos }
@@ -353,9 +388,79 @@ struct CameraTelemetry: Equatable, Codable {
         if let videoResolution = update.videoResolution { self.videoResolution = videoResolution }
         if let frameRate = update.frameRate { self.frameRate = frameRate }
         if let framing = update.framing { self.framing = framing }
+        if let fieldOfViewType = update.fieldOfViewType { self.fieldOfViewType = fieldOfViewType }
         if let lens = update.lens { self.lens = lens }
         if let hypersmooth = update.hypersmooth { self.hypersmooth = hypersmooth }
+        if let photoAspectRatio = update.photoAspectRatio { self.photoAspectRatio = photoAspectRatio }
+        if let photoBurstCount = update.photoBurstCount { self.photoBurstCount = photoBurstCount }
+        if let countdownRemainingSeconds = update.countdownRemainingSeconds {
+            self.countdownRemainingSeconds = countdownRemainingSeconds
+        }
+        if let timelapseIntervalTenths = update.timelapseIntervalTenths {
+            self.timelapseIntervalTenths = timelapseIntervalTenths
+        }
+        if let timelapseDurationSeconds = update.timelapseDurationSeconds {
+            self.timelapseDurationSeconds = timelapseDurationSeconds
+        }
+        if let photoCountdownMilliseconds = update.photoCountdownMilliseconds {
+            self.photoCountdownMilliseconds = photoCountdownMilliseconds
+        }
+        if let loopRecordingSeconds = update.loopRecordingSeconds {
+            self.loopRecordingSeconds = loopRecordingSeconds
+        }
+        if let temperatureStatus = update.temperatureStatus { self.temperatureStatus = temperatureStatus }
+        if let userMode = update.userMode { self.userMode = userMode }
+        if let captureSettingsUpdatedAt = update.captureSettingsUpdatedAt {
+            self.captureSettingsUpdatedAt = captureSettingsUpdatedAt
+        }
         if !update.isEmpty { self.lastUpdated = update.lastUpdated ?? Date() }
+    }
+
+    mutating func clearCaptureSettings() {
+        modeParameters = nil
+        videoResolution = nil
+        frameRate = nil
+        framing = nil
+        fieldOfViewType = nil
+        lens = nil
+        hypersmooth = nil
+        photoAspectRatio = nil
+        photoBurstCount = nil
+        countdownRemainingSeconds = nil
+        timelapseIntervalTenths = nil
+        timelapseDurationSeconds = nil
+        photoCountdownMilliseconds = nil
+        loopRecordingSeconds = nil
+        captureSettingsUpdatedAt = nil
+    }
+
+    mutating func mergeReplacingCaptureSettings(_ update: CameraTelemetry) {
+        clearCaptureSettings()
+        merge(update)
+    }
+
+    mutating func mergeDJIRSDKStatus(_ update: CameraTelemetry) {
+        if let batteryPercent = update.batteryPercent { self.batteryPercent = batteryPercent }
+        cameraStatus = update.cameraStatus
+        recordingElapsedSeconds = update.recordingElapsedSeconds
+        storageFreeMB = update.storageFreeMB
+        remainingVideoSeconds = update.remainingVideoSeconds
+        remainingPhotos = update.remainingPhotos
+        videoResolution = update.videoResolution
+        frameRate = update.frameRate
+        fieldOfViewType = update.fieldOfViewType
+        hypersmooth = update.hypersmooth
+        photoAspectRatio = update.photoAspectRatio
+        photoBurstCount = update.photoBurstCount
+        countdownRemainingSeconds = update.countdownRemainingSeconds
+        timelapseIntervalTenths = update.timelapseIntervalTenths
+        timelapseDurationSeconds = update.timelapseDurationSeconds
+        photoCountdownMilliseconds = update.photoCountdownMilliseconds
+        loopRecordingSeconds = update.loopRecordingSeconds
+        temperatureStatus = update.temperatureStatus
+        userMode = update.userMode
+        captureSettingsUpdatedAt = update.captureSettingsUpdatedAt
+        if !update.isEmpty { lastUpdated = update.lastUpdated ?? Date() }
     }
 
     private var storageSummary: String? {
@@ -613,6 +718,8 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
 
     let id: UUID
     var name: String
+    var nickname: String? = nil
+    var hardwareIdentifier: CameraHardwareIdentifier? = nil
     var brand: CameraBrand
     var model: CameraModel
     var rssi: Int
@@ -756,6 +863,11 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
         name.lowercased().filter { $0.isLetter || $0.isNumber }
     }
 
+    var displayName: String {
+        let trimmedNickname = nickname?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmedNickname.flatMap { $0.isEmpty ? nil : $0 } ?? name
+    }
+
     var behavior: CameraBehaviorProfile {
         CameraBehaviorProfile.resolve(brand: brand, model: model, name: name)
     }
@@ -809,11 +921,62 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
             && recordingState != .unavailable
     }
 
+    var isInPhotoMode: Bool {
+        currentMode == .photo
+    }
+
+    var canCapturePhoto: Bool {
+        isPaired
+            && supportsBatchRecord
+            && isControllable
+            && isInPhotoMode
+            && recordingState != .recording
+            && recordingState != .starting
+            && recordingState != .unavailable
+    }
+
     var canSwitchToVideoMode: Bool {
         isPaired
             && isConnected
             && capabilities.contains(.mode)
+            && availableCaptureModes.contains(.video)
             && currentMode != .video
+            && recordingState != .recording
+            && recordingState != .starting
+    }
+
+    var availableCaptureModes: [CaptureMode] {
+        guard capabilities.contains(.mode) else { return [] }
+
+        switch behavior.kind {
+        case .goProOpen:
+            return [.video, .photo, .timelapse]
+        case .djiOsmoAction4:
+            return [.video, .photo, .slowMotion, .timelapse, .hyperlapse]
+        case .djiOsmoAction5Pro, .djiOsmoAction6:
+            return [.video, .photo, .slowMotion, .timelapse, .hyperlapse, .superNight]
+        case .djiOsmo360:
+            return [
+                .video,
+                .photo,
+                .hyperlapse,
+                .selfie,
+                .boostVideo,
+                .vortex,
+                .panoramicSuperNight,
+                .singleLensSuperNight
+            ]
+        case .djiOsmoNano:
+            return [.video]
+        case .djiOsmoPocket3, .genericDJI, .unknown:
+            return []
+        }
+    }
+
+    var canSwitchCaptureMode: Bool {
+        isPaired
+            && isConnected
+            && availableCaptureModes.count > 1
             && recordingState != .recording
             && recordingState != .starting
     }
@@ -836,12 +999,19 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
         return !needsKnownStoppedStateForMulticam || recordingState == .stopped
     }
 
+    var isReadyForPhotoCapture: Bool {
+        canSelectForBatch && canCapturePhoto
+    }
+
     var isWaitingForAuthoritativeRecordingStatus: Bool {
         canSelectForBatch && needsKnownStoppedStateForMulticam && recordingState == .unknown
     }
 
     var primaryRecordCommand: CameraCommand? {
         guard isPaired, supportsBatchRecord else { return nil }
+        if isInPhotoMode {
+            return canCapturePhoto ? .capturePhoto : nil
+        }
         if recordingState == .recording {
             return .stopRecording
         }
@@ -850,10 +1020,21 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     }
 
     var primaryRecordTitle: String {
-        recordingState == .recording ? "Stop" : "Record"
+        if isInPhotoMode {
+            return recordingState == .starting || recordingState == .recording
+                ? "Capturing"
+                : "Capture"
+        }
+        if recordingState == .starting {
+            return "Starting"
+        }
+        return recordingState == .recording ? "Stop" : "Record"
     }
 
     var primaryRecordIcon: String {
+        if isInPhotoMode {
+            return "camera"
+        }
         switch recordingState {
         case .recording:
             return "stop.circle"
@@ -878,12 +1059,195 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     }
 }
 
+struct CameraHardwareIdentifier: Equatable, Codable {
+    enum Kind: String, Codable {
+        case serialNumber
+    }
+
+    let kind: Kind
+    let value: String
+
+    static func serialNumber(_ value: String) -> CameraHardwareIdentifier? {
+        let normalizedValue = value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+        guard !normalizedValue.isEmpty else { return nil }
+        return CameraHardwareIdentifier(kind: .serialNumber, value: normalizedValue)
+    }
+
+    var persistenceKey: String {
+        "\(kind.rawValue):\(value)"
+    }
+}
+
+struct GoProHardwareInfo: Equatable {
+    static let commandID: UInt8 = 0x3C
+
+    let modelNumber: Data
+    let modelName: String
+    let firmwareVersion: String
+    let serialNumber: String
+    let accessPointSSID: String
+    let accessPointMACAddress: String
+
+    init?(commandResponse payload: Data) {
+        let bytes = Array(payload)
+        guard bytes.count >= 2,
+              bytes[0] == Self.commandID,
+              bytes[1] == 0x00 else { return nil }
+
+        var offset = 2
+        func nextField() -> Data? {
+            guard offset < bytes.count else { return nil }
+            let fieldLength = Int(bytes[offset])
+            offset += 1
+            guard fieldLength <= bytes.count - offset else { return nil }
+            defer { offset += fieldLength }
+            return Data(bytes[offset ..< offset + fieldLength])
+        }
+
+        guard let modelNumber = nextField(),
+              let modelName = nextField()?.goProHardwareString,
+              nextField() != nil, // Deprecated model identifier retained by the protocol.
+              let firmwareVersion = nextField()?.goProHardwareString,
+              let serialNumber = nextField()?.goProHardwareString,
+              let accessPointSSID = nextField()?.goProHardwareString,
+              let accessPointMACAddress = nextField()?.goProHardwareString,
+              !serialNumber.isEmpty else { return nil }
+
+        self.modelNumber = modelNumber
+        self.modelName = modelName
+        self.firmwareVersion = firmwareVersion
+        self.serialNumber = serialNumber
+        self.accessPointSSID = accessPointSSID
+        self.accessPointMACAddress = accessPointMACAddress
+    }
+
+    var hardwareIdentifier: CameraHardwareIdentifier? {
+        .serialNumber(serialNumber)
+    }
+}
+
+private extension Data {
+    var goProHardwareString: String? {
+        guard let value = String(data: self, encoding: .utf8)?
+            .trimmingCharacters(in: .whitespacesAndNewlines.union(.controlCharacters)),
+            !value.isEmpty else { return nil }
+        return value
+    }
+}
+
 enum CaptureMode: String, CaseIterable, Identifiable, Codable {
+    case slowMotion = "Slow Motion"
     case video = "Video"
     case photo = "Photo"
     case timelapse = "Timelapse"
+    case hyperlapse = "Hyperlapse"
+    case superNight = "SuperNight"
+    case selfie = "Selfie"
+    case boostVideo = "Boost Video"
+    case vortex = "Vortex"
+    case panoramicSuperNight = "360° SuperNight"
+    case singleLensSuperNight = "Single-Lens SuperNight"
 
     var id: String { rawValue }
+
+    func displayName(for model: CameraModel) -> String {
+        guard model == .djiOsmo360 else { return rawValue }
+        switch self {
+        case .video:
+            return "360° Video"
+        case .photo:
+            return "360° Photo"
+        case .hyperlapse:
+            return "360° Hyperlapse"
+        case .slowMotion, .timelapse, .superNight, .selfie, .boostVideo, .vortex,
+             .panoramicSuperNight, .singleLensSuperNight:
+            return rawValue
+        }
+    }
+
+    func djiRSDKValue(for model: CameraModel) -> UInt8? {
+        if model == .djiOsmo360 {
+            switch self {
+            case .video:
+                return 0x38
+            case .hyperlapse:
+                return 0x3A
+            case .selfie:
+                return 0x3C
+            case .photo:
+                return 0x3F
+            case .boostVideo:
+                return 0x41
+            case .vortex:
+                return 0x43
+            case .panoramicSuperNight:
+                return 0x44
+            case .singleLensSuperNight:
+                return 0x4A
+            case .slowMotion, .timelapse, .superNight:
+                return nil
+            }
+        }
+
+        switch self {
+        case .slowMotion:
+            return 0x00
+        case .video:
+            return 0x01
+        case .timelapse:
+            return 0x02
+        case .photo:
+            return 0x05
+        case .hyperlapse:
+            return 0x0A
+        case .superNight:
+            return 0x28
+        case .selfie, .boostVideo, .vortex, .panoramicSuperNight, .singleLensSuperNight:
+            return nil
+        }
+    }
+
+    static func djiRSDKMode(for value: UInt8, model: CameraModel) -> CaptureMode? {
+        if model == .djiOsmo360 {
+            switch value {
+            case 0x38:
+                return .video
+            case 0x3A:
+                return .hyperlapse
+            case 0x3C:
+                return .selfie
+            case 0x3F:
+                return .photo
+            case 0x41:
+                return .boostVideo
+            case 0x43:
+                return .vortex
+            case 0x44:
+                return .panoramicSuperNight
+            case 0x4A:
+                return .singleLensSuperNight
+            default:
+                return nil
+            }
+        }
+
+        switch value {
+        case 0x00:
+            return .slowMotion
+        case 0x01:
+            return .video
+        case 0x02:
+            return .timelapse
+        case 0x05:
+            return .photo
+        case 0x0A:
+            return .hyperlapse
+        case 0x28:
+            return .superNight
+        default:
+            return nil
+        }
+    }
 }
 
 struct CameraSetting: Equatable, Codable {
@@ -897,13 +1261,17 @@ struct CameraStatusUpdate: Equatable {
     var currentMode: CaptureMode? = nil
     var telemetry: CameraTelemetry? = nil
     var model: CameraModel? = nil
+    var hardwareIdentifier: CameraHardwareIdentifier? = nil
     var powerState: CameraPowerState? = nil
     var canClearActiveRecording: Bool = true
     var shouldClearCurrentMode: Bool = false
+    var replacesCaptureSettings: Bool = false
+    var replacesDJIRSDKStatus: Bool = false
 }
 
 enum CameraCommand: Equatable, Codable {
     case startRecording
+    case capturePhoto
     case stopRecording
     case toggleRecording
     case setMode(CaptureMode)
@@ -915,6 +1283,8 @@ enum CameraCommand: Equatable, Codable {
         switch self {
         case .startRecording:
             "Start Recording"
+        case .capturePhoto:
+            "Capture Photo"
         case .stopRecording:
             "Stop Recording"
         case .toggleRecording:

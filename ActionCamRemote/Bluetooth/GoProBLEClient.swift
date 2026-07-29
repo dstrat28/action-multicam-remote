@@ -50,6 +50,8 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
     private var isRegisteredForStatusUpdates = false
     private var isRegisteredForSettingUpdates = false
     private var isProtocolReady = false
+    private var reportedCaptureMode: CaptureMode?
+    private var requestedCaptureMode: CaptureMode?
     private var hasRequestedHardwareInfo = false
     private var hasSentPairingComplete = false
     private var hasSentThirdPartyClientInfo = false
@@ -116,6 +118,8 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
         isRegisteredForStatusUpdates = false
         isRegisteredForSettingUpdates = false
         isProtocolReady = false
+        reportedCaptureMode = nil
+        requestedCaptureMode = nil
         hasRequestedHardwareInfo = false
         hasSentPairingComplete = false
         hasSentThirdPartyClientInfo = false
@@ -145,6 +149,13 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
                 scheduleStatusRefresh()
             }
             return result
+        case .capturePhoto:
+            let result = writeCommand(.setShutter(on: true), label: command)
+            if result.status == .sent {
+                pendingShutterTargetState = .recording
+                scheduleStatusRefresh()
+            }
+            return result
         case .stopRecording:
             let result = writeCommand(.setShutter(on: false), label: command)
             if result.status == .sent {
@@ -157,7 +168,13 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
             scheduleStatusRefresh()
             return result
         case let .setMode(mode):
-            let result = writeCommand(.loadPresetGroup(mode), label: command)
+            guard let presetGroupID = mode.goProPresetGroupID else {
+                return result(for: command, status: .unsupported, message: "This mode is not available on GoPro cameras.")
+            }
+            let result = writeCommand(.loadPresetGroup(presetGroupID), label: command)
+            if result.status == .sent || result.status == .queued {
+                requestedCaptureMode = mode
+            }
             scheduleStatusRefresh()
             scheduleSettingRefresh()
             return result
@@ -183,7 +200,7 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
 
     private func shouldDeferWhileBusy(_ command: CameraCommand) -> Bool {
         switch command {
-        case .startRecording, .setMode, .cycleMode, .applySetting:
+        case .startRecording, .capturePhoto, .setMode, .cycleMode, .applySetting:
             true
         case .stopRecording, .toggleRecording, .keepAlive:
             false
@@ -316,7 +333,7 @@ private extension GoProBLEClient {
         case setThirdPartyClientInfo
         case pressShutterButton
         case pressModeButton
-        case loadPresetGroup(CaptureMode)
+        case loadPresetGroup(UInt16)
 
         var payload: Data {
             switch self {
@@ -332,10 +349,10 @@ private extension GoProBLEClient {
                 GoProPacket.commandPayload(id: 0x1B, parameterData: [Data([0x00, 0x00])])
             case .pressModeButton:
                 GoProPacket.commandPayload(id: 0x1B, parameterData: [Data([0x01, 0x00])])
-            case let .loadPresetGroup(mode):
+            case let .loadPresetGroup(presetGroupID):
                 GoProPacket.commandPayload(
                     id: 0x3E,
-                    parameterData: [GoProPacket.uint16(mode.goProPresetGroupID)]
+                    parameterData: [GoProPacket.uint16(presetGroupID)]
                 )
             }
         }
@@ -363,10 +380,16 @@ private extension GoProBLEClient {
 
         static let videoResolutionSettingID: UInt8 = 0x02
         static let frameRateSettingID: UInt8 = 0x03
+        static let videoTimelapseRateSettingID: UInt8 = 0x05
         static let videoAspectRatioSettingID: UInt8 = 0x6C
         static let videoLensSettingID: UInt8 = 0x79
+        static let photoLensSettingID: UInt8 = 0x7A
+        static let timelapseLensSettingID: UInt8 = 0x7B
         static let hypersmoothSettingID: UInt8 = 0x87
+        static let multiShotAspectRatioSettingID: UInt8 = 0xC0
+        static let framingSettingID: UInt8 = 0xC1
         static let videoFramingSettingID: UInt8 = 0xE8
+        static let multiShotFramingSettingID: UInt8 = 0xE9
         static let modernFrameRateSettingID: UInt8 = 0xEA
 
         static let statusIDs: [UInt8] = [
@@ -386,10 +409,16 @@ private extension GoProBLEClient {
         static let settingIDs: [UInt8] = [
             videoResolutionSettingID,
             frameRateSettingID,
+            videoTimelapseRateSettingID,
             videoAspectRatioSettingID,
             videoLensSettingID,
+            photoLensSettingID,
+            timelapseLensSettingID,
             hypersmoothSettingID,
+            multiShotAspectRatioSettingID,
+            framingSettingID,
             videoFramingSettingID,
+            multiShotFramingSettingID,
             modernFrameRateSettingID
         ]
     }
@@ -659,6 +688,23 @@ private extension GoProBLEClient {
             }
         }
 
+        if commandID == GoProHardwareInfo.commandID,
+           status == 0x00,
+           let hardwareInfo = GoProHardwareInfo(commandResponse: payload) {
+            let model = payload.goProModel
+            let serialSuffix = hardwareInfo.serialNumber.suffix(4)
+            let modelLabel = model?.rawValue ?? hardwareInfo.modelName
+            onLog("\(cameraName): GoPro hardware reports \(modelLabel), serial ending \(serialSuffix).")
+            onCameraStatus(
+                cameraID,
+                CameraStatusUpdate(
+                    model: model,
+                    hardwareIdentifier: hardwareInfo.hardwareIdentifier
+                )
+            )
+            return
+        }
+
         guard let model = payload.goProModel else { return }
         onLog("\(cameraName): GoPro hardware reports \(model.rawValue).")
         onCameraStatus(cameraID, CameraStatusUpdate(model: model))
@@ -743,6 +789,17 @@ private extension GoProBLEClient {
                 update.currentMode = mode
             }
 
+            if let currentMode = update.currentMode {
+                let didChangeMode = reportedCaptureMode != currentMode
+                reportedCaptureMode = currentMode
+                if requestedCaptureMode == currentMode {
+                    requestedCaptureMode = nil
+                }
+                if didChangeMode {
+                    requestSettingValues(shouldLog: false)
+                }
+            }
+
             let telemetry = goProTelemetry(fromStatusValues: values)
             if !telemetry.isEmpty {
                 update.telemetry = telemetry
@@ -754,9 +811,14 @@ private extension GoProBLEClient {
             || responseID == GoProQuery.settingUpdateNotification {
             let values = GoProPacket.parseTLVValues(in: valuesPayload)
                 .filter { Set(GoProQuery.settingIDs).contains($0.key) }
-            let telemetry = goProTelemetry(fromSettingValues: values)
-            if !telemetry.isEmpty {
+            let telemetry = goProTelemetry(
+                fromSettingValues: values,
+                mode: requestedCaptureMode ?? reportedCaptureMode
+            )
+            if !values.isEmpty {
                 update.telemetry = telemetry
+                update.replacesCaptureSettings = responseID == GoProQuery.getSettingValues
+                    || responseID == GoProQuery.registerSettingUpdates
             }
         }
 
@@ -841,7 +903,7 @@ private extension GoProBLEClient {
             telemetry.remainingPhotos = remainingPhotos
         }
 
-        if let remaining = values[GoProQuery.sdCardRemainingStatusID]?.storageMegabytes, remaining > 0 {
+        if let remaining = values[GoProQuery.sdCardRemainingStatusID]?.storageMegabytes {
             telemetry.storageFreeMB = remaining
         }
 
@@ -853,38 +915,70 @@ private extension GoProBLEClient {
         return telemetry
     }
 
-    func goProTelemetry(fromSettingValues values: [UInt8: Data]) -> CameraTelemetry {
+    func goProTelemetry(
+        fromSettingValues values: [UInt8: Data],
+        mode: CaptureMode?
+    ) -> CameraTelemetry {
         var telemetry = CameraTelemetry()
 
-        if let value = values[GoProQuery.videoResolutionSettingID]?.first {
-            telemetry.videoResolution = GoProSettingLabels.videoResolution(value)
+        switch mode {
+        case .photo:
+            if let value = values[GoProQuery.multiShotAspectRatioSettingID]?.first {
+                telemetry.photoAspectRatio = GoProSettingLabels.aspectRatio(value)
+            }
+            if let value = values[GoProQuery.multiShotFramingSettingID]?.first {
+                telemetry.framing = GoProSettingLabels.videoFraming(value)
+            } else if let value = values[GoProQuery.framingSettingID]?.first {
+                telemetry.framing = GoProSettingLabels.videoFraming(value)
+            }
+            if let value = values[GoProQuery.photoLensSettingID]?.first {
+                telemetry.lens = GoProSettingLabels.lens(value)
+            }
+        case .timelapse, .hyperlapse:
+            if let value = values[GoProQuery.videoResolutionSettingID]?.first {
+                telemetry.videoResolution = GoProSettingLabels.videoResolution(value)
+            }
+            if let value = values[GoProQuery.multiShotAspectRatioSettingID]?.first {
+                telemetry.framing = GoProSettingLabels.aspectRatio(value)
+            } else if let value = values[GoProQuery.videoAspectRatioSettingID]?.first {
+                telemetry.framing = GoProSettingLabels.aspectRatio(value)
+            }
+            if let value = values[GoProQuery.multiShotFramingSettingID]?.first {
+                telemetry.framing = GoProSettingLabels.videoFraming(value)
+            }
+            if let value = values[GoProQuery.timelapseLensSettingID]?.first {
+                telemetry.lens = GoProSettingLabels.lens(value)
+            }
+            if let value = values[GoProQuery.videoTimelapseRateSettingID]?.first {
+                telemetry.timelapseIntervalTenths = GoProSettingLabels.timelapseIntervalTenths(value)
+            }
+        default:
+            if let value = values[GoProQuery.videoResolutionSettingID]?.first {
+                telemetry.videoResolution = GoProSettingLabels.videoResolution(value)
+            }
+            if let value = values[GoProQuery.frameRateSettingID]?.first {
+                telemetry.frameRate = GoProSettingLabels.frameRate(value)
+            }
+            if let value = values[GoProQuery.modernFrameRateSettingID]?.first {
+                telemetry.frameRate = GoProSettingLabels.modernFrameRate(value)
+            }
+            if let value = values[GoProQuery.videoAspectRatioSettingID]?.first {
+                telemetry.framing = GoProSettingLabels.aspectRatio(value)
+            }
+            if let value = values[GoProQuery.videoFramingSettingID]?.first {
+                telemetry.framing = GoProSettingLabels.videoFraming(value)
+            }
+            if let value = values[GoProQuery.videoLensSettingID]?.first {
+                telemetry.lens = GoProSettingLabels.lens(value)
+            }
+            if let value = values[GoProQuery.hypersmoothSettingID]?.first {
+                telemetry.hypersmooth = GoProSettingLabels.hypersmooth(value)
+            }
         }
 
-        if let value = values[GoProQuery.frameRateSettingID]?.first {
-            telemetry.frameRate = GoProSettingLabels.frameRate(value)
-        }
-
-        if let value = values[GoProQuery.modernFrameRateSettingID]?.first {
-            telemetry.frameRate = GoProSettingLabels.modernFrameRate(value)
-        }
-
-        if let value = values[GoProQuery.videoAspectRatioSettingID]?.first {
-            telemetry.framing = GoProSettingLabels.aspectRatio(value)
-        }
-
-        if let value = values[GoProQuery.videoFramingSettingID]?.first {
-            telemetry.framing = GoProSettingLabels.videoFraming(value)
-        }
-
-        if let value = values[GoProQuery.videoLensSettingID]?.first {
-            telemetry.lens = GoProSettingLabels.lens(value)
-        }
-
-        if let value = values[GoProQuery.hypersmoothSettingID]?.first {
-            telemetry.hypersmooth = GoProSettingLabels.hypersmooth(value)
-        }
-
-        telemetry.lastUpdated = Date()
+        let now = Date()
+        telemetry.captureSettingsUpdatedAt = now
+        telemetry.lastUpdated = now
         return telemetry
     }
 }
@@ -1205,6 +1299,24 @@ private extension Data {
 }
 
 private enum GoProSettingLabels {
+    static func timelapseIntervalTenths(_ value: UInt8) -> UInt16? {
+        switch value {
+        case 0: 5
+        case 1: 10
+        case 2: 20
+        case 3: 50
+        case 4: 100
+        case 5: 300
+        case 6: 600
+        case 7: 1_200
+        case 8: 3_000
+        case 9: 18_000
+        case 10: 36_000
+        case 11: 30
+        default: nil
+        }
+    }
+
     static func videoResolution(_ value: UInt8) -> String {
         switch value {
         case 1:
@@ -1422,7 +1534,7 @@ private extension UInt8 {
 }
 
 private extension CaptureMode {
-    var goProPresetGroupID: UInt16 {
+    var goProPresetGroupID: UInt16? {
         switch self {
         case .video:
             1000
@@ -1430,6 +1542,9 @@ private extension CaptureMode {
             1001
         case .timelapse:
             1002
+        case .slowMotion, .hyperlapse, .superNight, .selfie, .boostVideo, .vortex,
+             .panoramicSuperNight, .singleLensSuperNight:
+            nil
         }
     }
 

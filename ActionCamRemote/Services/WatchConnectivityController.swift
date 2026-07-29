@@ -65,7 +65,7 @@ final class WatchConnectivityController: NSObject {
             .map { camera in
                 [
                     Key.id: camera.id.uuidString,
-                    Key.name: camera.name,
+                    Key.name: camera.displayName,
                     Key.model: camera.model.rawValue,
                     Key.isRecording: camera.recordingState == .recording,
                 ] as [String: Any]

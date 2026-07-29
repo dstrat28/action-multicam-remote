@@ -39,8 +39,12 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
     private var pendingRecordActionsBySequence: [UInt16: RecordAction] = [:]
     private var pendingModeUpdatesBySequence: [UInt16: CaptureMode] = [:]
     private var pendingStatusProbeLabelsBySequence: [UInt16: String] = [:]
-    private var pendingRSDKRecordActionsBySequence: [UInt16: RecordAction] = [:]
+    private var pendingRSDKRecordActionsBySequence: [UInt16: RSDKCaptureAction] = [:]
     private var pendingRSDKModeUpdatesBySequence: [UInt16: CaptureMode] = [:]
+    private var pendingRSDKModeTransition: CaptureMode?
+    private var pendingRSDKModeStatusPayload: Data?
+    private var pendingRSDKModeCaptureSettingsFingerprint: [UInt32]?
+    private var rSDKModeStatusSettleTimer: Timer?
     private var hasSentInitialStatusProbe = false
     private var statusProbeTimer: Timer?
     private var lastCameraStateSummaryLabel: String?
@@ -128,6 +132,7 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
         pendingStatusProbeLabelsBySequence.removeAll()
         pendingRSDKRecordActionsBySequence.removeAll()
         pendingRSDKModeUpdatesBySequence.removeAll()
+        clearPendingRSDKModeTransition()
         hasSentInitialStatusProbe = false
         statusProbeTimer?.invalidate()
         statusProbeTimer = nil
@@ -144,6 +149,8 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
         lastGPSNotReadyDebugLogDate = .distantPast
         lastGPSFlushDebugLogDate = .distantPast
         hasLoggedGPSFrame = false
+        lastRSDKStatusPayload = nil
+        lastDumlCameraStatePayload = nil
 #endif
         lastAction6StatusDiagnosticLabel = nil
         compactStoppedProtectionUntil = .distantPast
@@ -163,6 +170,11 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
                 return rSDKNotReadyResult(for: command)
             }
             return sendRecordCommand(.start, to: peripheral, label: command)
+        case .capturePhoto:
+            guard canUseRSDKControl else {
+                return rSDKNotReadyResult(for: command)
+            }
+            return sendRSDKPhotoCaptureCommand(to: peripheral, label: command)
         case .stopRecording:
             if canUseRSDKControl {
                 return sendRSDKRecordCommand(.stop, to: peripheral, label: command)
@@ -174,14 +186,26 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
         case .toggleRecording:
             return result(for: command, status: .unsupported, message: "DJI toggle record is not safe without camera state confirmation.")
         case let .setMode(mode):
-            guard mode == .video else {
-                return result(for: command, status: .unsupported, message: "Only DJI Video mode is mapped.")
-            }
             if canUseRSDKControl {
-                return sendRSDKVideoModeCommand(to: peripheral, label: command)
+                guard let modeValue = mode.djiRSDKValue(for: cameraModel) else {
+                    return result(
+                        for: command,
+                        status: .unsupported,
+                        message: "\(mode.rawValue) is not available on \(cameraModel.rawValue)."
+                    )
+                }
+                return sendRSDKModeCommand(
+                    mode,
+                    modeValue: modeValue,
+                    to: peripheral,
+                    label: command
+                )
             }
             guard cameraBehavior.usesLegacyDJIControl else {
                 return rSDKNotReadyResult(for: command)
+            }
+            guard mode == .video else {
+                return result(for: command, status: .unsupported, message: "Only Video mode is mapped for this DJI camera.")
             }
             return sendVideoModeCommand(to: peripheral, label: command)
         case .keepAlive:
@@ -377,6 +401,11 @@ private extension DJIExperimentalBLEClient {
         var isStopping: Bool { self == .stop }
     }
 
+    enum RSDKCaptureAction {
+        case recording(RecordAction)
+        case photoCapture
+    }
+
     var canUseRSDKControl: Bool {
         hasCompletedRSDKHandshake && rSDKWriteCharacteristic != nil
     }
@@ -569,7 +598,7 @@ private extension DJIExperimentalBLEClient {
 
         let seq = nextRSDKSequence()
         let packet = DJIRSDKPacket.recordControl(sequenceNumber: seq, isStarting: action.isStarting)
-        pendingRSDKRecordActionsBySequence[seq] = action
+        pendingRSDKRecordActionsBySequence[seq] = .recording(action)
         writeRSDK(packet, to: peripheral, label: "R SDK \(action.isStarting ? "start" : "stop") record")
 
         return result(
@@ -579,16 +608,34 @@ private extension DJIExperimentalBLEClient {
         )
     }
 
-    func sendRSDKVideoModeCommand(
+    func sendRSDKPhotoCaptureCommand(
         to peripheral: CBPeripheral,
         label command: CameraCommand
     ) -> CameraCommandResult {
         let seq = nextRSDKSequence()
-        let packet = DJIRSDKPacket.modeSwitch(sequenceNumber: seq, mode: 0x01)
-        pendingRSDKModeUpdatesBySequence[seq] = .video
-        writeRSDK(packet, to: peripheral, label: "R SDK switch to video")
+        let packet = DJIRSDKPacket.recordControl(sequenceNumber: seq, isStarting: true)
+        pendingRSDKRecordActionsBySequence[seq] = .photoCapture
+        writeRSDK(packet, to: peripheral, label: "R SDK capture photo")
 
-        return result(for: command, status: .sent, message: "Sent DJI R SDK Video mode command.")
+        return result(for: command, status: .sent, message: "Sent DJI R SDK photo capture command.")
+    }
+
+    func sendRSDKModeCommand(
+        _ mode: CaptureMode,
+        modeValue: UInt8,
+        to peripheral: CBPeripheral,
+        label command: CameraCommand
+    ) -> CameraCommandResult {
+        let seq = nextRSDKSequence()
+        let packet = DJIRSDKPacket.modeSwitch(sequenceNumber: seq, mode: modeValue)
+        pendingRSDKModeUpdatesBySequence[seq] = mode
+        clearPendingRSDKModeTransition()
+        pendingRSDKModeTransition = mode
+        scheduleRSDKModeStatusFallback(after: 2.5)
+        let modeName = mode.displayName(for: cameraModel)
+        writeRSDK(packet, to: peripheral, label: "R SDK switch to \(modeName)")
+
+        return result(for: command, status: .sent, message: "Sent DJI R SDK \(modeName) mode command.")
     }
 
     @discardableResult
@@ -812,6 +859,9 @@ private extension DJIExperimentalBLEClient {
         case (0x1D, 0x06, false):
             if let details = DJIRSDKModeDetails(payload: frame.payload) {
                 onLog("\(cameraName): DJI R SDK mode detail \(details.debugLabel).")
+                if pendingRSDKModeTransition == nil {
+                    onCameraStatus(cameraID, CameraStatusUpdate(telemetry: details.telemetry))
+                }
             }
 
         case (0x1D, 0x03, true):
@@ -820,11 +870,16 @@ private extension DJIExperimentalBLEClient {
             onLog("\(cameraName): DJI R SDK record ACK \(resultLabel).")
             if let action = pendingRSDKRecordActionsBySequence.removeValue(forKey: frame.sequenceNumber),
                resultCode == 0x00 {
-                if action.isStarting {
-                    protectAgainstStaleStoppedStatusAfterStart()
-                    onCameraStatus(cameraID, CameraStatusUpdate(recordingState: .starting, shouldClearCurrentMode: true))
-                } else {
-                    onCameraStatus(cameraID, CameraStatusUpdate(recordingState: .stopped))
+                switch action {
+                case let .recording(recordAction):
+                    if recordAction.isStarting {
+                        protectAgainstStaleStoppedStatusAfterStart()
+                        onCameraStatus(cameraID, CameraStatusUpdate(recordingState: .starting, shouldClearCurrentMode: true))
+                    } else {
+                        onCameraStatus(cameraID, CameraStatusUpdate(recordingState: .stopped))
+                    }
+                case .photoCapture:
+                    onCameraStatus(cameraID, CameraStatusUpdate(recordingState: .starting))
                 }
             }
 
@@ -832,9 +887,13 @@ private extension DJIExperimentalBLEClient {
             let resultCode = frame.payload.first
             let resultLabel = resultCode == 0x00 ? "success" : "error \(resultCode.map { "0x\($0.hexByte)" } ?? "missing code")"
             onLog("\(cameraName): DJI R SDK mode ACK \(resultLabel).")
-            if let mode = pendingRSDKModeUpdatesBySequence.removeValue(forKey: frame.sequenceNumber),
-               resultCode == 0x00 {
-                onCameraStatus(cameraID, CameraStatusUpdate(currentMode: mode))
+            // The ACK only confirms that the command was accepted. Updating the
+            // visible mode here briefly pairs the new mode with telemetry from
+            // the previous mode. Wait for the next 1D02 status push, which
+            // carries the confirmed mode and its capture settings together.
+            let requestedMode = pendingRSDKModeUpdatesBySequence.removeValue(forKey: frame.sequenceNumber)
+            if resultCode != 0x00, requestedMode == pendingRSDKModeTransition {
+                clearPendingRSDKModeTransition()
             }
 
         case (0x1D, 0x05, true):
@@ -848,7 +907,10 @@ private extension DJIExperimentalBLEClient {
         default:
             let payloadLabel = frame.payload.isEmpty ? "empty payload" : "payload \(frame.payload.hexString)"
             onLog(
-                "\(cameraName): DJI R SDK \(frame.isResponse ? "response" : "push") cmdset 0x\(frame.cmdSet.hexByte) cmd 0x\(frame.cmdID.hexByte), \(payloadLabel)."
+                "\(cameraName): DJI R SDK unhandled frame seq 0x\(frame.sequenceNumber.hexWord), "
+                    + "type 0x\(frame.commandType.hexByte), \(frame.isResponse ? "response" : "push"), "
+                    + "cmdset 0x\(frame.cmdSet.hexByte) cmd 0x\(frame.cmdID.hexByte), \(payloadLabel), "
+                    + "raw \(frame.rawData.hexString)."
             )
         }
     }
@@ -920,7 +982,16 @@ private extension DJIExperimentalBLEClient {
             hasReportedRSDKReady = true
             onStatus(cameraID, .connected, "DJI R SDK protocol ready.")
         }
-        onCameraStatus(cameraID, status.cameraStatusUpdate)
+
+        if shouldDeferRSDKStatusDuringModeTransition(status, payload: payload) {
+            return
+        }
+
+        publishRSDKStatus(status)
+    }
+
+    func publishRSDKStatus(_ status: DJIRSDKStatusPush) {
+        onCameraStatus(cameraID, status.cameraStatusUpdate(cameraModel: cameraModel))
         let now = Date()
         if status.debugLabel != lastRSDKStatusSummaryLabel
             || now.timeIntervalSince(lastRSDKStatusSummaryLogDate) >= 5 {
@@ -928,6 +999,76 @@ private extension DJIExperimentalBLEClient {
             lastRSDKStatusSummaryLabel = status.debugLabel
             lastRSDKStatusSummaryLogDate = now
         }
+    }
+
+    func shouldDeferRSDKStatusDuringModeTransition(
+        _ status: DJIRSDKStatusPush,
+        payload: Data
+    ) -> Bool {
+        guard let requestedMode = pendingRSDKModeTransition else { return false }
+
+        guard status.captureMode(cameraModel: cameraModel) == requestedMode else {
+            return true
+        }
+
+        let captureSettingsFingerprint = status.captureSettingsFingerprint
+        let previousCaptureSettingsFingerprint = pendingRSDKModeCaptureSettingsFingerprint
+        pendingRSDKModeStatusPayload = payload
+        pendingRSDKModeCaptureSettingsFingerprint = captureSettingsFingerprint
+
+        if previousCaptureSettingsFingerprint == nil {
+            onLog(
+                "\(cameraName): DJI R SDK \(requestedMode.displayName(for: cameraModel)) mode arrived; waiting for capture settings to settle."
+            )
+        }
+
+        if let previousCaptureSettingsFingerprint,
+           previousCaptureSettingsFingerprint != captureSettingsFingerprint,
+           status.hasCoherentCaptureSettings(cameraModel: cameraModel) {
+            onLog(
+                "\(cameraName): DJI R SDK \(requestedMode.displayName(for: cameraModel)) capture settings settled."
+            )
+            clearPendingRSDKModeTransition()
+            return false
+        }
+
+        if previousCaptureSettingsFingerprint != captureSettingsFingerprint
+            || rSDKModeStatusSettleTimer == nil {
+            scheduleRSDKModeStatusFallback(after: 0.75)
+        }
+
+        return true
+    }
+
+    func scheduleRSDKModeStatusFallback(after interval: TimeInterval) {
+        rSDKModeStatusSettleTimer?.invalidate()
+        rSDKModeStatusSettleTimer = commonModeTimer(
+            withTimeInterval: interval,
+            repeats: false
+        ) { [weak self] _ in
+            guard let self else { return }
+            guard let deferredPayload = self.pendingRSDKModeStatusPayload,
+                  let deferredStatus = DJIRSDKStatusPush(payload: deferredPayload) else {
+                self.clearPendingRSDKModeTransition()
+                return
+            }
+
+            if let requestedMode = self.pendingRSDKModeTransition {
+                self.onLog(
+                    "\(self.cameraName): DJI R SDK \(requestedMode.displayName(for: self.cameraModel)) settings settle timeout; applying the latest status."
+                )
+            }
+            self.clearPendingRSDKModeTransition()
+            self.publishRSDKStatus(deferredStatus)
+        }
+    }
+
+    func clearPendingRSDKModeTransition() {
+        pendingRSDKModeTransition = nil
+        pendingRSDKModeStatusPayload = nil
+        pendingRSDKModeCaptureSettingsFingerprint = nil
+        rSDKModeStatusSettleTimer?.invalidate()
+        rSDKModeStatusSettleTimer = nil
     }
 
 #if DEBUG
@@ -1893,9 +2034,6 @@ private struct DJICameraStateSummary {
 
         if sdCardTotalSize > 0 {
             telemetry.storageTotalMB = sdCardTotalSize
-        }
-
-        if sdCardFreeSize > 0 {
             telemetry.storageFreeMB = sdCardFreeSize
         }
 
@@ -1962,6 +2100,7 @@ private struct DJIRSDKIncomingFrame {
     var cmdSet: UInt8
     var cmdID: UInt8
     var payload: Data
+    var rawData: Data
 
     var isResponse: Bool {
         commandType & 0x20 == 0x20
@@ -1996,6 +2135,7 @@ private struct DJIRSDKIncomingFrame {
         let payloadStart = data.index(data.startIndex, offsetBy: 14)
         let payloadEnd = data.index(data.endIndex, offsetBy: -4)
         self.payload = payloadStart < payloadEnd ? Data(data[payloadStart ..< payloadEnd]) : Data()
+        self.rawData = data
     }
 }
 
@@ -2045,10 +2185,19 @@ private struct DJIRSDKStatusPush {
     var frameRateIndex: UInt8
     var stabilizationMode: UInt8
     var recordTime: UInt16
+    var fieldOfViewType: UInt8
     var photoRatio: UInt8
+    var countdownRemainingSeconds: UInt16
+    var timelapseIntervalTenths: UInt16
+    var timelapseDurationSeconds: UInt16
+    var remainingCapacityMB: UInt32
     var remainingPhotos: UInt32
     var remainingRecordTime: UInt32
+    var userMode: UInt8
     var powerMode: UInt8
+    var temperatureState: UInt8
+    var photoCountdownMilliseconds: UInt32
+    var loopRecordingSeconds: UInt16
     var batteryPercent: UInt8?
 
     init?(payload: Data) {
@@ -2059,10 +2208,19 @@ private struct DJIRSDKStatusPush {
               let frameRateIndex = payload.byte(at: 3),
               let stabilizationMode = payload.byte(at: 4),
               let recordTime = payload.littleEndianUInt16(at: 5),
+              let fieldOfViewType = payload.byte(at: 7),
               let photoRatio = payload.byte(at: 8),
+              let countdownRemainingSeconds = payload.littleEndianUInt16(at: 9),
+              let timelapseIntervalTenths = payload.littleEndianUInt16(at: 11),
+              let timelapseDurationSeconds = payload.littleEndianUInt16(at: 13),
+              let remainingCapacityMB = payload.littleEndianUInt32(at: 15),
               let remainingPhotos = payload.littleEndianUInt32(at: 19),
               let remainingRecordTime = payload.littleEndianUInt32(at: 23),
-              let powerMode = payload.byte(at: 28) else {
+              let userMode = payload.byte(at: 27),
+              let powerMode = payload.byte(at: 28),
+              let temperatureState = payload.byte(at: 30),
+              let photoCountdownMilliseconds = payload.littleEndianUInt32(at: 31),
+              let loopRecordingSeconds = payload.littleEndianUInt16(at: 35) else {
             return nil
         }
 
@@ -2072,20 +2230,30 @@ private struct DJIRSDKStatusPush {
         self.frameRateIndex = frameRateIndex
         self.stabilizationMode = stabilizationMode
         self.recordTime = recordTime
+        self.fieldOfViewType = fieldOfViewType
         self.photoRatio = photoRatio
+        self.countdownRemainingSeconds = countdownRemainingSeconds
+        self.timelapseIntervalTenths = timelapseIntervalTenths
+        self.timelapseDurationSeconds = timelapseDurationSeconds
+        self.remainingCapacityMB = remainingCapacityMB
         self.remainingPhotos = remainingPhotos
         self.remainingRecordTime = remainingRecordTime
+        self.userMode = userMode
         self.powerMode = powerMode
+        self.temperatureState = temperatureState
+        self.photoCountdownMilliseconds = photoCountdownMilliseconds
+        self.loopRecordingSeconds = loopRecordingSeconds
         self.batteryPercent = payload.byte(at: 37)
     }
 
-    var cameraStatusUpdate: CameraStatusUpdate {
+    func cameraStatusUpdate(cameraModel: CameraModel) -> CameraStatusUpdate {
         CameraStatusUpdate(
             recordingState: recordingState,
-            currentMode: captureMode,
-            telemetry: telemetry,
+            currentMode: captureMode(cameraModel: cameraModel),
+            telemetry: telemetry(cameraModel: cameraModel),
             powerState: powerState,
-            canClearActiveRecording: recordingState != .stopped || powerMode != 0x03
+            canClearActiveRecording: recordingState != .stopped || powerMode != 0x03,
+            replacesDJIRSDKStatus: true
         )
     }
 
@@ -2111,42 +2279,177 @@ private struct DJIRSDKStatusPush {
         }
     }
 
-    var captureMode: CaptureMode? {
-        switch cameraMode {
-        case 0x01:
-            .video
-        case 0x05:
-            .photo
-        case 0x02, 0x0A:
-            .timelapse
-        default:
-            nil
+    func captureMode(cameraModel: CameraModel) -> CaptureMode? {
+        CaptureMode.djiRSDKMode(for: cameraMode, model: cameraModel)
+    }
+
+    func hasCoherentCaptureSettings(cameraModel: CameraModel) -> Bool {
+        guard let mode = captureMode(cameraModel: cameraModel) else { return false }
+
+        switch mode {
+        case .photo:
+            return Self.photoFormatLabel(videoResolution, cameraModel: cameraModel) != nil
+                && Self.photoAspectRatioLabel(photoRatio) != nil
+        case .selfie:
+            return Self.videoResolutionLabel(videoResolution) != nil
+        case .slowMotion, .video, .timelapse, .hyperlapse, .superNight,
+             .boostVideo, .vortex, .panoramicSuperNight, .singleLensSuperNight:
+            return Self.videoResolutionLabel(videoResolution) != nil
+                && Self.frameRateLabel(frameRateIndex) != nil
         }
     }
 
-    var telemetry: CameraTelemetry? {
+    var captureSettingsFingerprint: [UInt32] {
+        [
+            UInt32(cameraMode),
+            UInt32(videoResolution),
+            UInt32(frameRateIndex),
+            UInt32(stabilizationMode),
+            UInt32(fieldOfViewType),
+            UInt32(photoRatio),
+            UInt32(timelapseIntervalTenths),
+            UInt32(timelapseDurationSeconds),
+            photoCountdownMilliseconds,
+            UInt32(loopRecordingSeconds),
+        ]
+    }
+
+    func telemetry(cameraModel: CameraModel) -> CameraTelemetry? {
         var telemetry = CameraTelemetry()
+        let mode = captureMode(cameraModel: cameraModel)
+
         if let batteryPercent, batteryPercent <= 100 {
             telemetry.batteryPercent = Int(batteryPercent)
         }
+        telemetry.cameraStatus = cameraStatusLabel
+        telemetry.recordingElapsedSeconds = UInt32(recordTime)
+        telemetry.countdownRemainingSeconds = countdownRemainingSeconds
+        telemetry.temperatureStatus = temperatureStatusLabel
+        telemetry.userMode = userModeLabel
+        telemetry.fieldOfViewType = fieldOfViewType
+
+        telemetry.storageFreeMB = remainingCapacityMB
         if remainingRecordTime > 0 {
             telemetry.remainingVideoSeconds = remainingRecordTime
         }
         if remainingPhotos > 0 {
             telemetry.remainingPhotos = remainingPhotos
         }
-        telemetry.videoResolution = Self.videoResolutionLabel(videoResolution)
-        telemetry.frameRate = Self.frameRateLabel(frameRateIndex)
-        telemetry.hypersmooth = Self.stabilizationLabel(stabilizationMode)
-        telemetry.lastUpdated = Date()
+
+        switch mode {
+        case .photo:
+            telemetry.videoResolution = Self.photoFormatLabel(videoResolution, cameraModel: cameraModel)
+            telemetry.photoAspectRatio = Self.photoAspectRatioLabel(photoRatio)
+            if frameRateIndex > 1 {
+                telemetry.photoBurstCount = Int(frameRateIndex)
+            }
+            telemetry.photoCountdownMilliseconds = photoCountdownMilliseconds
+        case .timelapse:
+            telemetry.timelapseIntervalTenths = timelapseIntervalTenths
+            telemetry.timelapseDurationSeconds = timelapseDurationSeconds
+            telemetry.videoResolution = Self.videoResolutionLabel(videoResolution)
+            telemetry.frameRate = Self.frameRateLabel(frameRateIndex)
+        case .hyperlapse:
+            telemetry.timelapseIntervalTenths = timelapseIntervalTenths
+            telemetry.timelapseDurationSeconds = timelapseDurationSeconds
+            telemetry.videoResolution = Self.videoResolutionLabel(videoResolution)
+            telemetry.frameRate = Self.frameRateLabel(frameRateIndex)
+            telemetry.hypersmooth = Self.stabilizationLabel(stabilizationMode)
+        case .slowMotion, .video, .superNight, .boostVideo, .vortex,
+             .panoramicSuperNight, .singleLensSuperNight:
+            telemetry.videoResolution = Self.videoResolutionLabel(videoResolution)
+            telemetry.frameRate = Self.frameRateLabel(frameRateIndex)
+            telemetry.hypersmooth = Self.stabilizationLabel(stabilizationMode)
+            telemetry.loopRecordingSeconds = loopRecordingSeconds
+        case .selfie:
+            telemetry.videoResolution = Self.videoResolutionLabel(videoResolution)
+        case nil:
+            break
+        }
+
+        let now = Date()
+        telemetry.captureSettingsUpdatedAt = now
+        telemetry.lastUpdated = now
         return telemetry.isEmpty ? nil : telemetry
     }
 
     var debugLabel: String {
-        let mode = captureMode?.rawValue ?? "mode 0x\(cameraMode.hexByte)"
+        let mode = "mode 0x\(cameraMode.hexByte)"
         let state = recordingState?.rawValue ?? "status 0x\(cameraStatus.hexByte)"
         let battery = batteryPercent.map { "\($0)%" } ?? "unknown"
-        return "\(mode), \(state), recordTime \(recordTime)s, remaining \(remainingRecordTime)s, battery \(battery)"
+        return "\(mode), \(state), recordTime \(recordTime)s, remaining \(remainingRecordTime)s, storage \(remainingCapacityMB)MB, fovType \(fieldOfViewType), temperature \(temperatureStatusLabel), battery \(battery)"
+    }
+
+    var cameraStatusLabel: String {
+        switch cameraStatus {
+        case 0x00:
+            "Screen Off"
+        case 0x01:
+            "Ready"
+        case 0x02:
+            "Playback"
+        case 0x03:
+            "Capturing"
+        case 0x05:
+            "Pre-recording"
+        default:
+            "Unknown (0x\(cameraStatus.hexByte))"
+        }
+    }
+
+    var temperatureStatusLabel: String {
+        switch temperatureState {
+        case 0:
+            "Normal"
+        case 1:
+            "Warning"
+        case 2:
+            "Too Hot to Record"
+        case 3:
+            "Shutting Down"
+        default:
+            "Unknown"
+        }
+    }
+
+    var userModeLabel: String {
+        guard (1 ... 5).contains(userMode) else { return "General" }
+        return "Custom \(userMode)"
+    }
+
+    static func photoAspectRatioLabel(_ value: UInt8) -> String? {
+        switch value {
+        case 0:
+            "4:3"
+        case 1:
+            "16:9"
+        default:
+            nil
+        }
+    }
+
+    static func photoFormatLabel(_ value: UInt8, cameraModel: CameraModel) -> String? {
+        if cameraModel == .djiOsmo360 {
+            switch value {
+            case 4:
+                return "Ultra Wide 30MP"
+            case 3:
+                return "Wide 20MP"
+            case 2:
+                return "Standard 12MP"
+            default:
+                return nil
+            }
+        }
+
+        switch value {
+        case 4:
+            return "Large"
+        case 3:
+            return "Medium"
+        default:
+            return nil
+        }
     }
 
     static func videoResolutionLabel(_ value: UInt8) -> String? {
@@ -2244,6 +2547,14 @@ private struct DJIRSDKModeDetails {
         [modeName, modeParameters]
             .compactMap { $0?.isEmpty == false ? $0 : nil }
             .joined(separator: " ")
+    }
+
+    var telemetry: CameraTelemetry? {
+        var telemetry = CameraTelemetry()
+        telemetry.modeName = modeName.flatMap { $0.isEmpty ? nil : $0 }
+        telemetry.modeParameters = modeParameters.flatMap { $0.isEmpty ? nil : $0 }
+        telemetry.lastUpdated = Date()
+        return telemetry.isEmpty ? nil : telemetry
     }
 }
 

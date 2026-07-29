@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct ActionCamRemoteApp: App {
+    @Environment(\.scenePhase) private var scenePhase
     @State private var store: CameraStore
     private let watchConnectivity: WatchConnectivityController
 
@@ -15,6 +16,10 @@ struct ActionCamRemoteApp: App {
         WindowGroup {
             CameraDashboardView()
                 .environment(store)
+                .onChange(of: scenePhase) { _, phase in
+                    guard phase == .active else { return }
+                    store.resumeCameraConnections()
+                }
         }
     }
 }

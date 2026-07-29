@@ -145,3 +145,138 @@ Disconnected-card bottom padding increased from 9 to 13 points. The top inset, c
 - Simulator demo commands validate UI state transitions, not real camera BLE behavior.
 
 final result: passed
+
+# Compact Timelapse Summary QA
+
+## Implementation evidence
+
+- Runtime screenshot: `/var/folders/_h/3l3qrv0s4fx8vhxl0kjdkpq40000gn/T/screenshot_optimized_63676cc8-d3d1-44cb-a24c-6fcc8d27b854.jpg` (368 × 800 px).
+- Runtime: iPhone 17 Pro simulator, iOS 26.5, connected-camera debug fixture.
+- Focused region: DJI Action 6 identity summary after changing from Video to Timelapse.
+
+## Result
+
+- Timelapse now presents `1080p`, a repeat icon with `2s`, and a clock icon with `10m`.
+- The redundant words `Every` and `duration` were removed visually while remaining present in the combined accessibility label.
+- Hyperlapse uses a speedometer for its rate and the same clock treatment for duration.
+- Photo countdowns use a timer icon when active.
+- The compact summary remains left-aligned with the camera name and fits on one line without shrinking the camera name or moving the Record button.
+- Simulator build and runtime mode switching passed.
+
+final result: passed
+
+# Camera List Mode and Capture Settings Refinement QA
+
+## Comparison target
+
+- Source visual truth: `/private/tmp/camera-list-mode-ui-before.png`
+- Final connected implementation: `/private/tmp/camera-list-mode-ui-after-connected.png`
+- Final disconnected implementation: `/private/tmp/camera-list-mode-ui-after-disconnected.png`
+- Timelapse implementation state: `/private/tmp/camera-list-mode-ui-after-timelapse.png`
+- Combined same-scale comparison: `/private/tmp/camera-list-mode-ui-comparison.png`
+- Target environment: iPhone 17 Pro simulator, iOS 26.5, Light appearance.
+
+## Viewport and full-view evidence
+
+- Source and implementation screenshots are both 1206 x 2622 pixels at the same simulator scale and density.
+- The combined comparison is 2412 x 2622 pixels and places the source on the left and the final connected implementation on the right.
+- Full-screen connected and disconnected captures verify card density, the persistent multicamera dock, and the relationship between the card controls and the surrounding dashboard.
+
+## Focused evidence
+
+- The combined comparison verifies the capture row for switchable and fixed-mode cameras without cropping away its relationship to each card.
+- The disconnected full-screen capture verifies that camera cards contain only identity, connection status, and selection state; the non-actionable mode row, divider, and individual Record action are absent.
+- The Timelapse state verifies that a longer mode name and three readable settings fit without clipping or displacing the individual Record action.
+
+## Required fidelity surfaces
+
+- Typography, product imagery, card geometry, spacing rhythm, semantic colors, and record controls continue using the existing dashboard design system.
+- Switchable modes use a compact outlined capsule with a mode-specific icon and down chevron.
+- Fixed modes use the same icon and label without a capsule or chevron, so they read as information instead of a disabled control.
+- The settings summary remains subordinate to the mode and is limited to three glanceable, mode-relevant values.
+- The global multicamera dock remains visible because it communicates overall session state; only disconnected per-camera capture controls are removed.
+
+## Findings and comparison history
+
+### Initial findings
+
+- [P2] The native up/down indicator made the mode selector visually ambiguous and did not distinguish switchable modes from fixed modes.
+- [P2] Disconnected cards showed an `Unknown` mode and a disabled individual Record button even though neither control was actionable.
+
+### Fixes made
+
+- Replaced the ambiguous mode presentation with a compact, icon-led menu treatment for switchable cameras.
+- Presented fixed camera modes as a plain icon and label without interactive decoration.
+- Preserved the concise mode-specific settings summary below the mode control.
+- Gated the complete per-camera capture row on a ready connection, removing the mode, divider, and individual Record action from disconnected and connecting cards.
+
+### Post-fix evidence
+
+- The final connected comparison shows a clear mode hierarchy across GoPro, DJI Action, and fixed-mode Osmo Nano cards while preserving three-card density above the dock.
+- Photo mode was selected through the menu and verified to change the action label from Record to Capture with a `Medium · 16:9` summary.
+- Timelapse mode was verified with `1080p · Every 2s · 10m duration` without clipping.
+- The disconnected capture shows no per-camera `Unknown` label or disabled Record action.
+- The final Debug simulator build succeeded, and the DJI mode-switch regression test passed.
+- No actionable P0, P1, or P2 issue remains.
+
+## Verification gaps
+
+- This refinement was checked in Light appearance on the iPhone 17 Pro simulator; other device classes and the largest Dynamic Type sizes were not part of this pass.
+- Simulator fixtures validate UI states and mode-selection behavior, not real-camera BLE timing or telemetry changes.
+
+final result: passed
+
+# Camera Card Capture Hierarchy Refinement QA
+
+## Comparison target
+
+- Source visual truth: `/private/tmp/camera-mode-layout-before.jpg`
+- Final Video implementation: `/private/tmp/camera-mode-layout-upper-video.jpg`
+- Final Slow Motion implementation: `/private/tmp/camera-mode-layout-upper-slow-motion.jpg`
+- Final Timelapse implementation: `/private/tmp/camera-mode-layout-upper-timelapse.jpg`
+- Combined source and final comparison: `/private/tmp/camera-mode-layout-comparison.png`
+- Target environment: iPhone 17 Pro simulator, iOS 26.5, Light appearance.
+
+## Viewport and evidence
+
+- Source and implementation captures are both 368 x 800 pixels at the same simulator viewport and density.
+- The combined 736 x 800 comparison places the prior Video state on the left and the final Video state on the right.
+- The full-view comparison verifies card hierarchy, three-camera density, and the fixed position of each trailing Record action.
+- Slow Motion and Timelapse captures provide focused evidence for longer mode labels and changing capture summaries; a separate crop was unnecessary because the relevant text remains legible in the native-size captures.
+
+## Required fidelity surfaces
+
+- Fonts and typography: existing SF and SF Rounded choices, weights, and semantic hierarchy are preserved; capture summaries move to a readable footnote beneath the camera name.
+- Spacing and layout rhythm: the identity block gains the summary without increasing its 44-point control-driven height, and the lower strip becomes a simpler mode/action row.
+- Colors and visual tokens: existing ink, muted-text, blue mode, and red record tokens are unchanged.
+- Image quality and assets: existing camera product thumbnails and SF Symbols are unchanged.
+- Copy and content: the same mode-specific values remain visible; only their placement changes.
+
+## Findings and comparison history
+
+### Initial findings
+
+- [P2] A content-sized mode button and left-aligned summary changed the capture row's visual balance between modes.
+- [P2] The first fixed-width treatment stabilized geometry but made the mode button visually too large.
+- [P2] Centering the compact button and summary resolved the rounded-edge offset but did not match the card's otherwise left-aligned information hierarchy.
+
+### Fixes made
+
+- Retained a fixed invisible layout slot so the Record action stays anchored while the mode label changes.
+- Restored the compact, content-sized mode pill and removed geometry animation from mode changes.
+- Moved the capture summary beneath the camera name, where it reads as camera information rather than part of the button.
+- Left the lower strip with only the compact mode selector and Record/Capture action.
+
+### Post-fix evidence
+
+- Video, Slow Motion, and Timelapse states keep the Record button in the same trailing position.
+- `Slow Motion` fits without truncation, and the compact `1080p`, repeat `2s`, and clock `10m` summary remains readable beneath the camera name.
+- Three connected camera cards retain generous separation and fit above the persistent multicamera dock.
+- No actionable P0, P1, or P2 issue remains.
+
+## Verification gaps
+
+- Light appearance was checked on the iPhone 17 Pro simulator; the largest Dynamic Type sizes and other device classes were not part of this pass.
+- Simulator mode changes validate layout stability, not real-camera response timing.
+
+final result: passed

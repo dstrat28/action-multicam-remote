@@ -44,6 +44,7 @@ final class CameraStore {
     @ObservationIgnored private let nanoStopStateGuardInterval: TimeInterval = 8
     @ObservationIgnored private var wakeRetryTasksByCameraID: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var startRecordingTasksByCameraID: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var photoCaptureResetTasksByCameraID: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var videoModeTasksByCameraID: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var connectionTimeoutTasksByCameraID: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var availabilityTimeoutTasksByCameraID: [UUID: Task<Void, Never>] = [:]
@@ -100,7 +101,16 @@ final class CameraStore {
 
         if resolvedDemoMode {
             bluetoothStateLabel = "Simulator Demo"
+#if DEBUG
+            if ProcessInfo.processInfo.shouldLoadConnectedCameraDemo {
+                loadDemoCameras()
+                appendLog("Simulator demo mode loaded connected sample cameras.")
+            } else {
+                appendLog("Simulator demo mode is ready. Use Connect Camera to add sample discoveries.")
+            }
+#else
             appendLog("Simulator demo mode is ready. Use Connect Camera to add sample discoveries.")
+#endif
         } else if !pairedCameras.isEmpty {
             startScanning()
         }
@@ -198,7 +208,12 @@ final class CameraStore {
     }
 
     var canStartMulticamRecording: Bool {
-        !selectedControllableCameras.isEmpty
+        if isPhotoMulticamSession {
+            return !selectedControllableCameras.isEmpty
+                && selectedControllableCameras.allSatisfy(\.isReadyForPhotoCapture)
+        }
+
+        return !selectedControllableCameras.isEmpty
             && selectedControllableCameras.allSatisfy(\.isReadyForMulticamStart)
     }
 
@@ -206,7 +221,13 @@ final class CameraStore {
         selectedConnectedCameras.contains { camera in
             camera.supportsBatchRecord
                 && camera.recordingState == .recording
+                && !camera.isInPhotoMode
         }
+    }
+
+    var isPhotoMulticamSession: Bool {
+        !connectedRecordCameras.isEmpty
+            && connectedRecordCameras.allSatisfy(\.isInPhotoMode)
     }
 
     var multicamReadinessMessage: String {
@@ -216,6 +237,15 @@ final class CameraStore {
 
         if selectedControllableCameras.isEmpty {
             return "Select the cameras you want to control."
+        }
+
+        if isPhotoMulticamSession {
+            if selectedControllableCameras.contains(where: {
+                $0.recordingState == .starting || $0.recordingState == .recording
+            }) {
+                return "Waiting for cameras to finish capturing."
+            }
+            return "Ready. Capture will take a photo on each selected camera."
         }
 
         if canStopMulticamRecording {
@@ -256,6 +286,24 @@ final class CameraStore {
         connectRememberedCamerasIfResolvable()
     }
 
+    func resumeCameraConnections() {
+        guard !isDemoMode else { return }
+
+        let retryCandidates = pairedCameras.filter {
+            $0.connectionState != .connected && $0.connectionState != .connecting
+        }
+        guard !retryCandidates.isEmpty else { return }
+
+        for camera in retryCandidates {
+            lastConnectionAttemptByID.removeValue(forKey: camera.id)
+            availabilitySuppressedUntilByCameraID.removeValue(forKey: camera.id)
+            autoConnectSuppressedUntilByCameraID.removeValue(forKey: camera.id)
+        }
+
+        appendLog("App active; refreshing Bluetooth camera connections.")
+        startScanning()
+    }
+
     func stopScanning() {
         isScanning = false
 
@@ -282,6 +330,17 @@ final class CameraStore {
         guard let index = cameras.firstIndex(where: { $0.id == camera.id }) else { return }
         guard cameras[index].canSelectForBatch || cameras[index].isSelected else { return }
         cameras[index].isSelected.toggle()
+    }
+
+    func renameCamera(_ camera: DiscoveredCamera, to proposedName: String) {
+        guard let index = cameras.firstIndex(where: { $0.id == camera.id }) else { return }
+
+        let trimmedName = proposedName.trimmingCharacters(in: .whitespacesAndNewlines)
+        cameras[index].nickname = trimmedName.isEmpty || trimmedName == cameras[index].name
+            ? nil
+            : trimmedName
+        sortCamerasForEditing()
+        persistPairedCameras()
     }
 
     func selectAllSupported() {
@@ -454,6 +513,7 @@ final class CameraStore {
 
     func remove(_ camera: DiscoveredCamera) {
         cancelStartRecording(for: camera.id)
+        cancelPhotoCaptureReset(for: camera.id)
         cancelVideoModeSwitch(for: camera.id)
         cancelConnectionTimeout(for: camera.id)
         cancelAvailabilityTimeout(for: camera.id)
@@ -500,13 +560,18 @@ final class CameraStore {
             return
         }
 
-        startRecordingSequence(for: selectedControllableCameras)
+        if isPhotoMulticamSession {
+            capturePhotos(with: selectedControllableCameras)
+        } else {
+            startRecordingSequence(for: selectedControllableCameras)
+        }
     }
 
     func stopMulticamRecording() {
         let targets = selectedConnectedCameras.filter { camera in
             camera.supportsBatchRecord
                 && camera.recordingState == .recording
+                && !camera.isInPhotoMode
         }
 
         guard !targets.isEmpty else {
@@ -552,7 +617,11 @@ final class CameraStore {
     }
 
     func startRecording(_ camera: DiscoveredCamera) {
-        startRecordingSequence(for: [camera])
+        if camera.isInPhotoMode {
+            capturePhotos(with: [camera])
+        } else {
+            startRecordingSequence(for: [camera])
+        }
     }
 
     func stopRecording(_ camera: DiscoveredCamera) {
@@ -584,6 +653,21 @@ final class CameraStore {
         sendVideoModeCommandAttempt(for: camera, attemptsAlreadySent: 0)
         modeSwitchAttemptsByCameraID[camera.id] = 1
         scheduleVideoModeSwitchConfirmation(for: camera.id)
+    }
+
+    func switchMode(_ mode: CaptureMode, for camera: DiscoveredCamera) {
+        guard camera.canSwitchCaptureMode,
+              camera.availableCaptureModes.contains(mode) else {
+            appendLog("\(camera.name): \(mode.rawValue) mode is not available right now.")
+            return
+        }
+
+        let modeName = mode.displayName(for: camera.model)
+        appendLog("\(camera.name): switching to \(modeName) mode.")
+        setCameraDiagnostic("Switching this camera to \(modeName) mode.", for: camera)
+        cancelStartRecording(for: camera.id)
+        cancelVideoModeSwitch(for: camera.id)
+        send(.setMode(mode), to: [camera])
     }
 
     func probeStatus(_ camera: DiscoveredCamera) {
@@ -1712,6 +1796,58 @@ private extension CameraStore {
         scheduleRecordAfterModeSwitch(for: connectedCamerasForStart.map(\.id))
     }
 
+    func capturePhotos(with cameras: [DiscoveredCamera]) {
+        guard !cameras.isEmpty else {
+            appendLog("No selected cameras for Capture Photo.")
+            return
+        }
+
+        let readyCameras = cameras.filter(\.isReadyForPhotoCapture)
+        guard readyCameras.count == cameras.count else {
+            appendLog("Photo capture skipped because one or more cameras are not ready in Photo mode.")
+            return
+        }
+
+        for camera in readyCameras {
+            cancelStartRecording(for: camera.id)
+            cancelVideoModeSwitch(for: camera.id)
+            cancelWakeRetry(for: camera.id)
+            cancelPhotoCaptureReset(for: camera.id)
+            pendingStartCameraIDs.remove(camera.id)
+            pendingStartConnectionFailuresByCameraID.removeValue(forKey: camera.id)
+            clearStateGuards(for: camera.id)
+            updateCameraStatus(camera.id, update: CameraStatusUpdate(recordingState: .starting))
+            schedulePhotoCaptureReset(for: camera.id)
+        }
+
+        send(.capturePhoto, to: readyCameras)
+    }
+
+    func schedulePhotoCaptureReset(for id: UUID) {
+        photoCaptureResetTasksByCameraID[id] = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(12))
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                guard let self else { return }
+                guard let latest = self.cameras.first(where: { $0.id == id }),
+                      latest.isInPhotoMode,
+                      latest.recordingState == .starting || latest.recordingState == .recording else {
+                    self.photoCaptureResetTasksByCameraID[id] = nil
+                    return
+                }
+
+                self.appendLog("\(latest.name): photo capture status timed out; returning the shutter control to ready.")
+                self.updateCameraStatus(id, update: CameraStatusUpdate(recordingState: .stopped))
+                self.photoCaptureResetTasksByCameraID[id] = nil
+            }
+        }
+    }
+
+    func cancelPhotoCaptureReset(for id: UUID) {
+        photoCaptureResetTasksByCameraID[id]?.cancel()
+        photoCaptureResetTasksByCameraID[id] = nil
+    }
+
     func scheduleRecordAfterModeSwitch(for ids: [UUID]) {
         for id in ids {
             let delay = modeSwitchDelay
@@ -1942,6 +2078,9 @@ private extension CameraStore {
                         for: camera.id,
                         attemptsRemaining: pendingStartReconnectAttempts(for: camera)
                     )
+                } else if command == .capturePhoto {
+                    cancelPhotoCaptureReset(for: camera.id)
+                    updateCameraStatus(camera.id, update: CameraStatusUpdate(recordingState: .stopped))
                 } else if camera.brand == .dji, command == .stopRecording {
                     queueStopRecording(for: camera, reason: "No active BLE client.")
                     scheduleReconnect(for: camera.id, attemptsRemaining: pendingStopReconnectAttempts(for: camera))
@@ -1957,6 +2096,17 @@ private extension CameraStore {
 
     func handleCommandResult(_ result: CameraCommandResult, for camera: DiscoveredCamera) {
         let wasSent = result.status == .sent || result.status == .queued
+
+        if wasSent, case .setMode = result.command,
+           let index = cameras.firstIndex(where: { $0.id == camera.id }) {
+            cameras[index].telemetry?.clearCaptureSettings()
+        }
+
+        if !wasSent, result.command == .capturePhoto {
+            cancelPhotoCaptureReset(for: camera.id)
+            updateCameraStatus(camera.id, update: CameraStatusUpdate(recordingState: .stopped))
+            return
+        }
 
         if !wasSent, result.command == .startRecording {
             queueStartRecording(for: camera, reason: result.message)
@@ -1989,6 +2139,9 @@ private extension CameraStore {
                 camera.id,
                 update: CameraStatusUpdate(recordingState: .starting, shouldClearCurrentMode: true)
             )
+        case .capturePhoto:
+            clearStateGuards(for: camera.id)
+            updateCameraStatus(camera.id, update: CameraStatusUpdate(recordingState: .starting))
         case .stopRecording:
             protectStopTransition(for: camera)
             pendingStopCameraIDs.remove(camera.id)
@@ -2008,12 +2161,19 @@ private extension CameraStore {
             let status: CameraCommandStatus
             let message: String
 
-            if camera.brand == .dji,
-               command != .startRecording,
-               command != .stopRecording,
-               command != .setMode(.video) {
+            let isSupportedDJIDemoCommand: Bool
+            switch command {
+            case .startRecording, .capturePhoto, .stopRecording:
+                isSupportedDJIDemoCommand = true
+            case let .setMode(mode):
+                isSupportedDJIDemoCommand = camera.availableCaptureModes.contains(mode)
+            case .toggleRecording, .cycleMode, .applySetting, .keepAlive:
+                isSupportedDJIDemoCommand = false
+            }
+
+            if camera.brand == .dji, !isSupportedDJIDemoCommand {
                 status = .unsupported
-                message = "DJI settings beyond Record, Stop, and Video still require hardware command mapping."
+                message = "This DJI command is not available for \(camera.model.rawValue)."
             } else {
                 status = .sent
                 message = "Simulated \(command.label.lowercased()) in demo mode."
@@ -2047,12 +2207,15 @@ private extension CameraStore {
         case .startRecording:
             cameras[index].recordingState = .recording
             cameras[index].currentMode = .video
+        case .capturePhoto:
+            cameras[index].recordingState = .stopped
         case .stopRecording:
             cameras[index].recordingState = .stopped
         case .toggleRecording:
             cameras[index].recordingState = cameras[index].recordingState == .recording ? .stopped : .recording
         case let .setMode(mode):
             cameras[index].currentMode = mode
+            cameras[index].telemetry = Self.demoTelemetry(for: cameras[index], mode: mode)
         case .cycleMode:
             cameras[index].currentMode = nil
         case .applySetting, .keepAlive:
@@ -2094,6 +2257,7 @@ private extension CameraStore {
         var shouldSort = false
         var shouldPersist = false
         let previousRecordingState = cameras[index].recordingState
+        let previousCaptureMode = cameras[index].currentMode
         var recordingStateToApply = update.recordingState
         var recordingDecision: String?
 
@@ -2120,12 +2284,14 @@ private extension CameraStore {
                 recordingDecision = "kept recording on ready"
             } else if recordingState == .stopped,
                       !update.canClearActiveRecording,
-                      cameras[index].recordingState == .recording {
+                      cameras[index].recordingState == .recording,
+                      !cameras[index].isInPhotoMode {
                 cancelWakeRetry(for: id)
                 recordingDecision = "kept recording because stopped cannot clear active recording"
             } else if recordingState == .stopped,
                       !update.canClearActiveRecording,
-                      cameras[index].recordingState == .starting {
+                      cameras[index].recordingState == .starting,
+                      !cameras[index].isInPhotoMode {
                 logAction6RecordingStatusDecision(
                     camera: cameras[index],
                     incoming: update.recordingState,
@@ -2147,6 +2313,9 @@ private extension CameraStore {
                 if recordingState != .unknown {
                     cancelWakeRetry(for: id)
                 }
+                if recordingState == .stopped, cameras[index].isInPhotoMode {
+                    cancelPhotoCaptureReset(for: id)
+                }
             }
         }
 
@@ -2164,9 +2333,19 @@ private extension CameraStore {
             cameras[index].currentMode = currentMode
         }
 
+        if let currentMode = update.currentMode, currentMode != previousCaptureMode {
+            cameras[index].telemetry?.clearCaptureSettings()
+        }
+
         if let telemetry = update.telemetry {
             var mergedTelemetry = cameras[index].telemetry ?? CameraTelemetry()
-            mergedTelemetry.merge(telemetry)
+            if update.replacesDJIRSDKStatus {
+                mergedTelemetry.mergeDJIRSDKStatus(telemetry)
+            } else if update.replacesCaptureSettings {
+                mergedTelemetry.mergeReplacingCaptureSettings(telemetry)
+            } else {
+                mergedTelemetry.merge(telemetry)
+            }
             cameras[index].telemetry = mergedTelemetry.isEmpty ? nil : mergedTelemetry
         }
 
@@ -2174,6 +2353,12 @@ private extension CameraStore {
             cameras[index].model = model
             shouldSort = true
             shouldPersist = cameras[index].isPaired
+        }
+
+        if let hardwareIdentifier = update.hardwareIdentifier,
+           cameras[index].hardwareIdentifier != hardwareIdentifier {
+            cameras[index].hardwareIdentifier = hardwareIdentifier
+            shouldPersist = shouldPersist || cameras[index].isPaired
         }
 
         if shouldSort {
@@ -2604,7 +2789,7 @@ private extension CameraStore {
                 return lhsRank < rhsRank
             }
 
-            let lhsName = lhs.name.localizedStandardCompare(rhs.name)
+            let lhsName = lhs.displayName.localizedStandardCompare(rhs.displayName)
             if lhsName != .orderedSame {
                 return lhsName == .orderedAscending
             }
@@ -2648,7 +2833,7 @@ extension CameraStore {
                     brand: .dji,
                     model: .djiOsmoAction6,
                     rssi: -62,
-                    capabilities: [.record, .experimental],
+                    capabilities: [.record, .mode, .settings, .status, .experimental],
                     connectionState: .discovered,
                     recordingState: .unknown,
                     isPaired: false,
@@ -2678,7 +2863,12 @@ extension CameraStore {
 private extension ProcessInfo {
     var shouldUseCameraDemoMode: Bool {
         arguments.contains("--demo-cameras")
+            || arguments.contains("--demo-connected-cameras")
             || environment["ACTION_CAM_REMOTE_DEMO"] == "1"
+    }
+
+    var shouldLoadConnectedCameraDemo: Bool {
+        arguments.contains("--demo-connected-cameras")
     }
 }
 

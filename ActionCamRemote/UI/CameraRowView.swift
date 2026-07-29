@@ -2,6 +2,8 @@ import SwiftUI
 
 struct CameraRowView: View {
     @Environment(CameraStore.self) private var store
+    @State private var pendingCaptureMode: CaptureMode?
+    @State private var captureSettingsTimestampBeforeModeChange: Date?
     var camera: DiscoveredCamera
     var matchesConnectedPeerHeight: Bool = false
     var onShowDetails: () -> Void = {}
@@ -29,13 +31,7 @@ struct CameraRowView: View {
                     .padding(.horizontal, 16)
 
                 HStack(spacing: 10) {
-                    if let captureSummary {
-                        Text(captureSummary)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Color.acrInk)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.78)
-                    }
+                    captureModeAndSettings
 
                     Spacer(minLength: 4)
 
@@ -53,6 +49,29 @@ struct CameraRowView: View {
         )
         .clipShape(RoundedRectangle(cornerRadius: ACRDesign.cardCornerRadius, style: .continuous))
         .acrCard(fill: Color.acrSurface, stroke: rowStroke, interactive: isReadyConnected)
+        .onChange(of: camera.currentMode) { _, confirmedMode in
+            if confirmedMode == pendingCaptureMode,
+               hasReceivedFreshCaptureSettings {
+                setPendingCaptureMode(nil)
+            }
+        }
+        .onChange(of: camera.telemetry?.captureSettingsUpdatedAt) { _, _ in
+            if camera.currentMode == pendingCaptureMode,
+               hasReceivedFreshCaptureSettings {
+                setPendingCaptureMode(nil)
+            }
+        }
+        .onChange(of: camera.connectionState) { _, connectionState in
+            if connectionState != .connected {
+                setPendingCaptureMode(nil)
+            }
+        }
+        .task(id: pendingCaptureMode) {
+            guard pendingCaptureMode != nil else { return }
+            try? await Task.sleep(for: .seconds(3))
+            guard !Task.isCancelled else { return }
+            setPendingCaptureMode(nil)
+        }
     }
 
     private var selectionColor: Color {
@@ -92,19 +111,45 @@ struct CameraRowView: View {
         }
         .buttonStyle(.plain)
         .disabled(!camera.canSelectForBatch && !camera.isSelected)
-        .accessibilityLabel(camera.isSelected ? "Deselect \(camera.name)" : "Select \(camera.name)")
+        .accessibilityLabel(camera.isSelected ? "Deselect \(camera.displayName)" : "Select \(camera.displayName)")
     }
 
     private var identityRow: some View {
         HStack(alignment: .center, spacing: 6) {
             CameraProductThumbnail(model: camera.model, brand: camera.brand, size: .card)
 
-            Text(camera.name)
-                .font(.headline.weight(.bold))
-                .fontDesign(.rounded)
-                .foregroundStyle(Color.acrInk)
-                .lineLimit(2)
-                .minimumScaleFactor(0.82)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(camera.displayName)
+                    .font(.headline.weight(.bold))
+                    .fontDesign(.rounded)
+                    .foregroundStyle(Color.acrInk)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.82)
+
+                if reservesCaptureSettingsSummarySpace {
+                    Text(" ")
+                        .font(.footnote)
+                        .accessibilityHidden(true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .overlay(alignment: .leading) {
+                            if pendingCaptureMode != nil {
+                                HStack(spacing: 5) {
+                                    ProgressView()
+                                        .controlSize(.mini)
+                                        .tint(Color.acrAvailable)
+
+                                    Text("Updating…")
+                                        .font(.footnote)
+                                        .foregroundStyle(Color.acrMutedText)
+                                }
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel("Updating capture settings")
+                            } else if !captureSettingsSummaryItems.isEmpty {
+                                captureSettingsSummaryView
+                            }
+                        }
+                }
+            }
 
             Spacer(minLength: 4)
 
@@ -167,26 +212,286 @@ struct CameraRowView: View {
         return camera.displayConnectionLabel
     }
 
-    private var captureSummary: String? {
-        guard isReadyConnected else { return nil }
-        guard let telemetry else { return camera.currentMode?.rawValue }
+    @ViewBuilder
+    private var captureModeAndSettings: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if camera.availableCaptureModes.count > 1 {
+                captureModeLabel(showsChevron: true)
+                    .overlay {
+                        Menu {
+                            ForEach(camera.availableCaptureModes) { mode in
+                                Button {
+                                    guard mode != displayedCaptureMode else { return }
+                                    setPendingCaptureMode(mode)
+                                    store.switchMode(mode, for: camera)
+                                } label: {
+                                    if mode == displayedCaptureMode {
+                                        Label(mode.displayName(for: camera.model), systemImage: "checkmark")
+                                    } else {
+                                        Text(mode.displayName(for: camera.model))
+                                    }
+                                }
+                            }
+                        } label: {
+                            Text("Capture mode for \(camera.displayName)")
+                                .foregroundStyle(.clear)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                                .contentShape(Capsule())
+                                .accessibilityLabel("Capture mode for \(camera.displayName)")
+                                .accessibilityHint("Changes the capture mode")
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .disabled(!camera.canSwitchCaptureMode)
+            } else if let currentMode = camera.currentMode {
+                captureModeLabel(for: currentMode, showsChevron: false)
+            }
+        }
+        .frame(width: captureControlWidth, alignment: .leading)
+        .layoutPriority(1)
+    }
 
-        let settings: [String] = [telemetry.videoResolution, telemetry.frameRate, telemetry.framing]
-            .compactMap { $0 }
-            .filter { !$0.isEmpty }
+    private func captureModeLabel(
+        for mode: CaptureMode? = nil,
+        showsChevron: Bool
+    ) -> some View {
+        let resolvedMode = mode ?? displayedCaptureMode
+        return HStack(spacing: 6) {
+            Image(systemName: resolvedMode?.cameraCardSystemImage ?? "camera.fill")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.acrAvailable)
+                .accessibilityHidden(showsChevron)
 
-        if !settings.isEmpty {
-            return settings.joined(separator: " · ")
+            Text(resolvedMode?.displayName(for: camera.model) ?? "Choose Mode")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.acrInk)
+                .lineLimit(1)
+                .minimumScaleFactor(0.78)
+                .allowsTightening(true)
+                .accessibilityHidden(showsChevron)
+
+            if showsChevron {
+                Image(systemName: "chevron.down")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(Color.acrMutedText)
+                    .accessibilityHidden(true)
+            }
+        }
+        .padding(.horizontal, showsChevron ? 10 : 0)
+        .frame(height: 30)
+        .fixedSize(horizontal: true, vertical: false)
+        .background {
+            if showsChevron {
+                Capsule()
+                    .fill(Color.acrInsetSurface.opacity(0.92))
+            }
+        }
+        .overlay {
+            if showsChevron {
+                Capsule()
+                    .stroke(Color.acrLine.opacity(0.72), lineWidth: 1)
+            }
+        }
+        .contentShape(Capsule())
+    }
+
+    private var captureControlWidth: CGFloat { 174 }
+
+    private var displayedCaptureMode: CaptureMode? {
+        pendingCaptureMode ?? camera.currentMode
+    }
+
+    private func setPendingCaptureMode(_ mode: CaptureMode?) {
+        var transaction = Transaction(animation: nil)
+        transaction.disablesAnimations = true
+        withTransaction(transaction) {
+            captureSettingsTimestampBeforeModeChange = mode == nil
+                ? nil
+                : camera.telemetry?.captureSettingsUpdatedAt
+            pendingCaptureMode = mode
+        }
+    }
+
+    private var hasReceivedFreshCaptureSettings: Bool {
+        camera.telemetry?.captureSettingsUpdatedAt != captureSettingsTimestampBeforeModeChange
+    }
+
+    private struct CaptureSummaryItem {
+        let value: String
+        let systemImage: String?
+        let accessibilityText: String
+
+        init(
+            _ value: String,
+            systemImage: String? = nil,
+            accessibilityText: String? = nil
+        ) {
+            self.value = value
+            self.systemImage = systemImage
+            self.accessibilityText = accessibilityText ?? value
+        }
+    }
+
+    private var captureSettingsSummaryView: some View {
+        HStack(spacing: 5) {
+            ForEach(Array(captureSettingsSummaryItems.enumerated()), id: \.offset) { index, item in
+                if index > 0 {
+                    Text("·")
+                        .accessibilityHidden(true)
+                }
+
+                HStack(spacing: 3) {
+                    if let systemImage = item.systemImage {
+                        Image(systemName: systemImage)
+                            .font(.caption2.weight(.semibold))
+                            .accessibilityHidden(true)
+                    }
+
+                    Text(item.value)
+                }
+            }
+        }
+        .font(.footnote)
+        .foregroundStyle(Color.acrMutedText)
+        .lineLimit(1)
+        .minimumScaleFactor(0.78)
+        .allowsTightening(true)
+        .transaction { transaction in
+            transaction.animation = nil
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(
+            captureSettingsSummaryItems
+                .map(\.accessibilityText)
+                .joined(separator: ", ")
+        )
+    }
+
+    private var captureSettingsSummaryItems: [CaptureSummaryItem] {
+        guard isReadyConnected, let telemetry else { return [] }
+
+        let settings: [CaptureSummaryItem?]
+        switch camera.currentMode {
+        case .photo:
+            settings = [
+                telemetry.videoResolution.map { CaptureSummaryItem($0) },
+                telemetry.photoAspectRatio.map { CaptureSummaryItem($0) },
+                telemetry.photoBurstCount.flatMap {
+                    $0 > 1 ? CaptureSummaryItem("\($0) photos") : nil
+                },
+                telemetry.photoCountdownMilliseconds.flatMap {
+                    $0 > 0
+                        ? CaptureSummaryItem(
+                            CameraDetailFormat.milliseconds($0),
+                            systemImage: "timer",
+                            accessibilityText: "\(CameraDetailFormat.milliseconds($0)) timer"
+                        )
+                        : nil
+                },
+            ]
+        case .slowMotion:
+            settings = [
+                telemetry.videoResolution.map { CaptureSummaryItem($0) },
+                telemetry.frameRate.map { CaptureSummaryItem($0) },
+                slowMotionRate(from: telemetry.modeParameters).map { CaptureSummaryItem($0) },
+            ]
+        case .timelapse:
+            settings = [
+                telemetry.videoResolution.map { CaptureSummaryItem($0) },
+                telemetry.timelapseIntervalTenths.map {
+                    let value = CameraDetailFormat.timelapseInterval(tenths: $0, isHyperlapse: false)
+                    return CaptureSummaryItem(
+                        value,
+                        systemImage: "repeat",
+                        accessibilityText: "Every \(value)"
+                    )
+                },
+                telemetry.timelapseDurationSeconds.flatMap {
+                    guard $0 > 0 else { return nil }
+                    let value = CameraDetailFormat.duration(seconds: UInt32($0))
+                    return CaptureSummaryItem(
+                        value,
+                        systemImage: "clock",
+                        accessibilityText: "\(value) duration"
+                    )
+                },
+            ]
+        case .hyperlapse:
+            settings = [
+                telemetry.videoResolution.map { CaptureSummaryItem($0) },
+                telemetry.timelapseIntervalTenths.map {
+                    let value = CameraDetailFormat.timelapseInterval(tenths: $0, isHyperlapse: true)
+                    return CaptureSummaryItem(
+                        value,
+                        systemImage: "speedometer",
+                        accessibilityText: "\(value) rate"
+                    )
+                },
+                telemetry.timelapseDurationSeconds.flatMap {
+                    guard $0 > 0 else { return nil }
+                    let value = CameraDetailFormat.duration(seconds: UInt32($0))
+                    return CaptureSummaryItem(
+                        value,
+                        systemImage: "clock",
+                        accessibilityText: "\(value) duration"
+                    )
+                },
+            ]
+        case .video, .superNight:
+            settings = [
+                telemetry.videoResolution.map { CaptureSummaryItem($0) },
+                telemetry.frameRate.map { CaptureSummaryItem($0) },
+                (telemetry.lens ?? telemetry.framing).map { CaptureSummaryItem($0) },
+            ]
+        case .selfie, .boostVideo, .vortex, .panoramicSuperNight, .singleLensSuperNight:
+            settings = [
+                telemetry.videoResolution.map { CaptureSummaryItem($0) },
+                telemetry.frameRate.map { CaptureSummaryItem($0) },
+                (telemetry.lens ?? telemetry.framing).map { CaptureSummaryItem($0) },
+            ]
+        case nil:
+            settings = [
+                telemetry.videoResolution.map { CaptureSummaryItem($0) },
+                telemetry.frameRate.map { CaptureSummaryItem($0) },
+                (telemetry.lens ?? telemetry.framing).map { CaptureSummaryItem($0) },
+            ]
         }
 
-        return camera.currentMode?.rawValue
+        var seen = Set<String>()
+        return settings
+            .compactMap { $0 }
+            .filter { !$0.value.isEmpty }
+            .filter { seen.insert($0.value.lowercased()).inserted }
+            .prefix(3)
+            .map { $0 }
+    }
+
+    private var reservesCaptureSettingsSummarySpace: Bool {
+        isReadyConnected
+            && (pendingCaptureMode != nil
+                || camera.availableCaptureModes.count > 1
+                || !captureSettingsSummaryItems.isEmpty)
+    }
+
+    private func slowMotionRate(from modeParameters: String?) -> String? {
+        guard let token = modeParameters?
+            .split(whereSeparator: \.isWhitespace)
+            .last(where: { part in
+                let uppercased = part.uppercased()
+                return uppercased.hasSuffix("X")
+                    && uppercased.dropLast().allSatisfy(\.isNumber)
+            }) else {
+            return nil
+        }
+        return "\(token.dropLast())×"
     }
 
     private var showsCaptureBar: Bool {
-        captureSummary != nil
-            || (camera.isPaired
-                && camera.supportsBatchRecord
-                && (isReadyConnected || isConnectInProgress))
+        isReadyConnected
+            && (camera.currentMode != nil
+                || !captureSettingsSummaryItems.isEmpty
+                || camera.availableCaptureModes.count > 1
+                || (camera.isPaired && camera.supportsBatchRecord))
     }
 
     @ViewBuilder
@@ -440,25 +745,26 @@ struct CameraDetailView: View {
 }
 
 private struct CameraDetailContent: View {
+    @Environment(CameraStore.self) private var store
+
     var camera: DiscoveredCamera
+    @State private var isRenaming = false
+    @State private var proposedName = ""
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 CameraDetailHeader(camera: camera)
 
-                CameraTelemetryDetailSection(telemetry: camera.telemetry)
-
                 CameraCaptureSettingsSection(camera: camera)
+
+                CameraTelemetryDetailSection(telemetry: camera.telemetry)
 
                 if FeatureAvailability.djiPhoneGPS, camera.supportsDJIPhoneGPS {
                     DJIPhoneGPSSection(camera: camera)
                 }
 
-                CameraDetailSection(title: "Signal", systemImage: "antenna.radiowaves.left.and.right") {
-                    CameraInfoRow(label: "Strength", value: camera.signalLabel)
-                    CameraInfoRow(label: "Signal Level", value: "\(camera.rssi) dBm")
-                }
+                CameraStatusAndSignalDetailSection(camera: camera)
             }
             .frame(maxWidth: 680)
             .frame(maxWidth: .infinity)
@@ -468,6 +774,27 @@ private struct CameraDetailContent: View {
         .background(Color.acrAppBackground)
         .navigationTitle("Camera Info")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    proposedName = camera.displayName
+                    isRenaming = true
+                } label: {
+                    Image(systemName: "pencil")
+                }
+                .accessibilityLabel("Edit camera name")
+            }
+        }
+        .alert("Camera Nickname", isPresented: $isRenaming) {
+            TextField("Nickname", text: $proposedName)
+
+            Button("Cancel", role: .cancel) {}
+            Button("Save") {
+                store.renameCamera(camera, to: proposedName)
+            }
+        } message: {
+            Text("Leave this blank to use the device name.")
+        }
     }
 }
 
@@ -500,11 +827,11 @@ private struct CameraDetailHeader: View {
     var camera: DiscoveredCamera
 
     var body: some View {
-        HStack(alignment: .center, spacing: 14) {
+        HStack(alignment: .center, spacing: 8) {
             CameraProductThumbnail(model: camera.model, brand: camera.brand, size: .detail)
 
             VStack(alignment: .leading, spacing: 5) {
-                Text(camera.name)
+                Text(camera.displayName)
                     .font(.title2.weight(.bold))
                     .foregroundStyle(Color.acrInk)
                     .lineLimit(2)
@@ -517,7 +844,9 @@ private struct CameraDetailHeader: View {
 
             Spacer(minLength: 8)
         }
-        .padding(16)
+        .padding(.leading, 10)
+        .padding(.trailing, 14)
+        .padding(.vertical, 16)
         .acrCard(fill: Color.acrSurface, stroke: Color.acrLine.opacity(0.85))
     }
 }
@@ -573,37 +902,136 @@ private struct CameraCaptureSettingsSection: View {
 
     @ViewBuilder
     var body: some View {
-        if hasCaptureSettings {
-            CameraDetailSection(title: "Capture Settings", systemImage: "camera.metering.center.weighted") {
-                if let currentMode = camera.currentMode {
-                    CameraInfoRow(label: "Mode", value: currentMode.rawValue)
-                }
-                if let videoResolution = camera.telemetry?.videoResolution {
-                    CameraInfoRow(label: "Resolution", value: videoResolution)
-                }
-                if let frameRate = camera.telemetry?.frameRate {
-                    CameraInfoRow(label: "Frame Rate", value: frameRate)
-                }
-                if let framing = camera.telemetry?.framing {
-                    CameraInfoRow(label: "Framing", value: framing)
-                }
-                if let lens = camera.telemetry?.lens {
-                    CameraInfoRow(label: "Lens", value: lens)
-                }
-                if let stabilization = camera.telemetry?.hypersmooth {
-                    CameraInfoRow(label: "Stabilization", value: stabilization)
-                }
+        CameraDetailSection(title: "Capture Settings", systemImage: "camera.metering.center.weighted") {
+            CameraInfoRow(label: "Camera Mode", value: cameraModeName)
+            if let videoResolution = camera.telemetry?.videoResolution {
+                CameraInfoRow(label: "Resolution", value: videoResolution)
+            }
+            if showsFrameRate, let frameRate = camera.telemetry?.frameRate {
+                CameraInfoRow(label: "Frame Rate", value: frameRate)
+            }
+            if let framing = camera.telemetry?.framing,
+               camera.currentMode != .photo || camera.telemetry?.photoAspectRatio == nil {
+                CameraInfoRow(label: "Framing", value: framing)
+            }
+            if let lens = camera.telemetry?.lens {
+                CameraInfoRow(label: "Lens", value: lens)
+            }
+            if showsStabilization, let stabilization = camera.telemetry?.hypersmooth {
+                CameraInfoRow(label: "Stabilization", value: stabilization)
+            }
+            if let photoAspectRatio = camera.telemetry?.photoAspectRatio,
+               camera.currentMode == .photo {
+                CameraInfoRow(label: "Aspect Ratio", value: photoAspectRatio)
+            }
+            if let photoBurstCount = camera.telemetry?.photoBurstCount,
+               camera.currentMode == .photo {
+                CameraInfoRow(label: "Burst", value: "\(photoBurstCount) photos")
+            }
+            if let photoCountdownMilliseconds = camera.telemetry?.photoCountdownMilliseconds,
+               photoCountdownMilliseconds > 0,
+               camera.currentMode == .photo {
+                CameraInfoRow(
+                    label: "Photo Timer",
+                    value: CameraDetailFormat.milliseconds(photoCountdownMilliseconds)
+                )
+            }
+            if let timelapseIntervalTenths = camera.telemetry?.timelapseIntervalTenths,
+               camera.currentMode == .timelapse || camera.currentMode == .hyperlapse {
+                CameraInfoRow(
+                    label: camera.currentMode == .hyperlapse ? "Hyperlapse Rate" : "Interval",
+                    value: CameraDetailFormat.timelapseInterval(
+                        tenths: timelapseIntervalTenths,
+                        isHyperlapse: camera.currentMode == .hyperlapse
+                    )
+                )
+            }
+            if let timelapseDurationSeconds = camera.telemetry?.timelapseDurationSeconds,
+               timelapseDurationSeconds > 0,
+               camera.currentMode == .timelapse || camera.currentMode == .hyperlapse {
+                CameraInfoRow(
+                    label: "Duration",
+                    value: CameraDetailFormat.duration(seconds: UInt32(timelapseDurationSeconds))
+                )
+            }
+            if let loopRecordingSeconds = camera.telemetry?.loopRecordingSeconds,
+               loopRecordingSeconds > 0,
+               camera.currentMode == .video {
+                CameraInfoRow(
+                    label: "Loop Recording",
+                    value: CameraDetailFormat.loopRecording(seconds: loopRecordingSeconds)
+                )
             }
         }
     }
 
-    private var hasCaptureSettings: Bool {
-        camera.currentMode != nil
-            || camera.telemetry?.videoResolution != nil
-            || camera.telemetry?.frameRate != nil
-            || camera.telemetry?.framing != nil
-            || camera.telemetry?.lens != nil
-            || camera.telemetry?.hypersmooth != nil
+    private var cameraModeName: String {
+        if let currentMode = camera.currentMode {
+            return currentMode.displayName(for: camera.model)
+        }
+
+        let reportedMode = camera.telemetry?.modeName?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let reportedMode, !reportedMode.isEmpty {
+            let lowercaseMode = reportedMode.lowercased()
+            return lowercaseMode.prefix(1).uppercased() + String(lowercaseMode.dropFirst())
+        }
+        return "Unknown"
+    }
+
+    private var showsFrameRate: Bool {
+        switch camera.currentMode {
+        case .photo, .timelapse, .hyperlapse:
+            false
+        default:
+            true
+        }
+    }
+
+    private var showsStabilization: Bool {
+        switch camera.currentMode {
+        case .photo, .timelapse, .hyperlapse:
+            false
+        default:
+            true
+        }
+    }
+}
+
+private struct CameraStatusAndSignalDetailSection: View {
+    var camera: DiscoveredCamera
+
+    var body: some View {
+        CameraDetailSection(title: "Status & Signal", systemImage: "waveform.path.ecg") {
+            CameraInfoRow(label: "Device Name", value: camera.name)
+
+            if let telemetry = camera.telemetry {
+                if let cameraStatus = telemetry.cameraStatus {
+                    CameraInfoRow(label: "Camera Status", value: cameraStatus)
+                }
+                if let recordingElapsedSeconds = telemetry.recordingElapsedSeconds,
+                   recordingElapsedSeconds > 0,
+                   camera.recordingState == .recording {
+                    CameraInfoRow(
+                        label: "Recording Time",
+                        value: CameraDetailFormat.elapsed(seconds: recordingElapsedSeconds)
+                    )
+                }
+                if let countdownRemainingSeconds = telemetry.countdownRemainingSeconds,
+                   countdownRemainingSeconds > 0 {
+                    CameraInfoRow(label: "Countdown", value: "\(countdownRemainingSeconds)s")
+                }
+                if let temperatureStatus = telemetry.temperatureStatus {
+                    CameraInfoRow(label: "Temperature", value: temperatureStatus)
+                }
+                if let userMode = telemetry.userMode, userMode != "General" {
+                    CameraInfoRow(label: "Custom Mode", value: userMode)
+                }
+            }
+
+            CameraInfoRow(label: "Signal", value: camera.signalLabel)
+            CameraInfoRow(label: "Signal Level", value: "\(camera.rssi) dBm")
+        }
     }
 }
 
@@ -620,11 +1048,20 @@ private struct CameraTelemetryDetailSection: View {
                     CameraInfoRow(label: "Camera Battery", value: "\(batteryBars) of 4 bars")
                 }
 
+                if let externalPower = telemetry.isExternalPowerConnected {
+                    CameraInfoRow(
+                        label: "Power Source",
+                        value: externalPower ? "External Power" : "Battery"
+                    )
+                }
+
                 if let storageFreeMB = telemetry.storageFreeMB, let storageTotalMB = telemetry.storageTotalMB {
                     CameraInfoRow(
                         label: "Storage",
                         value: "\(CameraDetailFormat.storage(mb: storageFreeMB)) / \(CameraDetailFormat.storage(mb: storageTotalMB))"
                     )
+                } else if let storageFreeMB = telemetry.storageFreeMB {
+                    CameraInfoRow(label: "Available Storage", value: CameraDetailFormat.storage(mb: storageFreeMB))
                 } else if let sdCardCapacityMB = telemetry.sdCardCapacityMB {
                     CameraInfoRow(label: "SD Card", value: CameraDetailFormat.storage(mb: sdCardCapacityMB))
                 } else if let storageState = telemetry.storageState {
@@ -648,6 +1085,7 @@ private struct CameraTelemetryDetailSection: View {
     private func hasMediaOrBatteryInfo(_ telemetry: CameraTelemetry) -> Bool {
         telemetry.batteryPercent != nil
             || telemetry.batteryBars != nil
+            || telemetry.isExternalPowerConnected != nil
             || telemetry.storageState != nil
             || telemetry.remainingVideoSeconds != nil
             || telemetry.remainingPhotos != nil
@@ -668,8 +1106,11 @@ private struct CameraRecordButton: View {
             tint: .acrRecord,
             isEnabled: camera.primaryRecordCommand != nil,
             isLoading: isConnectInProgress
-                || camera.recordingState == .starting,
-            appearance: camera.recordingState == .recording ? .filled : .outlined,
+                || camera.recordingState == .starting
+                || (camera.isInPhotoMode && camera.recordingState == .recording),
+            appearance: camera.recordingState == .recording && !camera.isInPhotoMode
+                ? .filled
+                : .outlined,
             action: performRecordAction
         )
     }
@@ -678,22 +1119,21 @@ private struct CameraRecordButton: View {
         if isConnectInProgress {
             return "Connecting"
         }
-        if camera.recordingState == .starting {
-            return "Starting"
-        }
-        if camera.recordingState == .recording {
-            return "Stop"
-        }
-        return "Record"
+        return camera.primaryRecordTitle
     }
 
     private var systemImage: String {
-        return camera.recordingState == .recording ? "stop.fill" : "record.circle.fill"
+        if camera.recordingState == .recording, !camera.isInPhotoMode {
+            return "stop.fill"
+        }
+        return camera.isInPhotoMode ? "camera.fill" : "record.circle.fill"
     }
 
     private func performRecordAction() {
         switch camera.primaryRecordCommand {
         case .startRecording:
+            store.startRecording(camera)
+        case .capturePhoto:
             store.startRecording(camera)
         case .stopRecording:
             store.stopRecording(camera)
@@ -732,5 +1172,70 @@ private enum CameraDetailFormat {
         }
 
         return "\(mb) MB"
+    }
+
+    static func elapsed(seconds: UInt32) -> String {
+        let hours = seconds / 3_600
+        let minutes = (seconds % 3_600) / 60
+        let remainingSeconds = seconds % 60
+        if hours > 0 {
+            return String(format: "%d:%02d:%02d", hours, minutes, remainingSeconds)
+        }
+        return String(format: "%d:%02d", minutes, remainingSeconds)
+    }
+
+    static func milliseconds(_ value: UInt32) -> String {
+        let seconds = Double(value) / 1_000
+        return seconds.rounded() == seconds
+            ? "\(Int(seconds))s"
+            : String(format: "%.1fs", seconds)
+    }
+
+    static func timelapseInterval(tenths: UInt16, isHyperlapse: Bool) -> String {
+        if isHyperlapse {
+            return tenths == 0 ? "Auto" : "\(tenths)×"
+        }
+
+        let seconds = Double(tenths) / 10
+        if seconds >= 60, seconds.rounded() == seconds {
+            return duration(seconds: UInt32(seconds))
+        }
+        return seconds.rounded() == seconds
+            ? "\(Int(seconds))s"
+            : String(format: "%.1fs", seconds)
+    }
+
+    static func loopRecording(seconds: UInt16) -> String {
+        if seconds == .max {
+            return "Maximum"
+        }
+        return duration(seconds: UInt32(seconds))
+    }
+}
+
+private extension CaptureMode {
+    var cameraCardSystemImage: String {
+        switch self {
+        case .video:
+            "video.fill"
+        case .photo:
+            "camera.fill"
+        case .slowMotion:
+            "slowmo"
+        case .timelapse:
+            "timer"
+        case .hyperlapse:
+            "forward.fill"
+        case .superNight, .panoramicSuperNight:
+            "moon.stars.fill"
+        case .selfie:
+            "person.crop.circle"
+        case .boostVideo:
+            "bolt.fill"
+        case .vortex:
+            "hurricane"
+        case .singleLensSuperNight:
+            "moon.fill"
+        }
     }
 }
