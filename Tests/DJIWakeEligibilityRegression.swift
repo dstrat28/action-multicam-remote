@@ -60,16 +60,8 @@ enum DJIWakeEligibilityRegression {
         precondition(goPro.displayConnectionLabel == "Not Connected", "An awake advertising GoPro must not expose Available")
 
         goPro.advertisementAwake = false
-        precondition(goPro.canWakeFromSleep, "A paired low-power GoPro with unknown battery should expose Wake")
+        precondition(goPro.canWakeFromSleep, "A paired low-power GoPro should expose Wake")
         precondition(goPro.displayConnectionLabel == "Available", "A paired low-power GoPro should show Available")
-
-        goPro.telemetry = CameraTelemetry(batteryPercent: 30)
-        precondition(!goPro.canWakeFromSleep, "A GoPro at the wake threshold must not expose Wake")
-        precondition(goPro.displayConnectionLabel == "Not Connected", "A known-low GoPro must not show Available")
-
-        goPro.telemetry = CameraTelemetry(batteryPercent: 31)
-        precondition(goPro.canWakeFromSleep, "A GoPro above the wake threshold should expose Wake")
-        precondition(goPro.displayConnectionLabel == "Available", "A GoPro above the wake threshold should show Available")
 
         goPro.isPaired = false
         precondition(!goPro.canWakeFromSleep, "An unpaired low-power GoPro must not expose Wake")

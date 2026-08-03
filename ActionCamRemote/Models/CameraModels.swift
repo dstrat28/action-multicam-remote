@@ -885,9 +885,6 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
 
         if brand == .gopro {
             return advertisementAwake == false
-                && GoProWakeEligibility.allowsWake(
-                    lastKnownBatteryPercent: telemetry?.batteryPercent
-                )
         }
 
         return supportsExperimentalDJISleepWake
@@ -1138,17 +1135,6 @@ enum GoProAdvertisementStatus {
 
     static func isPeripheralPairingEnabled(_ statusByte: UInt8) -> Bool {
         (statusByte & 0x04) != 0
-    }
-}
-
-enum GoProWakeEligibility {
-    // Empirically, a HERO13 Black would not wake at 23% but did wake at 37%.
-    // Keep this isolated so the threshold is easy to adjust with more device testing.
-    static let batteryThresholdPercent = 30
-
-    static func allowsWake(lastKnownBatteryPercent: Int?) -> Bool {
-        guard let lastKnownBatteryPercent else { return true }
-        return lastKnownBatteryPercent > batteryThresholdPercent
     }
 }
 
