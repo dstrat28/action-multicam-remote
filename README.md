@@ -6,7 +6,7 @@ Pair and control multiple GoPro and DJI cameras together. Start or stop recordin
 
 [Download Action Multicam Remote on the App Store](https://apps.apple.com/us/app/action-multicam-remote/id6784017391).
 
-GoPro support uses the public Open GoPro BLE API. DJI support uses DJI's R SDK protocol and BLE/DUML behavior. HERO13 Black, Osmo Action 5 Pro, Action 6, and Osmo Nano have been tested directly.
+GoPro support uses the public Open GoPro BLE API. DJI support uses DJI's R SDK protocol and BLE/DUML behavior. HERO13 Black, Osmo Action 5 Pro, Action 6, Osmo 360, and Osmo Nano have been tested directly.
 
 Multicam is an independent project and is not affiliated with, endorsed by, or sponsored by GoPro, DJI, or their affiliates.
 
@@ -19,7 +19,7 @@ Multicam is an independent project and is not affiliated with, endorsed by, or s
 | DJI Osmo Action 4 | Supported | No |
 | DJI Osmo Action 5 Pro | Supported | Yes |
 | DJI Osmo Action 6 | Supported | Yes |
-| DJI Osmo 360 | Supported | No |
+| DJI Osmo 360 | Supported | Yes |
 | DJI Osmo Nano | Supported | Yes |
 | DJI Osmo Pocket 3 | Not supported | Yes |
 | GoPro HERO, MAX, HERO8 Black; DJI Osmo Action 3, Action 2, original Osmo Action | Not supported | No |
