@@ -625,23 +625,25 @@ final class CameraStore {
         send(.stopRecording, to: targets)
     }
 
-    func addHighlight() {
+    @discardableResult
+    func addHighlight() -> Bool {
         let targets = recordingHighlightCameras
         guard !targets.isEmpty else {
             appendLog("No supported cameras are recording for Highlight.")
-            return
+            return false
         }
 
         send(.addHighlight, to: targets)
+        return true
     }
 
     @discardableResult
-    func startWatchRecording() -> Bool {
+    func startAllRecording() -> Bool {
         let targets = readyConnectedCameras.filter {
             $0.supportsBatchRecord && $0.isReadyForMulticamStart
         }
         guard !targets.isEmpty else {
-            appendLog("No connected cameras are ready for Apple Watch recording.")
+            appendLog("No connected cameras are ready to start recording.")
             return false
         }
         startRecordingSequence(for: targets)
@@ -649,31 +651,33 @@ final class CameraStore {
     }
 
     @discardableResult
-    func stopWatchRecording() -> Bool {
+    func stopAllRecording() -> Bool {
         let targets = cameras.filter {
             $0.supportsBatchRecord
                 && ($0.recordingState == .recording || $0.recordingState == .starting)
         }
         guard !targets.isEmpty else {
-            appendLog("No cameras are recording from Apple Watch.")
+            appendLog("No cameras are recording.")
             return false
-        }
-        targets.forEach(stopRecording)
-        return true
-    }
-
-    func stopLiveActivityRecording() {
-        let targets = cameras.filter {
-            $0.supportsBatchRecord
-                && ($0.recordingState == .recording || $0.recordingState == .starting)
-        }
-        guard !targets.isEmpty else {
-            appendLog("No cameras are recording from the Live Activity.")
-            return
         }
 
         recordingLiveActivityController.markStopping(cameras: cameras)
         targets.forEach(stopRecording)
+        return true
+    }
+
+    @discardableResult
+    func startWatchRecording() -> Bool {
+        startAllRecording()
+    }
+
+    @discardableResult
+    func stopWatchRecording() -> Bool {
+        stopAllRecording()
+    }
+
+    func stopLiveActivityRecording() {
+        _ = stopAllRecording()
     }
 
     func startRecording(_ camera: DiscoveredCamera) {

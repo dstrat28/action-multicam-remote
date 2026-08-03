@@ -5,5 +5,6 @@ import WidgetKit
 struct MulticamLiveActivityBundle: WidgetBundle {
     var body: some Widget {
         RecordingLiveActivityWidget()
+        MulticamLauncherWidget()
     }
 }

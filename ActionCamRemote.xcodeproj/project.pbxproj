@@ -34,6 +34,7 @@
 		ACR000000000000000000125 /* RecordingActivityAttributes.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000021 /* RecordingActivityAttributes.swift */; };
 		ACR000000000000000000126 /* StopRecordingIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000022 /* StopRecordingIntent.swift */; };
 		ACR000000000000000000127 /* MulticamLiveActivityExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000027 /* MulticamLiveActivityExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		ACR000000000000000000128 /* MulticamAppIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000028 /* MulticamAppIntents.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -106,6 +107,7 @@
 		ACR000000000000000000025 /* RecordingLiveActivityWidget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RecordingLiveActivityWidget.swift; sourceTree = "<group>"; };
 		ACR000000000000000000026 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		ACR000000000000000000027 /* MulticamLiveActivityExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MulticamLiveActivityExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		ACR000000000000000000028 /* MulticamAppIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MulticamAppIntents.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -147,6 +149,7 @@
 			isa = PBXGroup;
 			children = (
 				ACR000000000000000000001 /* ActionCamRemoteApp.swift */,
+				ACR000000000000000000028 /* MulticamAppIntents.swift */,
 				ACR000000000000000000012 /* Info.plist */,
 				ACR000000000000000000014 /* Assets.xcassets */,
 				ACR000000000000000000303 /* Models */,
@@ -384,6 +387,7 @@
 				ACR000000000000000000120 /* RecordingActivityAttributes.swift in Sources */,
 				ACR000000000000000000121 /* StopRecordingIntent.swift in Sources */,
 				ACR000000000000000000122 /* RecordingLiveActivityController.swift in Sources */,
+				ACR000000000000000000128 /* MulticamAppIntents.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -556,7 +560,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.6;
+				MARKETING_VERSION = 1.0.7;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ds.ActionCamRemote;
 				PRODUCT_NAME = Multicam;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -587,7 +591,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.6;
+				MARKETING_VERSION = 1.0.7;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ds.ActionCamRemote;
 				PRODUCT_NAME = Multicam;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -617,7 +621,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.6;
+				MARKETING_VERSION = 1.0.7;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ds.ActionCamRemote.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -646,7 +650,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.6;
+				MARKETING_VERSION = 1.0.7;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ds.ActionCamRemote.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -676,7 +680,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.6;
+				MARKETING_VERSION = 1.0.7;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ds.ActionCamRemote.LiveActivity;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -703,7 +707,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.6;
+				MARKETING_VERSION = 1.0.7;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ds.ActionCamRemote.LiveActivity;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;

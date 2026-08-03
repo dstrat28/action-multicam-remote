@@ -2,6 +2,74 @@ import ActivityKit
 import SwiftUI
 import WidgetKit
 
+private struct MulticamLauncherEntry: TimelineEntry {
+    let date: Date
+}
+
+private struct MulticamLauncherProvider: TimelineProvider {
+    func placeholder(in context: Context) -> MulticamLauncherEntry {
+        MulticamLauncherEntry(date: .now)
+    }
+
+    func getSnapshot(
+        in context: Context,
+        completion: @escaping (MulticamLauncherEntry) -> Void
+    ) {
+        completion(MulticamLauncherEntry(date: .now))
+    }
+
+    func getTimeline(
+        in context: Context,
+        completion: @escaping (Timeline<MulticamLauncherEntry>) -> Void
+    ) {
+        completion(Timeline(entries: [MulticamLauncherEntry(date: .now)], policy: .never))
+    }
+}
+
+struct MulticamLauncherWidget: Widget {
+    private let kind = "MulticamLauncherWidget"
+
+    var body: some WidgetConfiguration {
+        StaticConfiguration(kind: kind, provider: MulticamLauncherProvider()) { _ in
+            MulticamLauncherView()
+                .widgetURL(URL(string: "actioncamremote://open"))
+        }
+        .configurationDisplayName("Open Multicam")
+        .description("Open Multicam from the Lock Screen.")
+        .supportedFamilies([.accessoryCircular, .accessoryRectangular, .accessoryInline])
+    }
+}
+
+private struct MulticamLauncherView: View {
+    @Environment(\.widgetFamily) private var family
+
+    var body: some View {
+        switch family {
+        case .accessoryInline:
+            Label("Open Multicam", systemImage: "video.fill")
+        case .accessoryRectangular:
+            HStack(spacing: 8) {
+                Image(systemName: "video.fill")
+                    .font(.title3.weight(.semibold))
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Multicam")
+                        .font(.headline)
+                    Text("Open camera remote")
+                        .font(.caption)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        default:
+            ZStack {
+                AccessoryWidgetBackground()
+                Image(systemName: "video.fill")
+                    .font(.title2.weight(.semibold))
+            }
+        }
+    }
+}
+
 struct RecordingLiveActivityWidget: Widget {
     var body: some WidgetConfiguration {
         ActivityConfiguration(for: RecordingActivityAttributes.self) { context in

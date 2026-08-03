@@ -167,7 +167,9 @@ private struct MulticamRecordBar: View {
             appearance: .outlined,
             showsTitle: false,
             feedback: .success,
-            action: store.addHighlight
+            action: {
+                store.addHighlight()
+            }
         )
         .accessibilityLabel("Add Highlight")
         .accessibilityHint("Adds a highlight tag to every supported camera that is recording")

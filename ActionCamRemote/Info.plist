@@ -22,6 +22,19 @@
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Viewer</string>
+			<key>CFBundleURLName</key>
+			<string>com.ds.ActionCamRemote</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>actioncamremote</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSBluetoothAlwaysUsageDescription</key>
 	<string>Multicam uses Bluetooth to discover and control nearby cameras.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>

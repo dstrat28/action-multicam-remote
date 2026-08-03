@@ -10,6 +10,8 @@ struct ActionCamRemoteApp: App {
         let store = CameraStore()
         _store = State(initialValue: store)
         watchConnectivity = WatchConnectivityController(store: store)
+        MulticamSystemCommandRouter.shared.register(store: store)
+        MulticamAppShortcuts.updateAppShortcutParameters()
     }
 
     var body: some Scene {
