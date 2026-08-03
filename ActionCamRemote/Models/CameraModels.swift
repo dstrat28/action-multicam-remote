@@ -726,7 +726,7 @@ struct CameraBehaviorProfile: Equatable {
     }
 
     var supportsExperimentalDJISleepWake: Bool {
-        false
+        kind == .djiOsmoNano
     }
 
     var usesDJIRSDKControl: Bool {
@@ -879,6 +879,12 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
             && (brand == .gopro || supportsExperimentalDJISleepWake)
     }
 
+    var canWakeFromSleep: Bool {
+        isPaired
+            && supportsExperimentalDJISleepWake
+            && connectionState == .discovered
+    }
+
     var needsGoProPairingMode: Bool {
         brand == .gopro
             && !isPaired
@@ -933,6 +939,9 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     var displayConnectionLabel: String {
         guard isSupportedByApp else { return "Unsupported" }
         if connectionState == .discovered {
+            if canWakeFromSleep {
+                return "Available"
+            }
             return CameraConnectionState.disconnected.label
         }
         return connectionState.label
@@ -1001,7 +1010,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
                 .singleLensSuperNight
             ]
         case .djiOsmoNano:
-            return [.video]
+            return [.video, .photo, .timelapse, .hyperlapse, .superNight, .slowMotion]
         case .djiOsmoPocket3, .genericDJI, .unknown:
             return []
         }
@@ -1024,7 +1033,11 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     }
 
     var canStartRecordingInCurrentMode: Bool {
-        !isConnected || currentMode == nil || currentMode == .video
+        if behavior.kind == .djiOsmoNano {
+            return !isConnected || currentMode == nil || currentMode != .photo
+        }
+
+        return !isConnected || currentMode == nil || currentMode == .video
     }
 
     var isReadyForMulticamStart: Bool {
@@ -1280,6 +1293,44 @@ enum CaptureMode: String, CaseIterable, Identifiable, Codable {
             return .superNight
         default:
             return nil
+        }
+    }
+
+    var djiNanoValue: UInt8? {
+        switch self {
+        case .slowMotion:
+            0x00
+        case .video:
+            0x01
+        case .timelapse:
+            0x02
+        case .photo:
+            0x05
+        case .hyperlapse:
+            0x0A
+        case .superNight:
+            0x28
+        case .selfie, .boostVideo, .vortex, .panoramicSuperNight, .singleLensSuperNight:
+            nil
+        }
+    }
+
+    static func djiNanoMode(for value: UInt8) -> CaptureMode? {
+        switch value {
+        case 0x00:
+            .slowMotion
+        case 0x01:
+            .video
+        case 0x02:
+            .timelapse
+        case 0x05:
+            .photo
+        case 0x0A:
+            .hyperlapse
+        case 0x28:
+            .superNight
+        default:
+            nil
         }
     }
 }

@@ -172,7 +172,19 @@ struct CameraRowView: View {
 
             batteryStatus
 
-            if isReadyConnected {
+            if camera.canWakeFromSleep {
+                Button {
+                    store.wake(camera)
+                } label: {
+                    Label("Wake", systemImage: "power")
+                        .font(.caption.weight(.semibold))
+                        .frame(minWidth: 64, minHeight: 24)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color.acrAvailable)
+                .controlSize(.mini)
+                .accessibilityHint("Connects to and wakes the sleeping Osmo Nano")
+            } else if isReadyConnected {
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.bold))
                     .foregroundStyle(Color.acrMutedText.opacity(0.7))

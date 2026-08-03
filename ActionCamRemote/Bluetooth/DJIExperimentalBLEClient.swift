@@ -14,6 +14,11 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
         var shouldLog: Bool
     }
 
+    private struct PendingNanoWrite {
+        var packet: Data
+        var label: String
+    }
+
     let cameraID: UUID
     let cameraName: String
     let cameraModel: CameraModel
@@ -33,6 +38,11 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
     private var rSDKHandshakePairingRetryCount = 0
     private var rSDKHandshakePairingRetryTimer: Timer?
     private var pendingRSDKWrites: [PendingRSDKWrite] = []
+    private var pendingNanoWrites: [PendingNanoWrite] = []
+    private var isNanoWriteScheduled = false
+    private var lastNanoWriteDate = Date.distantPast
+    private var hasStartedNanoSession = false
+    private var nanoKeepAliveTimer: Timer?
     private var silentRSDKStatusSubscriptionSequences: Set<UInt16> = []
     private var dumlRouting: DJIDUMLRouting
     private var sequenceNumber: UInt16 = UInt16.random(in: .min ... .max)
@@ -66,6 +76,7 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
     private var lastDumlCameraStatePayload: Data?
 #endif
     private let maxRSDKHandshakePairingRetries = 15
+    private let nanoWriteGap: TimeInterval = 0.12
     private var lastVideoRecordTime: UInt32?
     private var lastAction6StatusDiagnosticLabel: String?
     private var lastUnhandledDumlPacketLabel: String?
@@ -73,6 +84,7 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
     private let onStatus: (UUID, CameraConnectionState, String?) -> Void
     private let onCameraStatus: (UUID, CameraStatusUpdate) -> Void
     private let onProtocolActivity: (UUID) -> Void
+    private let onNanoPairingStatus: (UUID, DJINanoProtocol.PairingStatus) -> Void
     private let onLog: (String) -> Void
     private let hasConfirmedAwakeNanoAdvertisement: Bool
 
@@ -84,6 +96,7 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
         onStatus: @escaping (UUID, CameraConnectionState, String?) -> Void,
         onCameraStatus: @escaping (UUID, CameraStatusUpdate) -> Void,
         onProtocolActivity: @escaping (UUID) -> Void,
+        onNanoPairingStatus: @escaping (UUID, DJINanoProtocol.PairingStatus) -> Void,
         hasConfirmedAwakeNanoAdvertisement: Bool,
         onLog: @escaping (String) -> Void
     ) {
@@ -95,6 +108,7 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
         self.onStatus = onStatus
         self.onCameraStatus = onCameraStatus
         self.onProtocolActivity = onProtocolActivity
+        self.onNanoPairingStatus = onNanoPairingStatus
         self.hasConfirmedAwakeNanoAdvertisement = hasConfirmedAwakeNanoAdvertisement
         self.onLog = onLog
         super.init()
@@ -126,6 +140,12 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
         rSDKHandshakePairingRetryTimer?.invalidate()
         rSDKHandshakePairingRetryTimer = nil
         pendingRSDKWrites.removeAll()
+        pendingNanoWrites.removeAll()
+        isNanoWriteScheduled = false
+        lastNanoWriteDate = .distantPast
+        hasStartedNanoSession = false
+        nanoKeepAliveTimer?.invalidate()
+        nanoKeepAliveTimer = nil
         silentRSDKStatusSubscriptionSequences.removeAll()
         pendingRecordActionsBySequence.removeAll()
         pendingModeUpdatesBySequence.removeAll()
@@ -171,10 +191,13 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
             }
             return sendRecordCommand(.start, to: peripheral, label: command)
         case .capturePhoto:
-            guard canUseRSDKControl else {
+            if canUseRSDKControl {
+                return sendRSDKPhotoCaptureCommand(to: peripheral, label: command)
+            }
+            guard cameraBehavior.kind == .djiOsmoNano else {
                 return rSDKNotReadyResult(for: command)
             }
-            return sendRSDKPhotoCaptureCommand(to: peripheral, label: command)
+            return sendNanoPhotoCommand(to: peripheral, label: command)
         case .stopRecording:
             if canUseRSDKControl {
                 return sendRSDKRecordCommand(.stop, to: peripheral, label: command)
@@ -216,10 +239,20 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
             guard cameraBehavior.usesLegacyDJIControl else {
                 return rSDKNotReadyResult(for: command)
             }
-            guard mode == .video else {
-                return result(for: command, status: .unsupported, message: "Only Video mode is mapped for this DJI camera.")
+            guard cameraBehavior.kind == .djiOsmoNano,
+                  let modeValue = mode.djiNanoValue else {
+                return result(
+                    for: command,
+                    status: .unsupported,
+                    message: "\(mode.rawValue) is not mapped for this DJI camera."
+                )
             }
-            return sendVideoModeCommand(to: peripheral, label: command)
+            return sendNanoShootingModeCommand(
+                mode,
+                modeValue: modeValue,
+                to: peripheral,
+                label: command
+            )
         case .keepAlive:
             if canUseRSDKControl {
                 sendRSDKStatusSubscription(to: peripheral, shouldLog: true)
@@ -317,9 +350,14 @@ extension DJIExperimentalBLEClient {
             }
         }
 
-        if cameraBehavior.kind == .djiOsmoNano, !writeTargets.isEmpty {
+        if cameraBehavior.kind == .djiOsmoNano,
+           rSDKWriteCharacteristic != nil || !writeTargets.isEmpty {
             onStatus(cameraID, .connecting, "DJI Nano control ready; waiting for camera status.")
-            if hasConfirmedAwakeNanoAdvertisement {
+            if rSDKWriteCharacteristic != nil {
+                if rSDKNotifyCharacteristic?.isNotifying == true {
+                    startNanoSessionIfReady(to: peripheral)
+                }
+            } else if hasConfirmedAwakeNanoAdvertisement {
                 onLog("\(cameraName): awake Nano advertisement confirmed; requesting legacy camera status.")
                 scheduleInitialStatusProbe(to: peripheral)
             }
@@ -354,6 +392,8 @@ extension DJIExperimentalBLEClient {
         for frame in dumlFrames {
             onProtocolActivity(cameraID)
             updateDumlRouting(from: frame)
+            reportNanoPairingStatus(from: frame)
+            acknowledgeNanoRequestIfNeeded(frame, to: peripheral)
             reportLegacyDumlReadyIfNeeded(from: frame)
             applyDumlRecordingHint(from: frame)
             logDumlAck(from: frame)
@@ -392,6 +432,7 @@ extension DJIExperimentalBLEClient {
         if characteristic.isNotifying {
             if cameraBehavior.kind == .djiOsmoNano {
                 onLog("\(cameraName): DJI Nano notifications enabled on \(characteristic.debugLabel).")
+                startNanoSessionIfReady(to: peripheral)
             } else {
                 onLog("\(cameraName): DJI R SDK notifications enabled on \(characteristic.debugLabel).")
                 bootstrapRSDKIfReady(to: peripheral)
@@ -401,6 +442,7 @@ extension DJIExperimentalBLEClient {
 
     func peripheralIsReady(toSendWriteWithoutResponse peripheral: CBPeripheral) {
         flushPendingRSDKWrites(to: peripheral)
+        drainNanoWrites(to: peripheral)
     }
 }
 
@@ -428,6 +470,157 @@ private extension DJIExperimentalBLEClient {
             status: .skipped,
             message: "DJI R SDK control is not ready. Wait for the camera to finish connecting."
         )
+    }
+
+    func startNanoSessionIfReady(to peripheral: CBPeripheral) {
+        guard cameraBehavior.kind == .djiOsmoNano,
+              !hasStartedNanoSession,
+              rSDKWriteCharacteristic != nil,
+              rSDKNotifyCharacteristic != nil else {
+            return
+        }
+
+        hasStartedNanoSession = true
+        onLog("\(cameraName): starting paced Nano session and wake sequence on FFF5.")
+        onStatus(
+            cameraID,
+            .connecting,
+            "Connecting to your DJI Nano. If asked, choose Accept for \(DJINanoProtocol.pairingDisplayName). The camera may show \(DJINanoProtocol.pairingToken), short for Multicam."
+        )
+
+        for command in DJINanoProtocol.wakeSequence {
+            enqueueNanoWrite(
+                nanoFrame(for: command),
+                label: command.label,
+                to: peripheral
+            )
+        }
+
+        startNanoKeepAlive(to: peripheral)
+    }
+
+    func nanoFrame(for command: DJINanoProtocol.Command) -> Data {
+        let seq = sequenceNumber
+        sequenceNumber &+= 1
+        return DJINanoProtocol.frame(
+            sequenceNumber: seq,
+            destination: command.destination,
+            commandSet: command.commandSet,
+            commandID: command.commandID,
+            payload: command.payload
+        )
+    }
+
+    func enqueueNanoWrite(
+        _ packet: Data,
+        label: String,
+        to peripheral: CBPeripheral,
+        priority: Bool = false
+    ) {
+        if label == DJINanoProtocol.keepAliveCommand.label || label == "Nano status poll" {
+            pendingNanoWrites.removeAll { $0.label == label }
+        }
+
+        let write = PendingNanoWrite(packet: packet, label: label)
+        if priority {
+            pendingNanoWrites.insert(write, at: 0)
+        } else {
+            pendingNanoWrites.append(write)
+        }
+        drainNanoWrites(to: peripheral)
+    }
+
+    func drainNanoWrites(to peripheral: CBPeripheral) {
+        guard cameraBehavior.kind == .djiOsmoNano,
+              !isNanoWriteScheduled,
+              !pendingNanoWrites.isEmpty,
+              let characteristic = rSDKWriteCharacteristic,
+              characteristic.properties.contains(.writeWithoutResponse),
+              peripheral.canSendWriteWithoutResponse else {
+            return
+        }
+
+        let elapsed = Date().timeIntervalSince(lastNanoWriteDate)
+        let delay = max(0, nanoWriteGap - elapsed)
+        isNanoWriteScheduled = true
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak peripheral] in
+            guard let self, let peripheral, self.peripheral === peripheral else { return }
+            self.isNanoWriteScheduled = false
+            guard peripheral.canSendWriteWithoutResponse,
+                  let characteristic = self.rSDKWriteCharacteristic,
+                  !self.pendingNanoWrites.isEmpty else {
+                return
+            }
+
+            let write = self.pendingNanoWrites.removeFirst()
+            peripheral.writeValue(write.packet, for: characteristic, type: .withoutResponse)
+            self.lastNanoWriteDate = Date()
+            self.onLog(
+                "\(self.cameraName): DJI \(write.label) -> \(characteristic.debugLabel) (withoutResponse) \(write.packet.hexString)"
+            )
+            self.drainNanoWrites(to: peripheral)
+        }
+    }
+
+    func startNanoKeepAlive(to peripheral: CBPeripheral) {
+        nanoKeepAliveTimer?.invalidate()
+        nanoKeepAliveTimer = commonModeTimer(withTimeInterval: 1, repeats: true) { [weak self, weak peripheral] timer in
+            guard let self, let peripheral, self.peripheral === peripheral else {
+                timer.invalidate()
+                return
+            }
+            let command = DJINanoProtocol.keepAliveCommand
+            self.enqueueNanoWrite(
+                self.nanoFrame(for: command),
+                label: command.label,
+                to: peripheral
+            )
+        }
+    }
+
+    func acknowledgeNanoRequestIfNeeded(_ value: Data, to peripheral: CBPeripheral) {
+        guard cameraBehavior.kind == .djiOsmoNano,
+              let request = DJIDUMLIncomingPacket(data: value),
+              !request.isResponse,
+              request.flags & 0x40 == 0x40 else {
+            return
+        }
+
+        let payload = request.commandSet == 0x00 && request.commandID == 0x81
+            ? DJINanoProtocol.appDeviceInfo
+            : request.payload
+        let response = DJINanoProtocol.frame(
+            sequenceNumber: request.sequenceNumber,
+            source: request.receiver,
+            destination: request.sender,
+            flags: 0xC0,
+            commandSet: request.commandSet,
+            commandID: request.commandID,
+            payload: payload
+        )
+        enqueueNanoWrite(
+            response,
+            label: "Nano ACK \(request.commandSet.hexByte)/\(request.commandID.hexByte)",
+            to: peripheral,
+            priority: true
+        )
+    }
+
+    func reportNanoPairingStatus(from value: Data) {
+        guard cameraBehavior.kind == .djiOsmoNano,
+              let packet = DJIDUMLIncomingPacket(data: value),
+              packet.commandSet == 0x07 else {
+            return
+        }
+
+        if packet.isResponse,
+           packet.commandID == 0x45,
+           let status = DJINanoProtocol.pairingStatus(fromSetPairingResponse: packet.payload) {
+            onNanoPairingStatus(cameraID, status)
+        } else if !packet.isResponse, packet.commandID == 0x46 {
+            onNanoPairingStatus(cameraID, .approved)
+        }
     }
 
 #if DEBUG
@@ -499,7 +692,7 @@ private extension DJIExperimentalBLEClient {
         guard cameraBehavior.kind == .djiOsmoNano,
               !hasCompletedRSDKHandshake,
               !hasCompletedLegacyDumlHandshake,
-              !writeTargets.isEmpty else {
+              rSDKWriteCharacteristic != nil || !writeTargets.isEmpty else {
             return
         }
 
@@ -542,10 +735,12 @@ private extension DJIExperimentalBLEClient {
         switch characteristic.uuid {
         case DJIRSDKBLEUUID.writeCharacteristic:
             rSDKWriteCharacteristic = characteristic
-            onLog("\(cameraName): DJI R SDK write characteristic ready on \(characteristic.debugLabel).")
+            let protocolLabel = cameraBehavior.kind == .djiOsmoNano ? "Nano DUML" : "R SDK"
+            onLog("\(cameraName): DJI \(protocolLabel) write characteristic ready on \(characteristic.debugLabel).")
         case DJIRSDKBLEUUID.notifyCharacteristic:
             rSDKNotifyCharacteristic = characteristic
-            onLog("\(cameraName): DJI R SDK notify characteristic ready on \(characteristic.debugLabel).")
+            let protocolLabel = cameraBehavior.kind == .djiOsmoNano ? "Nano DUML" : "R SDK"
+            onLog("\(cameraName): DJI \(protocolLabel) notify characteristic ready on \(characteristic.debugLabel).")
             if characteristic.properties.contains(.notify) || characteristic.properties.contains(.indicate) {
                 peripheral.setNotifyValue(true, for: characteristic)
             }
@@ -1139,6 +1334,35 @@ private extension DJIExperimentalBLEClient {
             return rSDKNotReadyResult(for: command)
         }
 
+        let burstCount = action.isStopping ? stopCommandBurstCount : 1
+        var packetCount = 0
+        if action.isStarting {
+            protectAgainstStaleStoppedStatusAfterStart()
+        }
+
+        if cameraBehavior.kind == .djiOsmoNano,
+           rSDKWriteCharacteristic != nil {
+            for burstIndex in 0 ..< burstCount {
+                let packets = djiRecordPackets(for: action)
+                packetCount += packets.count
+                let burstLabel = burstCount > 1 ? " \(burstIndex + 1)/\(burstCount)" : ""
+                for packet in packets {
+                    pendingRecordActionsBySequence[packet.sequenceNumber] = action
+                    enqueueNanoWrite(
+                        packet.data,
+                        label: "\(packet.label)\(burstLabel)",
+                        to: peripheral
+                    )
+                }
+            }
+
+            return result(
+                for: command,
+                status: .sent,
+                message: "Queued \(packetCount) paced DJI Nano \(action.isStarting ? "start" : "stop") record packets."
+            )
+        }
+
         let targets = writeTargets
         guard !targets.isEmpty else {
             return result(
@@ -1148,11 +1372,6 @@ private extension DJIExperimentalBLEClient {
             )
         }
 
-        let burstCount = action.isStopping ? stopCommandBurstCount : 1
-        var packetCount = 0
-        if action.isStarting {
-            protectAgainstStaleStoppedStatusAfterStart()
-        }
         for burstIndex in 0 ..< burstCount {
             let packets = djiRecordPackets(for: action)
             packetCount += packets.count
@@ -1211,35 +1430,48 @@ private extension DJIExperimentalBLEClient {
         return packets
     }
 
-    func sendVideoModeCommand(
+    func sendNanoPhotoCommand(
         to peripheral: CBPeripheral,
         label command: CameraCommand
     ) -> CameraCommandResult {
-        guard cameraBehavior.usesLegacyDJIControl else {
+        guard cameraBehavior.kind == .djiOsmoNano,
+              rSDKWriteCharacteristic != nil else {
             return rSDKNotReadyResult(for: command)
         }
 
-        let targets = writeTargets
-        guard !targets.isEmpty else {
-            return result(
-                for: command,
-                status: .skipped,
-                message: "DJI control characteristics are not ready yet."
-            )
+        let packet = nextDumlPacket(
+            commandSet: 0x02,
+            commandID: 0x01,
+            payload: Data([0x01])
+        )
+        enqueueNanoWrite(packet.data, label: "Nano capture photo", to: peripheral)
+        return result(for: command, status: .sent, message: "Queued DJI Nano photo capture command.")
+    }
+
+    func sendNanoShootingModeCommand(
+        _ mode: CaptureMode,
+        modeValue: UInt8,
+        to peripheral: CBPeripheral,
+        label command: CameraCommand
+    ) -> CameraCommandResult {
+        guard cameraBehavior.kind == .djiOsmoNano,
+              rSDKWriteCharacteristic != nil else {
+            return rSDKNotReadyResult(for: command)
         }
 
-        let packets = djiVideoModePackets()
-        for packet in packets {
-            pendingModeUpdatesBySequence[packet.sequenceNumber] = .video
-            for target in targets {
-                for writeType in target.commandWriteTypes {
-                    peripheral.writeValue(packet.data, for: target.characteristic, type: writeType)
-                    onLog("\(cameraName): DJI \(packet.label) -> \(target.debugLabel) (\(writeType.logLabel)) \(packet.data.hexString)")
-                }
-            }
-        }
-
-        return result(for: command, status: .sent, message: "Sent \(packets.count) DJI Video mode command candidate\(packets.count == 1 ? "" : "s").")
+        let packet = nextDumlPacket(
+            commandSet: 0x02,
+            commandID: 0xE1,
+            payload: Data([modeValue])
+        )
+        pendingModeUpdatesBySequence[packet.sequenceNumber] = mode
+        let modeName = mode.displayName(for: cameraModel)
+        enqueueNanoWrite(packet.data, label: "Nano switch to \(modeName)", to: peripheral)
+        return result(
+            for: command,
+            status: .sent,
+            message: "Queued DJI Nano \(modeName) shooting-mode command."
+        )
     }
 
     func scheduleInitialStatusProbe(to peripheral: CBPeripheral) {
@@ -1261,13 +1493,28 @@ private extension DJIExperimentalBLEClient {
         includeExtendedProbes: Bool,
         shouldLog: Bool
     ) {
+        let packets = djiStatusProbePackets(includeExtendedProbes: includeExtendedProbes)
+        if cameraBehavior.kind == .djiOsmoNano,
+           rSDKWriteCharacteristic != nil {
+            for packet in packets {
+                if shouldLog {
+                    pendingStatusProbeLabelsBySequence[packet.sequenceNumber] = packet.label
+                }
+                enqueueNanoWrite(
+                    packet.data,
+                    label: shouldLog ? "status probe \(packet.label)" : "Nano status poll",
+                    to: peripheral
+                )
+            }
+            return
+        }
+
         let targets = writeTargets
         guard !targets.isEmpty else {
             onLog("\(cameraName): DJI status probe skipped; no write targets are ready.")
             return
         }
 
-        let packets = djiStatusProbePackets(includeExtendedProbes: includeExtendedProbes)
         for packet in packets {
             if shouldLog {
                 pendingStatusProbeLabelsBySequence[packet.sequenceNumber] = packet.label
@@ -1891,8 +2138,8 @@ private struct DJIDUMLIncomingPacket {
 
         self.sender = sender
         self.receiver = receiver
-        self.sequenceNumber = UInt16(data[data.index(data.startIndex, offsetBy: 6)])
-            | UInt16(data[data.index(data.startIndex, offsetBy: 7)]) << 8
+        self.sequenceNumber = UInt16(data[data.index(data.startIndex, offsetBy: 6)]) << 8
+            | UInt16(data[data.index(data.startIndex, offsetBy: 7)])
         self.flags = data[data.index(data.startIndex, offsetBy: 8)]
         self.commandSet = data[data.index(data.startIndex, offsetBy: 9)]
         self.commandID = data[data.index(data.startIndex, offsetBy: 10)]
@@ -1949,6 +2196,7 @@ private struct DJICameraStateSummary {
     var version: UInt8
     var batteryPercent: UInt8?
     var compactStateByte: UInt8?
+    var nanoShootingMode: UInt8?
 
     init?(payload: Data) {
         if payload.count >= 37,
@@ -1971,6 +2219,7 @@ private struct DJICameraStateSummary {
             self.version = version
             self.batteryPercent = nil
             self.compactStateByte = nil
+            self.nanoShootingMode = DJINanoProtocol.shootingModeByte(from: payload)
             return
         }
 
@@ -1993,10 +2242,15 @@ private struct DJICameraStateSummary {
         self.version = 0
         self.batteryPercent = payload.byte(at: 20)
         self.compactStateByte = payload.byte(at: 2)
+        self.nanoShootingMode = nil
     }
 
     var captureMode: CaptureMode? {
-        DJIExperimentalBLEClient.captureMode(forDJIModeByte: mode)
+        if let nanoShootingMode,
+           let mode = CaptureMode.djiNanoMode(for: nanoShootingMode) {
+            return mode
+        }
+        return DJIExperimentalBLEClient.captureMode(forDJIModeByte: mode)
     }
 
     var recordingState: CameraRecordingState? {
@@ -2046,7 +2300,10 @@ private struct DJICameraStateSummary {
         let sdCardBits = (flags & 0x3C00) >> 10
         switch format {
         case .full:
-            return "mode \(DJIExperimentalBLEClient.cameraStateModeLabel(mode)), recordBits \(recordBits), sdBits \(sdCardBits), remainingTime \(remainedTime)s, videoRecordTime \(videoRecordTime)s, sdFree \(sdCardFreeSize)/\(sdCardTotalSize), cameraType 0x\(cameraType.hexByte), version \(version), flags 0x\(flags.hexWord)"
+            let shootingMode = nanoShootingMode
+                .map { "shootingMode \(DJIExperimentalBLEClient.cameraStateModeLabel($0))" }
+                ?? "shootingMode unknown"
+            return "workMode \(DJIExperimentalBLEClient.cameraStateModeLabel(mode)), \(shootingMode), recordBits \(recordBits), sdBits \(sdCardBits), remainingTime \(remainedTime)s, videoRecordTime \(videoRecordTime)s, sdFree \(sdCardFreeSize)/\(sdCardTotalSize), cameraType 0x\(cameraType.hexByte), version \(version), flags 0x\(flags.hexWord)"
         case .compact:
             let batteryByte = batteryPercent.map(String.init) ?? "unknown"
             let stateByte = compactStateByte.map(\.hexByte) ?? "unknown"
@@ -2916,63 +3173,15 @@ private enum DJIDUMLPacket {
         payload: Data,
         flags: UInt8 = 0x40
     ) -> Data {
-        let packetLength = UInt16(11 + payload.count + 2)
-        let versionAndLength = packetLength | (1 << 10)
-        var bytes = Data()
-
-        bytes.append(0x55)
-        bytes.append(UInt8(versionAndLength & 0xFF))
-        bytes.append(UInt8((versionAndLength >> 8) & 0xFF))
-        bytes.append(headerChecksum(for: bytes))
-        bytes.append(routing.appAddress)
-        bytes.append(routing.cameraAddress)
-        bytes.append(UInt8(sequenceNumber & 0xFF))
-        bytes.append(UInt8((sequenceNumber >> 8) & 0xFF))
-        bytes.append(flags)
-        bytes.append(commandSet)
-        bytes.append(commandID)
-        bytes.append(payload)
-
-        let checksum = packetChecksum(for: bytes)
-        bytes.append(UInt8(checksum & 0xFF))
-        bytes.append(UInt8((checksum >> 8) & 0xFF))
-        return bytes
-    }
-
-    private static func headerChecksum(for bytes: Data) -> UInt8 {
-        bytes.reduce(UInt8(0x77)) { checksum, byte in
-            crc8Maxim(checksum ^ byte)
-        }
-    }
-
-    private static func packetChecksum(for bytes: Data) -> UInt16 {
-        bytes.reduce(UInt16(0x3692)) { checksum, byte in
-            crc16X25Step(checksum, byte: byte)
-        }
-    }
-
-    private static func crc8Maxim(_ value: UInt8) -> UInt8 {
-        var checksum = value
-        for _ in 0 ..< 8 {
-            if checksum & 0x01 == 0x01 {
-                checksum = (checksum >> 1) ^ 0x8C
-            } else {
-                checksum >>= 1
-            }
-        }
-        return checksum
-    }
-
-    private static func crc16X25Step(_ checksum: UInt16, byte: UInt8) -> UInt16 {
-        var value = checksum ^ UInt16(byte)
-        for _ in 0 ..< 8 {
-            if value & 0x0001 == 0x0001 {
-                value = (value >> 1) ^ 0x8408
-            } else {
-                value >>= 1
-            }
-        }
-        return value
+        DJINanoProtocol.frame(
+            sequenceNumber: sequenceNumber,
+            source: routing.appAddress,
+            destination: routing.cameraAddress,
+            flags: flags,
+            commandSet: commandSet,
+            commandID: commandID,
+            payload: payload
+        )
     }
 }
 

@@ -21,11 +21,16 @@ enum DJIWakeEligibilityRegression {
         let disconnectedAction5 = makeCamera(model: .djiOsmoAction5Pro, state: .disconnected)
         precondition(!disconnectedAction5.canSelectForBatch, "An ordinary disconnected DJI camera must not be selectable")
 
-        let nano = makeCamera(model: .djiOsmoNano, state: .discovered)
-        precondition(!nano.supportsExperimentalDJISleepWake, "Nano wake behavior remains isolated from the Action wake experiment")
+        var nano = makeCamera(model: .djiOsmoNano, state: .discovered)
+        nano.isPaired = false
+        precondition(nano.supportsExperimentalDJISleepWake, "Nano should expose its model-specific GATT wake path")
         precondition(nano.behavior.usesLegacyDJIControl, "Nano should retain its verified legacy DJI control path")
         precondition(!nano.supportsDJIPhoneGPS, "Nano must not expose the incompatible R SDK GPS option")
         precondition(nano.displayConnectionLabel == "Not Connected", "Nano must not show an Available state")
+        var pairedNano = nano
+        pairedNano.isPaired = true
+        precondition(pairedNano.canWakeFromSleep, "A paired, advertising Nano should expose Wake")
+        precondition(pairedNano.displayConnectionLabel == "Available", "A wakeable Nano should show Available")
 
         var goPro = DiscoveredCamera(
             id: UUID(),

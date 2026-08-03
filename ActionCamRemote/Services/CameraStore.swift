@@ -3,6 +3,11 @@ import Foundation
 import Observation
 import OSLog
 
+struct NanoPairingConfirmation: Equatable {
+    var cameraID: UUID
+    var cameraName: String
+}
+
 @MainActor
 @Observable
 final class CameraStore {
@@ -17,6 +22,7 @@ final class CameraStore {
     var bluetoothStateLabel = "Unknown"
     var isDemoMode = false
     var cameraDiagnosticsByID: [UUID: String] = [:]
+    var nanoPairingConfirmation: NanoPairingConfirmation?
     private(set) var djiPhoneGPSCameraIDs: Set<UUID> = []
 
     @ObservationIgnored private let scanner: BLECameraScanner
@@ -32,6 +38,7 @@ final class CameraStore {
     @ObservationIgnored private let signalRefreshInterval: TimeInterval = 8
     @ObservationIgnored private let availabilityFreshnessInterval: TimeInterval = 10
     @ObservationIgnored private let djiWakeAdvertisementGapInterval: TimeInterval = 5
+    @ObservationIgnored private let nanoPowerTransitionSettleInterval: TimeInterval = 3
     @ObservationIgnored private let autoConnectRetryCooldownInterval: TimeInterval = 12
     @ObservationIgnored private let goProDisconnectReconnectDelay: TimeInterval = 3
     @ObservationIgnored private let availabilityTimeoutDelay: Duration = .seconds(10)
@@ -75,6 +82,8 @@ final class CameraStore {
     @ObservationIgnored private var pendingManualPairCameraIDs: Set<UUID> = []
     @ObservationIgnored private var passiveDJIProbeCameraIDs: Set<UUID> = []
     @ObservationIgnored private var sleepingDJICameraIDs: Set<UUID> = []
+    @ObservationIgnored private var explicitNanoWakeCameraIDs: Set<UUID> = []
+    @ObservationIgnored private var nanoWakeProtocolReadyCameraIDs: Set<UUID> = []
     @ObservationIgnored private var isPairingModeActive = false
     @ObservationIgnored private let logger = Logger(subsystem: "com.ds.ActionCamRemote", category: "camera")
 
@@ -508,6 +517,9 @@ final class CameraStore {
                 onProtocolActivity: { [weak self] id in
                     Task { @MainActor in self?.noteProtocolActivity(for: id) }
                 },
+                onNanoPairingStatus: { [weak self] id, status in
+                    Task { @MainActor in self?.handleNanoPairingStatus(status, for: id) }
+                },
                 hasConfirmedAwakeNanoAdvertisement: camera.behavior.kind == .djiOsmoNano
                     && freshAwakeAdvertisement(for: camera.id, now: Date()) == true,
                 onLog: { [weak self] message in
@@ -547,6 +559,27 @@ final class CameraStore {
         scanner.disconnect(from: camera.id)
     }
 
+    func wake(_ camera: DiscoveredCamera) {
+        guard camera.canWakeFromSleep else {
+            appendLog("\(camera.name): Nano wake is not available without a fresh sleeping-camera advertisement.")
+            refreshWakeScan(for: camera)
+            return
+        }
+
+        explicitNanoWakeCameraIDs.insert(camera.id)
+        nanoWakeProtocolReadyCameraIDs.remove(camera.id)
+        appendLog("\(camera.name): starting explicit Nano GATT wake sequence.")
+        setCameraDiagnostic(
+            "Waking over Bluetooth. If asked, choose Accept for \(DJINanoProtocol.pairingDisplayName). The camera may show \(DJINanoProtocol.pairingToken), short for Multicam.",
+            for: camera
+        )
+        connect(camera)
+    }
+
+    func dismissNanoPairingConfirmation() {
+        nanoPairingConfirmation = nil
+    }
+
     func remove(_ camera: DiscoveredCamera) {
         cancelStartRecording(for: camera.id)
         cancelPhotoCaptureReset(for: camera.id)
@@ -565,6 +598,11 @@ final class CameraStore {
         lastDJIAdvertisementByCameraID.removeValue(forKey: camera.id)
         awakeAdvertisementByCameraID.removeValue(forKey: camera.id)
         awakeAdvertisementSeenAtByCameraID.removeValue(forKey: camera.id)
+        explicitNanoWakeCameraIDs.remove(camera.id)
+        nanoWakeProtocolReadyCameraIDs.remove(camera.id)
+        if nanoPairingConfirmation?.cameraID == camera.id {
+            nanoPairingConfirmation = nil
+        }
         clearStateGuards(for: camera.id)
         pendingStartCameraIDs.remove(camera.id)
         pendingStopCameraIDs.remove(camera.id)
@@ -809,20 +847,31 @@ private extension CameraStore {
             if isAwake, isNanoAdvertisement {
                 sleepingDJICameraIDs.remove(candidate.id)
                 availabilitySuppressedUntilByCameraID.removeValue(forKey: candidate.id)
-                autoConnectSuppressedUntilByCameraID.removeValue(forKey: candidate.id)
+                if explicitNanoWakeCameraIDs.remove(candidate.id) != nil {
+                    autoConnectSuppressedUntilByCameraID.removeValue(forKey: candidate.id)
+                    appendLog("\(candidate.name): awake advertisement confirmed the explicit wake.")
+                }
                 isAvailabilitySuppressed = false
                 if previousAwakeAdvertisement == false {
                     lastConnectionAttemptByID.removeValue(forKey: candidate.id)
                 }
             } else if !isAwake, isNanoAdvertisement {
                 sleepingDJICameraIDs.insert(candidate.id)
-                availabilitySuppressedUntilByCameraID[candidate.id] = now.addingTimeInterval(
-                    availabilityFreshnessInterval
-                )
-                autoConnectSuppressedUntilByCameraID[candidate.id] = now.addingTimeInterval(
-                    availabilityFreshnessInterval
-                )
-                isAvailabilitySuppressed = true
+                if supportsExperimentalDJISleepWake {
+                    availabilitySuppressedUntilByCameraID.removeValue(forKey: candidate.id)
+                    autoConnectSuppressedUntilByCameraID[candidate.id] = now.addingTimeInterval(
+                        nanoPowerTransitionSettleInterval
+                    )
+                    isAvailabilitySuppressed = false
+                } else {
+                    availabilitySuppressedUntilByCameraID[candidate.id] = now.addingTimeInterval(
+                        availabilityFreshnessInterval
+                    )
+                    autoConnectSuppressedUntilByCameraID[candidate.id] = now.addingTimeInterval(
+                        availabilityFreshnessInterval
+                    )
+                    isAvailabilitySuppressed = true
+                }
 
                 if let existingCamera = cameras.first(where: { $0.id == candidate.id }),
                    existingCamera.connectionState == .connected
@@ -834,7 +883,7 @@ private extension CameraStore {
                 availabilitySuppressedUntilByCameraID.removeValue(forKey: candidate.id)
                 isAvailabilitySuppressed = false
             }
-            if isAwake, previousAwakeAdvertisement == false {
+            if isAwake, previousAwakeAdvertisement == false, !isNanoAdvertisement {
                 autoConnectSuppressedUntilByCameraID.removeValue(forKey: candidate.id)
             }
         }
@@ -993,8 +1042,15 @@ private extension CameraStore {
             sortCamerasForEditing()
         }
 
+        if candidate.isAwake == true,
+           nanoWakeProtocolReadyCameraIDs.remove(candidate.id) != nil {
+            updateCamera(candidate.id, state: .connected, detail: "DJI Nano protocol ready.")
+        }
+
+        let shouldTrackDiscoverableAvailability = candidate.brand == .gopro
+            || (isNanoAdvertisement && candidate.isAwake == false)
         if cameras.first(where: { $0.id == candidate.id })?.isSupportedByApp == true,
-           candidate.brand == .gopro,
+           shouldTrackDiscoverableAvailability,
            isConnectable, !isAvailabilitySuppressed || isPairingModeActive {
             scheduleAvailabilityTimeout(for: candidate.id)
         }
@@ -1010,6 +1066,7 @@ private extension CameraStore {
         if camera.brand == .dji {
             let hasQueuedCommand = pendingStartCameraIDs.contains(camera.id)
                 || pendingStopCameraIDs.contains(camera.id)
+                || explicitNanoWakeCameraIDs.contains(camera.id)
             guard camera.isPaired || hasQueuedCommand else {
                 return false
             }
@@ -1072,7 +1129,8 @@ private extension CameraStore {
             return nil
         }
 
-        if pendingStartCameraIDs.contains(camera.id),
+        if (pendingStartCameraIDs.contains(camera.id)
+                || explicitNanoWakeCameraIDs.contains(camera.id)),
            camera.supportsExperimentalDJISleepWake,
            sleepingDJICameraIDs.contains(camera.id),
            scanner.peripheral(for: camera.id) != nil {
@@ -1472,12 +1530,6 @@ private extension CameraStore {
 
     func scheduleAvailabilityTimeout(for id: UUID) {
         availabilityTimeoutTasksByCameraID[id]?.cancel()
-        if let camera = cameras.first(where: { $0.id == id }),
-           camera.supportsExperimentalDJISleepWake,
-           sleepingDJICameraIDs.contains(id) {
-            availabilityTimeoutTasksByCameraID[id] = nil
-            return
-        }
         let delay = availabilityTimeoutDelay
         availabilityTimeoutTasksByCameraID[id] = Task { [weak self] in
             try? await Task.sleep(for: delay)
@@ -1603,9 +1655,22 @@ private extension CameraStore {
             let wasAlreadySleeping = sleepingDJICameraIDs.contains(id)
             sleepingDJICameraIDs.insert(id)
             availabilitySuppressedUntilByCameraID.removeValue(forKey: id)
-            autoConnectSuppressedUntilByCameraID.removeValue(forKey: id)
+            autoConnectSuppressedUntilByCameraID[id] = Date().addingTimeInterval(
+                nanoPowerTransitionSettleInterval
+            )
             cancelConnectedStalenessTimeout(for: id)
             pendingStopCameraIDs.remove(id)
+
+            let hasExplicitWakeIntent = explicitNanoWakeCameraIDs.contains(id)
+                || pendingStartCameraIDs.contains(id)
+            if hasExplicitWakeIntent {
+                let message = "Wake requested; waiting for the Osmo Nano to accept the Bluetooth session."
+                setCameraDiagnostic(message, for: camera)
+                if !wasAlreadySleeping {
+                    appendLog("\(camera.name): \(message)")
+                }
+                return
+            }
 
             if !pendingStartCameraIDs.contains(id), camera.recordingState != .starting {
                 cancelStartRecording(for: id)
@@ -1623,16 +1688,17 @@ private extension CameraStore {
                 cameras[index].currentMode = nil
             }
 
-            if camera.connectionState != .connected {
-                updateCamera(
-                    id,
-                    state: .connected,
-                    detail: "DJI R SDK protocol ready; camera is asleep and available for explicit wake."
-                )
-            }
+            scanner.disconnect(from: id)
+            clients[id] = nil
+
+            updateCamera(
+                id,
+                state: .discovered,
+                detail: "DJI Nano is sleeping and advertising for an explicit GATT wake."
+            )
 
             if !wasAlreadySleeping {
-                let message = "Camera is asleep; retaining its individual BLE session for an explicit wake-only attempt."
+                let message = "Camera is asleep and advertising; Wake is available."
                 appendLog("\(camera.name): \(message)")
                 setCameraDiagnostic(message, for: camera)
             }
@@ -1663,6 +1729,37 @@ private extension CameraStore {
 
         scanner.disconnect(from: id)
         updateCamera(id, state: .disconnected, detail: "Camera is asleep or off.")
+    }
+
+    func handleNanoPairingStatus(_ status: DJINanoProtocol.PairingStatus, for id: UUID) {
+        guard let camera = cameras.first(where: { $0.id == id }) else { return }
+
+        switch status {
+        case .approvalRequired:
+            nanoPairingConfirmation = NanoPairingConfirmation(
+                cameraID: id,
+                cameraName: camera.name
+            )
+            let message = "On your Osmo Nano, choose Accept for \(DJINanoProtocol.pairingDisplayName). The camera may show \(DJINanoProtocol.pairingToken), short for Multicam."
+            appendLog("\(camera.name): Nano pairing approval requested.")
+            setCameraDiagnostic(message, for: camera)
+        case .alreadyPaired:
+            if nanoPairingConfirmation?.cameraID == id {
+                nanoPairingConfirmation = nil
+            }
+            appendLog("\(camera.name): Action Multicam is already approved on this Nano.")
+        case .approved:
+            if nanoPairingConfirmation?.cameraID == id {
+                nanoPairingConfirmation = nil
+            }
+            let message = "Action Multicam was approved on the Osmo Nano."
+            appendLog("\(camera.name): \(message)")
+            setCameraDiagnostic(message, for: camera)
+        case let .unexpected(value):
+            let message = "The Osmo Nano returned an unexpected pairing status (0x\(String(format: "%02X", value)))."
+            appendLog("\(camera.name): \(message)")
+            setCameraDiagnostic(message, for: camera)
+        }
     }
 
     func scheduleReconnect(for id: UUID, attemptsRemaining: Int) {
@@ -1697,6 +1794,16 @@ private extension CameraStore {
                        latest.connectionState != .connected,
                        latest.connectionState != .connecting {
                         self.abortPendingStart(for: id, reason: self.pendingStartFailureReason(for: latest))
+                        return
+                    }
+                    if self.explicitNanoWakeCameraIDs.remove(id) != nil {
+                        self.nanoWakeProtocolReadyCameraIDs.remove(id)
+                        self.appendLog("\(latest.name): Nano wake reconnect window ended.")
+                        self.updateCamera(
+                            id,
+                            state: self.sleepingDJICameraIDs.contains(id) ? .discovered : .disconnected,
+                            detail: "The Nano did not finish waking. Tap Wake to try again."
+                        )
                         return
                     }
                     self.reconnectTasksByCameraID[id] = nil
@@ -2475,11 +2582,27 @@ private extension CameraStore {
 
         let previousState = cameras[index].connectionState
         let previousRecordingState = cameras[index].recordingState
-        let appliedState = appliedConnectionState(for: cameras[index], requestedState: state)
+        var requestedState = state
+        if cameras[index].behavior.kind == .djiOsmoNano,
+           explicitNanoWakeCameraIDs.contains(id) {
+            switch state {
+            case .connected where freshAwakeAdvertisement(for: id, now: Date()) != true:
+                nanoWakeProtocolReadyCameraIDs.insert(id)
+                requestedState = .connecting
+            case .disconnected, .failed:
+                nanoWakeProtocolReadyCameraIDs.remove(id)
+                requestedState = .reconnecting
+            case .discovered, .connecting, .connected, .reconnecting, .unsupported:
+                break
+            }
+        }
+        let appliedState = appliedConnectionState(for: cameras[index], requestedState: requestedState)
         cameras[index].connectionState = appliedState
 
         switch appliedState {
         case .connected:
+            explicitNanoWakeCameraIDs.remove(id)
+            nanoWakeProtocolReadyCameraIDs.remove(id)
             cancelConnectionTimeout(for: id)
             cancelAvailabilityTimeout(for: id)
             cancelManualPairRetry(for: id)
@@ -2529,6 +2652,13 @@ private extension CameraStore {
                     for: id,
                     attemptsRemaining: pendingStartReconnectAttempts(for: cameras[index])
                 )
+            } else if cameras[index].behavior.kind == .djiOsmoNano,
+                      explicitNanoWakeCameraIDs.contains(id) {
+                cameras[index].recordingState = .unknown
+                cameras[index].currentMode = nil
+                lastConnectionAttemptByID[id] = nil
+                ensureScanning()
+                scheduleReconnect(for: id, attemptsRemaining: 8)
             } else if cameras[index].brand == .dji {
                 switch previousRecordingState {
                 case .recording, .starting:
@@ -2555,6 +2685,14 @@ private extension CameraStore {
                 cameras[index].currentMode = nil
             }
         case .disconnected, .failed:
+            explicitNanoWakeCameraIDs.remove(id)
+            nanoWakeProtocolReadyCameraIDs.remove(id)
+            if cameras[index].behavior.kind == .djiOsmoNano,
+               previousState == .connected {
+                autoConnectSuppressedUntilByCameraID[id] = Date().addingTimeInterval(
+                    nanoPowerTransitionSettleInterval
+                )
+            }
             cancelConnectedStalenessTimeout(for: id)
             lastProtocolActivityByCameraID.removeValue(forKey: id)
             cancelConnectionTimeout(for: id)

@@ -36,9 +36,9 @@ Multicam is an independent project and is not affiliated with, endorsed by, or s
 ## Known Limits
 
 - Camera behavior can vary by model and firmware; see the hardware-testing status above.
-- Sleeping cameras appear as Not Connected and must be powered on before they reconnect. iOS cannot perform DJI's MAC-based BLE wake procedure.
+- Osmo Nano exposes an experimental GATT Wake action while its sleeping advertisement is visible. Other sleeping DJI cameras appear as Not Connected and must be powered on before they reconnect.
 - Highlights are recording-only. DJI cameras do not acknowledge highlight commands, so verify markers before relying on them for critical footage.
-- DJI mode switching supports Action 4/5/6 and Osmo 360. Nano reports its mode but cannot change it, and the app does not edit detailed capture settings.
+- DJI mode switching supports Action 4/5/6, Osmo 360, and the Nano's six known-safe shooting modes. Nano wake/mode behavior remains firmware-sensitive, and the app does not edit detailed capture settings.
 - Phone GPS requires location permission and the iPhone app to remain open and connected. Enabling it writes precise location telemetry to recordings; the complete path has been tested on Action 6.
 - Apple Watch commands pass through the paired iPhone; the Watch does not connect directly to cameras.
 - Live preview and media browsing are not supported because they require Wi-Fi rather than the app's Bluetooth-first control path.
@@ -84,6 +84,15 @@ xcodebuild \
 - `ActionCamRemote/UI`: SwiftUI app surfaces.
 - `MulticamLiveActivity`: Lock Screen and Dynamic Island Live Activity extension.
 - `MulticamWatchApp`: Apple Watch remote UI and WatchConnectivity session model.
+
+## Acknowledgements
+
+Thank you to these projects for helping make Multicam possible:
+
+- [dji-sdk/Osmo-GPS-Controller-Demo](https://github.com/dji-sdk/Osmo-GPS-Controller-Demo) for DJI's R SDK BLE, camera-control, status, and GPS reference implementation.
+- [gopro/OpenGoPro](https://github.com/gopro/OpenGoPro) for GoPro's official BLE interface specification, documentation, and demos.
+- [KonradIT/DJI-ESP32-Remote](https://github.com/KonradIT/DJI-ESP32-Remote) for Osmo Nano wake, pairing, and shooting-mode research.
+- [rhoenschrat/DJI-Remote](https://github.com/rhoenschrat/DJI-Remote) for DJI highlight-tag research.
 
 ## License
 

@@ -98,6 +98,23 @@ struct CameraDashboardView: View {
                 .presentationDragIndicator(.visible)
             }
             #endif
+            .alert(
+                "Confirm Action Multicam",
+                isPresented: Binding(
+                    get: { store.nanoPairingConfirmation != nil },
+                    set: { isPresented in
+                        if !isPresented {
+                            store.dismissNanoPairingConfirmation()
+                        }
+                    }
+                )
+            ) {
+                Button("Got It") {
+                    store.dismissNanoPairingConfirmation()
+                }
+            } message: {
+                Text("On your Osmo Nano, choose Accept for Action Multicam. The camera may show MCAM, short for Multicam.")
+            }
         }
     }
 }

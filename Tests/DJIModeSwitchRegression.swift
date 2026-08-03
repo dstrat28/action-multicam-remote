@@ -27,9 +27,17 @@ enum DJIModeSwitchRegression {
         precondition(!osmo360.supportsHighlight)
 
         let nano = makeCamera(model: .djiOsmoNano)
-        precondition(nano.availableCaptureModes == [.video])
-        precondition(!nano.canSwitchCaptureMode)
+        precondition(
+            nano.availableCaptureModes == [.video, .photo, .timelapse, .hyperlapse, .superNight, .slowMotion]
+        )
+        precondition(nano.canSwitchCaptureMode)
         precondition(!nano.supportsHighlight)
+        for mode in nano.availableCaptureModes {
+            guard let encoded = mode.djiNanoValue else {
+                preconditionFailure("Missing Nano mode value for \(mode.rawValue)")
+            }
+            precondition(CaptureMode.djiNanoMode(for: encoded) == mode)
+        }
 
         let goPro = makeCamera(model: .goproHero13Black)
         precondition(goPro.supportsHighlight)

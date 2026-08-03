@@ -35,6 +35,7 @@
 		ACR000000000000000000126 /* StopRecordingIntent.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000022 /* StopRecordingIntent.swift */; };
 		ACR000000000000000000127 /* MulticamLiveActivityExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000027 /* MulticamLiveActivityExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		ACR000000000000000000128 /* MulticamAppIntents.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000028 /* MulticamAppIntents.swift */; };
+		ACR000000000000000000129 /* DJINanoProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000029 /* DJINanoProtocol.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -108,6 +109,7 @@
 		ACR000000000000000000026 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		ACR000000000000000000027 /* MulticamLiveActivityExtension.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = MulticamLiveActivityExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		ACR000000000000000000028 /* MulticamAppIntents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MulticamAppIntents.swift; sourceTree = "<group>"; };
+		ACR000000000000000000029 /* DJINanoProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DJINanoProtocol.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -186,6 +188,7 @@
 				ACR000000000000000000004 /* BLECameraScanner.swift */,
 				ACR000000000000000000005 /* GoProBLEClient.swift */,
 				ACR000000000000000000006 /* DJIExperimentalBLEClient.swift */,
+				ACR000000000000000000029 /* DJINanoProtocol.swift */,
 			);
 			path = Bluetooth;
 			sourceTree = "<group>";
@@ -377,6 +380,7 @@
 				ACR000000000000000000104 /* BLECameraScanner.swift in Sources */,
 				ACR000000000000000000105 /* GoProBLEClient.swift in Sources */,
 				ACR000000000000000000106 /* DJIExperimentalBLEClient.swift in Sources */,
+				ACR000000000000000000129 /* DJINanoProtocol.swift in Sources */,
 				ACR000000000000000000107 /* CameraStore.swift in Sources */,
 				ACR000000000000000000108 /* DesignSystem.swift in Sources */,
 				ACR000000000000000000109 /* CameraDashboardView.swift in Sources */,
