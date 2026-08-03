@@ -57,6 +57,7 @@ final class CameraStore {
     @ObservationIgnored private let pocket3StartStateGuardInterval: TimeInterval = 1.5
     @ObservationIgnored private let defaultStopStateGuardInterval: TimeInterval = 2.5
     @ObservationIgnored private let nanoStopStateGuardInterval: TimeInterval = 8
+    @ObservationIgnored private let maxExplicitGoProWakeConnectionFailures = 5
     @ObservationIgnored private var wakeRetryTasksByCameraID: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var startRecordingTasksByCameraID: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var photoCaptureResetTasksByCameraID: [UUID: Task<Void, Never>] = [:]
@@ -69,6 +70,7 @@ final class CameraStore {
     @ObservationIgnored private var modeSwitchAttemptsByCameraID: [UUID: Int] = [:]
     @ObservationIgnored private var pendingStartConnectionFailuresByCameraID: [UUID: Int] = [:]
     @ObservationIgnored private var manualPairConnectionFailuresByCameraID: [UUID: Int] = [:]
+    @ObservationIgnored private var explicitGoProWakeConnectionFailuresByCameraID: [UUID: Int] = [:]
     @ObservationIgnored private var availabilitySuppressedUntilByCameraID: [UUID: Date] = [:]
     @ObservationIgnored private var autoConnectSuppressedUntilByCameraID: [UUID: Date] = [:]
     @ObservationIgnored private var lastWakeScanRefreshByCameraID: [UUID: Date] = [:]
@@ -85,6 +87,7 @@ final class CameraStore {
     @ObservationIgnored private var passiveDJIProbeCameraIDs: Set<UUID> = []
     @ObservationIgnored private var sleepingDJICameraIDs: Set<UUID> = []
     @ObservationIgnored private var nanoPassiveReconnectBlockedCameraIDs: Set<UUID> = []
+    @ObservationIgnored private var explicitGoProWakeCameraIDs: Set<UUID> = []
     @ObservationIgnored private var explicitNanoWakeCameraIDs: Set<UUID> = []
     @ObservationIgnored private var nanoWakeProtocolReadyCameraIDs: Set<UUID> = []
     @ObservationIgnored private var isPairingModeActive = false
@@ -495,6 +498,7 @@ final class CameraStore {
                 cameraID: camera.id,
                 cameraName: camera.name,
                 peripheral: peripheral,
+                shouldSendAppPowerOnStart: explicitGoProWakeCameraIDs.contains(camera.id),
                 onStatus: { [weak self] id, state, detail in
                     Task { @MainActor in self?.updateCamera(id, state: state, detail: detail) }
                 },
@@ -539,7 +543,8 @@ final class CameraStore {
             lastConnectionAttemptByID[camera.id] = Date()
             scheduleConnectionTimeout(for: camera.id)
             let shouldForceGoProWakeConnection = camera.brand == .gopro
-                && pendingStartCameraIDs.contains(camera.id)
+                && (pendingStartCameraIDs.contains(camera.id)
+                    || explicitGoProWakeCameraIDs.contains(camera.id))
                 && freshAwakeAdvertisement(for: camera.id, now: Date()) != true
             try scanner.connect(
                 to: camera.id,
@@ -564,8 +569,18 @@ final class CameraStore {
 
     func wake(_ camera: DiscoveredCamera) {
         guard camera.canWakeFromSleep else {
-            appendLog("\(camera.name): Nano wake is not available without a fresh sleeping-camera advertisement.")
+            appendLog("\(camera.name): wake is not available without a fresh sleeping-camera advertisement.")
             refreshWakeScan(for: camera)
+            return
+        }
+
+        if camera.brand == .gopro {
+            explicitGoProWakeCameraIDs.insert(camera.id)
+            explicitGoProWakeConnectionFailuresByCameraID[camera.id] = 0
+            lastConnectionAttemptByID.removeValue(forKey: camera.id)
+            appendLog("\(camera.name): starting explicit Open GoPro BLE wake connection.")
+            setCameraDiagnostic("Waking over Bluetooth.", for: camera)
+            connect(camera)
             return
         }
 
@@ -603,6 +618,8 @@ final class CameraStore {
         awakeAdvertisementSeenAtByCameraID.removeValue(forKey: camera.id)
         nanoAwakeCandidateSinceByCameraID.removeValue(forKey: camera.id)
         nanoPassiveReconnectBlockedCameraIDs.remove(camera.id)
+        explicitGoProWakeCameraIDs.remove(camera.id)
+        explicitGoProWakeConnectionFailuresByCameraID.removeValue(forKey: camera.id)
         explicitNanoWakeCameraIDs.remove(camera.id)
         nanoWakeProtocolReadyCameraIDs.remove(camera.id)
         if nanoPairingConfirmation?.cameraID == camera.id {
@@ -916,6 +933,7 @@ private extension CameraStore {
         }
 
         if let index = cameras.firstIndex(where: { $0.id == candidate.id }) {
+            let previousSortRank = cameras[index].defaultSortRank
             let resolvedModel = candidate.model == .unknown ? cameras[index].model : candidate.model
             let capabilities = normalizedCapabilities(
                 candidate.capabilities,
@@ -947,6 +965,7 @@ private extension CameraStore {
             if candidate.brand == .gopro {
                 cameras[index].isPairingAdvertisement = candidate.isPairing
             }
+            cameras[index].advertisementAwake = candidate.isAwake
 
             if let unsupportedReason {
                 if cameras[index].connectionState == .connected || cameras[index].connectionState == .connecting {
@@ -983,7 +1002,10 @@ private extension CameraStore {
                         let isExplicitWakeTarget = cameras[index].supportsExperimentalDJISleepWake
                             && sleepingDJICameraIDs.contains(candidate.id)
                         let isAwakeGoPro = candidate.brand == .gopro && candidate.isAwake == true
-                        cameras[index].connectionState = isAwakeGoPro || isExplicitWakeTarget
+                        let isWakeableGoPro = candidate.brand == .gopro
+                            && cameras[index].isPaired
+                            && candidate.isAwake == false
+                        cameras[index].connectionState = isAwakeGoPro || isWakeableGoPro || isExplicitWakeTarget
                             ? .discovered
                             : .disconnected
                         clearSelectionIfNotConnected(at: index)
@@ -1013,6 +1035,7 @@ private extension CameraStore {
                     }
                     if candidate.brand == .gopro,
                        candidate.isAwake != true,
+                       !(cameras[index].isPaired && candidate.isAwake == false),
                        cameras[index].connectionState == .discovered {
                         cameras[index].connectionState = .disconnected
                         clearSelectionIfNotConnected(at: index)
@@ -1036,6 +1059,9 @@ private extension CameraStore {
                         hadExplicitNanoWakeIntent: hadExplicitNanoWakeIntent
                     )
 
+            }
+            if cameras[index].defaultSortRank != previousSortRank {
+                shouldSort = true
             }
         } else {
             let capabilities = normalizedCapabilities(
@@ -1066,7 +1092,8 @@ private extension CameraStore {
                     isSelected: false,
                     lastSeen: Date(),
                     lastConnectableSeen: isConnectionFreshnessAdvertisement ? Date() : nil,
-                    isPairingAdvertisement: candidate.brand == .gopro ? candidate.isPairing : nil
+                    isPairingAdvertisement: candidate.brand == .gopro ? candidate.isPairing : nil,
+                    advertisementAwake: candidate.isAwake
                 )
             )
             shouldSort = true
@@ -1137,7 +1164,8 @@ private extension CameraStore {
         }
 
         if pendingStartCameraIDs.contains(camera.id)
-            || pendingStopCameraIDs.contains(camera.id) {
+            || pendingStopCameraIDs.contains(camera.id)
+            || explicitGoProWakeCameraIDs.contains(camera.id) {
             return true
         }
 
@@ -1534,6 +1562,9 @@ private extension CameraStore {
         }
 
         if camera.brand == .gopro {
+            if explicitGoProWakeCameraIDs.contains(id) {
+                return .seconds(10)
+            }
             return goProProtocolConnectionTimeoutDelay
         }
 
@@ -2596,6 +2627,37 @@ private extension CameraStore {
 
     func updateCamera(_ id: UUID, state: CameraConnectionState, detail: String?) {
         guard let index = cameras.firstIndex(where: { $0.id == id }) else { return }
+        if cameras[index].brand == .gopro {
+            switch state {
+            case .connected:
+                explicitGoProWakeCameraIDs.remove(id)
+                explicitGoProWakeConnectionFailuresByCameraID.removeValue(forKey: id)
+            case .disconnected, .failed:
+                if explicitGoProWakeCameraIDs.contains(id) {
+                    let failures = (explicitGoProWakeConnectionFailuresByCameraID[id] ?? 0) + 1
+                    explicitGoProWakeConnectionFailuresByCameraID[id] = failures
+                    lastConnectionAttemptByID.removeValue(forKey: id)
+
+                    if failures < maxExplicitGoProWakeConnectionFailures {
+                        setCameraDiagnostic(
+                            "GoPro wake connection attempt \(failures)/\(maxExplicitGoProWakeConnectionFailures) did not complete; retrying.",
+                            for: cameras[index]
+                        )
+                        ensureScanning()
+                        scheduleReconnect(for: id, attemptsRemaining: 2)
+                    } else {
+                        explicitGoProWakeCameraIDs.remove(id)
+                        explicitGoProWakeConnectionFailuresByCameraID.removeValue(forKey: id)
+                        setCameraDiagnostic(
+                            "The GoPro did not accept a Bluetooth wake connection. Tap Wake to try again.",
+                            for: cameras[index]
+                        )
+                    }
+                }
+            case .discovered, .connecting, .reconnecting, .unsupported:
+                break
+            }
+        }
         if passiveDJIProbeCameraIDs.contains(id) {
             switch state {
             case .connecting, .reconnecting:
@@ -2643,6 +2705,15 @@ private extension CameraStore {
         let previousState = cameras[index].connectionState
         let previousRecordingState = cameras[index].recordingState
         var requestedState = state
+        if cameras[index].brand == .gopro,
+           explicitGoProWakeCameraIDs.contains(id) {
+            switch state {
+            case .disconnected, .failed:
+                requestedState = .reconnecting
+            case .discovered, .connecting, .connected, .reconnecting, .unsupported:
+                break
+            }
+        }
         if cameras[index].behavior.kind == .djiOsmoNano {
             switch state {
             case .connected where !hasConfirmedAwakeNanoAdvertisement(for: id, now: Date()):
@@ -2938,6 +3009,7 @@ private extension CameraStore {
                 camera.isSelected = false
                 camera.lastSeen = .distantPast
                 camera.lastConnectableSeen = nil
+                camera.advertisementAwake = nil
                 camera.telemetry = nil
                 return camera
             }
@@ -2988,6 +3060,7 @@ private extension CameraStore {
             copy.currentMode = nil
             copy.isSelected = false
             copy.lastConnectableSeen = nil
+            copy.advertisementAwake = nil
             copy.telemetry = nil
             return copy
         }
@@ -3060,10 +3133,8 @@ private extension CameraStore {
 
     func sortCamerasForEditing() {
         cameras.sort { lhs, rhs in
-            let lhsRank = lhs.isPaired ? 0 : 1
-            let rhsRank = rhs.isPaired ? 0 : 1
-            if lhsRank != rhsRank {
-                return lhsRank < rhsRank
+            if lhs.defaultSortRank != rhs.defaultSortRank {
+                return lhs.defaultSortRank < rhs.defaultSortRank
             }
 
             let lhsName = lhs.displayName.localizedStandardCompare(rhs.displayName)

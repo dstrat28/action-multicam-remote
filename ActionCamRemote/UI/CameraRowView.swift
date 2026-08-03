@@ -183,7 +183,7 @@ struct CameraRowView: View {
                 .buttonStyle(.borderedProminent)
                 .tint(Color.acrAvailable)
                 .controlSize(.mini)
-                .accessibilityHint("Connects to and wakes the sleeping Osmo Nano")
+                .accessibilityHint("Connects to and wakes the sleeping camera")
             } else if isReadyConnected {
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.bold))

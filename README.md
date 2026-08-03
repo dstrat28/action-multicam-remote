@@ -32,13 +32,13 @@ Multicam is an independent project and is not affiliated with, endorsed by, or s
 - Add synchronized highlight markers to recording GoPros and DJI Action 4/5/6 cameras.
 - Control recording and highlights from Apple Watch or a Live Activity.
 - Send optional iPhone GPS, altitude, direction, and speed telemetry to DJI Action 4/5/6 and Osmo 360 recordings.
+- Wake paired GoPros for up to eight hours after sleep, and wake Osmo Nano over Bluetooth.
 
-## Known Limits
+## Known Limitations
 
 - Camera behavior can vary by model and firmware; see the hardware-testing status above.
-- Osmo Nano exposes an experimental GATT Wake action while its sleeping advertisement is visible. Other sleeping DJI cameras appear as Not Connected and must be powered on before they reconnect.
+- Wake is not supported on other DJI cameras because they require a manufacturer-data wake advertisement that iPhone apps cannot broadcast.
 - Highlights are recording-only. DJI cameras do not acknowledge highlight commands, so verify markers before relying on them for critical footage.
-- DJI mode switching supports Action 4/5/6, Osmo 360, and the Nano's six known-safe shooting modes. Nano wake/mode behavior remains firmware-sensitive, and the app does not edit detailed capture settings.
 - Phone GPS requires location permission and the iPhone app to remain open and connected. Enabling it writes precise location telemetry to recordings; the complete path has been tested on Action 6.
 - Apple Watch commands pass through the paired iPhone; the Watch does not connect directly to cameras.
 - Live preview and media browsing are not supported because they require Wi-Fi rather than the app's Bluetooth-first control path.

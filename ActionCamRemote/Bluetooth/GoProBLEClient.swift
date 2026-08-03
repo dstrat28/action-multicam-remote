@@ -55,7 +55,9 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
     private var hasRequestedHardwareInfo = false
     private var hasSentPairingComplete = false
     private var hasSentThirdPartyClientInfo = false
+    private var hasSentAppPowerOnStart = false
     private var hasClaimedExternalControl = false
+    private let shouldSendAppPowerOnStart: Bool
 #if DEBUG
     private var lastPowerStatusDebugLabel: String?
     private var lastPowerStatusDebugLogDate = Date.distantPast
@@ -68,6 +70,7 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
         cameraID: UUID,
         cameraName: String,
         peripheral: CBPeripheral,
+        shouldSendAppPowerOnStart: Bool = false,
         onStatus: @escaping (UUID, CameraConnectionState, String?) -> Void,
         onCameraStatus: @escaping (UUID, CameraStatusUpdate) -> Void,
         onLog: @escaping (String) -> Void
@@ -75,6 +78,7 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
         self.cameraID = cameraID
         self.cameraName = cameraName
         self.peripheral = peripheral
+        self.shouldSendAppPowerOnStart = shouldSendAppPowerOnStart
         self.onStatus = onStatus
         self.onCameraStatus = onCameraStatus
         self.onLog = onLog
@@ -123,6 +127,7 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
         hasRequestedHardwareInfo = false
         hasSentPairingComplete = false
         hasSentThirdPartyClientInfo = false
+        hasSentAppPowerOnStart = false
         hasClaimedExternalControl = false
     }
 
@@ -278,6 +283,7 @@ extension GoProBLEClient {
 
         switch characteristic.uuid {
         case GoProBLEUUID.commandResponse:
+            sendAppPowerOnStartIfNeeded()
             requestHardwareInfo()
             sendThirdPartyClientInfoIfPossible()
             claimExternalControlIfPossible(reason: "connection")
@@ -488,6 +494,25 @@ private extension GoProBLEClient {
             logMessage: "\(cameraName): GoPro identify third-party client \(payload.hexString)"
         )
         hasSentThirdPartyClientInfo = true
+    }
+
+    func sendAppPowerOnStartIfNeeded() {
+        guard shouldSendAppPowerOnStart else { return }
+        guard let commandCharacteristic, !hasSentAppPowerOnStart else { return }
+
+        // Open GoPro's Set App Power-On Start request is feature/action F1/7D.
+        // WSDK_RequestSetSystemNotifyEvent field 1 carries APP_POWER_UP (enum 4).
+        let payload = GoProPacket.protobufPayload(
+            featureID: 0xF1,
+            actionID: 0x7D,
+            message: Data([0x08, 0x04])
+        )
+        enqueueWrite(
+            GoProPacket.packetize(payload),
+            to: commandCharacteristic,
+            logMessage: "\(cameraName): GoPro app power-on start \(payload.hexString)"
+        )
+        hasSentAppPowerOnStart = true
     }
 
     func claimExternalControlIfPossible(reason: String) {

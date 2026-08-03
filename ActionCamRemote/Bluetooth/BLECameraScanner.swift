@@ -542,7 +542,7 @@ private extension BLECameraScanner {
         }
 
         let statusByte = manufacturerData[manufacturerData.index(manufacturerData.startIndex, offsetBy: 3)]
-        return (statusByte & 0x01) == 0x01
+        return GoProAdvertisementStatus.isProcessorAwake(statusByte)
     }
 
     func inferGoProPairingState(from advertisementData: [String: Any]) -> Bool? {
@@ -552,7 +552,7 @@ private extension BLECameraScanner {
         }
 
         let statusByte = manufacturerData[manufacturerData.index(manufacturerData.startIndex, offsetBy: 3)]
-        return (statusByte & 0x04) == 0x04
+        return GoProAdvertisementStatus.isPeripheralPairingEnabled(statusByte)
     }
 
     func goProManufacturerData(from advertisementData: [String: Any]) -> Data? {

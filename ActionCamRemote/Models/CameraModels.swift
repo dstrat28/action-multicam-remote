@@ -763,6 +763,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     var lastSeen: Date
     var lastConnectableSeen: Date? = nil
     var isPairingAdvertisement: Bool? = nil
+    var advertisementAwake: Bool? = nil
 
     var isSupportedByApp: Bool {
         unsupportedReason == nil
@@ -880,9 +881,33 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     }
 
     var canWakeFromSleep: Bool {
-        isPaired
-            && supportsExperimentalDJISleepWake
-            && connectionState == .discovered
+        guard isPaired, connectionState == .discovered else { return false }
+
+        if brand == .gopro {
+            return advertisementAwake == false
+                && GoProWakeEligibility.allowsWake(
+                    lastKnownBatteryPercent: telemetry?.batteryPercent
+                )
+        }
+
+        return supportsExperimentalDJISleepWake
+    }
+
+    var defaultSortRank: Int {
+        guard isPaired else { return 5 }
+
+        switch connectionState {
+        case .connected:
+            return 0
+        case .connecting, .reconnecting:
+            return 1
+        case .discovered where canWakeFromSleep:
+            return 2
+        case .discovered, .disconnected, .failed:
+            return 3
+        case .unsupported:
+            return 4
+        }
     }
 
     var needsGoProPairingMode: Bool {
@@ -1103,6 +1128,27 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
         default:
             "Very Weak"
         }
+    }
+}
+
+enum GoProAdvertisementStatus {
+    static func isProcessorAwake(_ statusByte: UInt8) -> Bool {
+        (statusByte & 0x01) != 0
+    }
+
+    static func isPeripheralPairingEnabled(_ statusByte: UInt8) -> Bool {
+        (statusByte & 0x04) != 0
+    }
+}
+
+enum GoProWakeEligibility {
+    // Empirically, a HERO13 Black would not wake at 23% but did wake at 37%.
+    // Keep this isolated so the threshold is easy to adjust with more device testing.
+    static let batteryThresholdPercent = 30
+
+    static func allowsWake(lastKnownBatteryPercent: Int?) -> Bool {
+        guard let lastKnownBatteryPercent else { return true }
+        return lastKnownBatteryPercent > batteryThresholdPercent
     }
 }
 

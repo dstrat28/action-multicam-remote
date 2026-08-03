@@ -3,6 +3,11 @@ import Foundation
 @main
 enum DJIWakeEligibilityRegression {
     static func main() {
+        precondition(GoProAdvertisementStatus.isProcessorAwake(0x01), "GoPro processor state uses bit 0")
+        precondition(!GoProAdvertisementStatus.isProcessorAwake(0x80), "GoPro reserved bits must not imply awake")
+        precondition(GoProAdvertisementStatus.isPeripheralPairingEnabled(0x04), "GoPro pairing state uses bit 2")
+        precondition(!GoProAdvertisementStatus.isPeripheralPairingEnabled(0x20), "GoPro reserved bits must not imply pairing")
+
         for model in [CameraModel.djiOsmoAction4, .djiOsmoAction5Pro, .djiOsmoAction6, .djiOsmo360] {
             let camera = makeCamera(model: model, state: .discovered)
             precondition(camera.isSupportedByApp, "\(model.rawValue) should use the shared DJI R SDK profile")
@@ -49,11 +54,40 @@ enum DJIWakeEligibilityRegression {
         precondition(goPro.displayConnectionLabel == "Not Connected", "A disconnected GoPro must show Not Connected")
 
         goPro.connectionState = .discovered
+        goPro.advertisementAwake = true
         precondition(!goPro.canSelectForBatch, "An advertising GoPro must not be selectable before protocol connection")
-        precondition(goPro.displayConnectionLabel == "Not Connected", "An advertising GoPro must not expose Available")
+        precondition(!goPro.canWakeFromSleep, "An awake GoPro must not expose Wake")
+        precondition(goPro.displayConnectionLabel == "Not Connected", "An awake advertising GoPro must not expose Available")
 
+        goPro.advertisementAwake = false
+        precondition(goPro.canWakeFromSleep, "A paired low-power GoPro with unknown battery should expose Wake")
+        precondition(goPro.displayConnectionLabel == "Available", "A paired low-power GoPro should show Available")
+
+        goPro.telemetry = CameraTelemetry(batteryPercent: 30)
+        precondition(!goPro.canWakeFromSleep, "A GoPro at the wake threshold must not expose Wake")
+        precondition(goPro.displayConnectionLabel == "Not Connected", "A known-low GoPro must not show Available")
+
+        goPro.telemetry = CameraTelemetry(batteryPercent: 31)
+        precondition(goPro.canWakeFromSleep, "A GoPro above the wake threshold should expose Wake")
+        precondition(goPro.displayConnectionLabel == "Available", "A GoPro above the wake threshold should show Available")
+
+        goPro.isPaired = false
+        precondition(!goPro.canWakeFromSleep, "An unpaired low-power GoPro must not expose Wake")
+        precondition(goPro.displayConnectionLabel == "Not Connected", "An unpaired low-power GoPro must not show Available")
+
+        goPro.isPaired = true
         goPro.connectionState = .connected
         precondition(goPro.canSelectForBatch, "A connected GoPro should remain selectable")
+
+        var sortSamples = [
+            makeCamera(model: .djiOsmoAction4, state: .disconnected),
+            pairedNano,
+            makeCamera(model: .djiOsmoAction5Pro, state: .connecting),
+            makeCamera(model: .djiOsmoAction6, state: .connected),
+            makeCamera(model: .djiOsmo360, state: .reconnecting)
+        ]
+        sortSamples.sort { $0.defaultSortRank < $1.defaultSortRank }
+        precondition(sortSamples.map(\.defaultSortRank) == [0, 1, 1, 2, 3], "Camera status sort order regressed")
 
         print("Disconnected camera presentation regression checks passed.")
     }
