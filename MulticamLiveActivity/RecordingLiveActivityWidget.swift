@@ -32,40 +32,65 @@ struct MulticamLauncherWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: kind, provider: MulticamLauncherProvider()) { _ in
             MulticamLauncherView()
+                .containerBackground(for: .widget) {
+                    Color.clear
+                }
                 .widgetURL(URL(string: "actioncamremote://open"))
         }
         .configurationDisplayName("Open Multicam")
         .description("Open Multicam from the Lock Screen.")
-        .supportedFamilies([.accessoryCircular, .accessoryRectangular, .accessoryInline])
+        .supportedFamilies([.accessoryCircular])
     }
 }
 
 private struct MulticamLauncherView: View {
-    @Environment(\.widgetFamily) private var family
-
     var body: some View {
-        switch family {
-        case .accessoryInline:
-            Label("Open Multicam", systemImage: "video.fill")
-        case .accessoryRectangular:
-            HStack(spacing: 8) {
-                Image(systemName: "video.fill")
-                    .font(.title3.weight(.semibold))
+        ZStack {
+            AccessoryWidgetBackground()
 
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("Multicam")
-                        .font(.headline)
-                    Text("Open camera remote")
-                        .font(.caption)
-                }
+            MulticamWidgetMark()
+                .padding(11)
+                .widgetAccentable()
+        }
+    }
+}
+
+private struct MulticamWidgetMark: View {
+    var body: some View {
+        GeometryReader { proxy in
+            let scale = min(proxy.size.width / 119, proxy.size.height / 106)
+
+            ZStack(alignment: .topLeading) {
+                RoundedRectangle(cornerRadius: 11 * scale, style: .continuous)
+                    .fill(.primary)
+                    .frame(width: 95 * scale, height: 72 * scale)
+
+                Circle()
+                    .stroke(.black, lineWidth: 6 * scale)
+                    .frame(width: 33 * scale, height: 33 * scale)
+                    .offset(x: 52 * scale, y: 11 * scale)
+                    .blendMode(.destinationOut)
+
+                RoundedRectangle(cornerRadius: 16 * scale, style: .continuous)
+                    .fill(.black)
+                    .frame(width: 106 * scale, height: 80 * scale)
+                    .offset(x: 18 * scale, y: 31 * scale)
+                    .blendMode(.destinationOut)
+
+                RoundedRectangle(cornerRadius: 11 * scale, style: .continuous)
+                    .fill(.primary)
+                    .frame(width: 96 * scale, height: 70 * scale)
+                    .offset(x: 23 * scale, y: 36 * scale)
+
+                Circle()
+                    .stroke(.black, lineWidth: 6 * scale)
+                    .frame(width: 38 * scale, height: 38 * scale)
+                    .offset(x: 73 * scale, y: 47 * scale)
+                    .blendMode(.destinationOut)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-        default:
-            ZStack {
-                AccessoryWidgetBackground()
-                Image(systemName: "video.fill")
-                    .font(.title2.weight(.semibold))
-            }
+            .frame(width: 119 * scale, height: 106 * scale, alignment: .topLeading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .compositingGroup()
         }
     }
 }

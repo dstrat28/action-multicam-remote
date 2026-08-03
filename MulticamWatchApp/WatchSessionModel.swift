@@ -6,6 +6,17 @@ struct WatchCamera: Identifiable, Equatable {
     let name: String
     let model: String
     let isRecording: Bool
+    let modeName: String?
+    let modeDetails: [String]
+    let batteryPercent: Int?
+    let batteryBars: Int?
+    let isExternalPowerConnected: Bool?
+    let storageFreeMB: Int?
+    let storageTotalMB: Int?
+    let sdCardCapacityMB: Int?
+    let storageState: String?
+    let remainingVideoSeconds: Int?
+    let remainingPhotos: Int?
 }
 
 @MainActor
@@ -19,6 +30,17 @@ final class WatchSessionModel: NSObject, ObservableObject {
         static let name = "name"
         static let model = "model"
         static let isRecording = "isRecording"
+        static let modeName = "modeName"
+        static let modeDetails = "modeDetails"
+        static let batteryPercent = "batteryPercent"
+        static let batteryBars = "batteryBars"
+        static let isExternalPowerConnected = "isExternalPowerConnected"
+        static let storageFreeMB = "storageFreeMB"
+        static let storageTotalMB = "storageTotalMB"
+        static let sdCardCapacityMB = "sdCardCapacityMB"
+        static let storageState = "storageState"
+        static let remainingVideoSeconds = "remainingVideoSeconds"
+        static let remainingPhotos = "remainingPhotos"
         static let recording = "recording"
         static let highlightAvailable = "highlightAvailable"
         static let stateVersion = "stateVersion"
@@ -165,7 +187,18 @@ final class WatchSessionModel: NSObject, ObservableObject {
                 id: id,
                 name: name,
                 model: model,
-                isRecording: dictionary[Key.isRecording] as? Bool ?? false
+                isRecording: dictionary[Key.isRecording] as? Bool ?? false,
+                modeName: dictionary[Key.modeName] as? String,
+                modeDetails: dictionary[Key.modeDetails] as? [String] ?? [],
+                batteryPercent: dictionary[Key.batteryPercent] as? Int,
+                batteryBars: dictionary[Key.batteryBars] as? Int,
+                isExternalPowerConnected: dictionary[Key.isExternalPowerConnected] as? Bool,
+                storageFreeMB: dictionary[Key.storageFreeMB] as? Int,
+                storageTotalMB: dictionary[Key.storageTotalMB] as? Int,
+                sdCardCapacityMB: dictionary[Key.sdCardCapacityMB] as? Int,
+                storageState: dictionary[Key.storageState] as? String,
+                remainingVideoSeconds: dictionary[Key.remainingVideoSeconds] as? Int,
+                remainingPhotos: dictionary[Key.remainingPhotos] as? Int
             )
         }
         isRecording = context[Key.recording] as? Bool

@@ -124,10 +124,8 @@ struct MulticamAppShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: StartAllCamerasIntent(),
             phrases: [
-                "Start all cameras with \(.applicationName)",
-                "Start all \(.applicationName) cameras",
-                "Start all with \(.applicationName)",
-                "Start recording with \(.applicationName)",
+                "\(.applicationName) record",
+                "\(.applicationName) start",
             ],
             shortTitle: "Start All",
             systemImageName: "record.circle"
@@ -136,10 +134,7 @@ struct MulticamAppShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: StopAllCamerasIntent(),
             phrases: [
-                "Stop all cameras with \(.applicationName)",
-                "Stop all \(.applicationName) cameras",
-                "Stop all with \(.applicationName)",
-                "Stop recording with \(.applicationName)",
+                "\(.applicationName) stop",
             ],
             shortTitle: "Stop All",
             systemImageName: "stop.circle"
@@ -148,9 +143,7 @@ struct MulticamAppShortcuts: AppShortcutsProvider {
         AppShortcut(
             intent: HighlightAllCamerasIntent(),
             phrases: [
-                "Highlight with \(.applicationName)",
-                "Add a highlight with \(.applicationName)",
-                "Highlight all cameras with \(.applicationName)",
+                "\(.applicationName) highlight",
             ],
             shortTitle: "Highlight",
             systemImageName: "bookmark.fill"

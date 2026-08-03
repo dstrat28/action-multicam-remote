@@ -19,6 +19,17 @@ final class WatchConnectivityController: NSObject {
         static let name = "name"
         static let model = "model"
         static let isRecording = "isRecording"
+        static let modeName = "modeName"
+        static let modeDetails = "modeDetails"
+        static let batteryPercent = "batteryPercent"
+        static let batteryBars = "batteryBars"
+        static let isExternalPowerConnected = "isExternalPowerConnected"
+        static let storageFreeMB = "storageFreeMB"
+        static let storageTotalMB = "storageTotalMB"
+        static let sdCardCapacityMB = "sdCardCapacityMB"
+        static let storageState = "storageState"
+        static let remainingVideoSeconds = "remainingVideoSeconds"
+        static let remainingPhotos = "remainingPhotos"
         static let recording = "recording"
         static let highlightAvailable = "highlightAvailable"
         static let stateVersion = "stateVersion"
@@ -72,12 +83,50 @@ final class WatchConnectivityController: NSObject {
         let cameras = store.readyConnectedCameras
             .filter(\.supportsBatchRecord)
             .map { camera in
-                [
+                var snapshot = [
                     Key.id: camera.id.uuidString,
                     Key.name: camera.displayName,
                     Key.model: camera.model.rawValue,
                     Key.isRecording: camera.recordingState == .recording,
                 ] as [String: Any]
+
+                if let modeName = camera.currentMode?.displayName(for: camera.model)
+                    ?? camera.telemetry?.modeName {
+                    snapshot[Key.modeName] = modeName
+                }
+                snapshot[Key.modeDetails] = captureSettingsSummary(for: camera)
+
+                if let telemetry = camera.telemetry {
+                    if let batteryPercent = telemetry.batteryPercent {
+                        snapshot[Key.batteryPercent] = batteryPercent
+                    }
+                    if let batteryBars = telemetry.batteryBars {
+                        snapshot[Key.batteryBars] = batteryBars
+                    }
+                    if let isExternalPowerConnected = telemetry.isExternalPowerConnected {
+                        snapshot[Key.isExternalPowerConnected] = isExternalPowerConnected
+                    }
+                    if let storageFreeMB = telemetry.storageFreeMB {
+                        snapshot[Key.storageFreeMB] = Int(storageFreeMB)
+                    }
+                    if let storageTotalMB = telemetry.storageTotalMB {
+                        snapshot[Key.storageTotalMB] = Int(storageTotalMB)
+                    }
+                    if let sdCardCapacityMB = telemetry.sdCardCapacityMB {
+                        snapshot[Key.sdCardCapacityMB] = Int(sdCardCapacityMB)
+                    }
+                    if let storageState = telemetry.storageState {
+                        snapshot[Key.storageState] = storageState
+                    }
+                    if let remainingVideoSeconds = telemetry.remainingVideoSeconds {
+                        snapshot[Key.remainingVideoSeconds] = Int(remainingVideoSeconds)
+                    }
+                    if let remainingPhotos = telemetry.remainingPhotos {
+                        snapshot[Key.remainingPhotos] = Int(remainingPhotos)
+                    }
+                }
+
+                return snapshot
             }
         let isRecording = store.cameras.contains {
             $0.supportsBatchRecord
@@ -101,6 +150,108 @@ final class WatchConnectivityController: NSObject {
         }
         snapshot[Key.stateVersion] = stateVersion
         return snapshot
+    }
+
+    private func captureSettingsSummary(for camera: DiscoveredCamera) -> [String] {
+        guard let telemetry = camera.telemetry else { return [] }
+
+        let settings: [String?]
+        switch camera.currentMode {
+        case .photo:
+            settings = [
+                telemetry.videoResolution,
+                telemetry.photoAspectRatio,
+                telemetry.photoBurstCount.flatMap { $0 > 1 ? "\($0) photos" : nil },
+                telemetry.photoCountdownMilliseconds.flatMap {
+                    $0 > 0 ? Self.milliseconds($0) + " timer" : nil
+                },
+            ]
+        case .slowMotion:
+            settings = [
+                telemetry.videoResolution,
+                telemetry.frameRate,
+                Self.slowMotionRate(from: telemetry.modeParameters),
+            ]
+        case .timelapse:
+            settings = [
+                telemetry.videoResolution,
+                telemetry.timelapseIntervalTenths.map {
+                    "Every \(Self.timelapseInterval(tenths: $0, isHyperlapse: false))"
+                },
+                telemetry.timelapseDurationSeconds.flatMap {
+                    $0 > 0 ? "\(Self.duration(seconds: UInt32($0))) duration" : nil
+                },
+            ]
+        case .hyperlapse:
+            settings = [
+                telemetry.videoResolution,
+                telemetry.timelapseIntervalTenths.map {
+                    "\(Self.timelapseInterval(tenths: $0, isHyperlapse: true)) rate"
+                },
+                telemetry.timelapseDurationSeconds.flatMap {
+                    $0 > 0 ? "\(Self.duration(seconds: UInt32($0))) duration" : nil
+                },
+            ]
+        case .video, .superNight,
+             .selfie, .boostVideo, .vortex, .panoramicSuperNight, .singleLensSuperNight,
+             nil:
+            settings = [
+                telemetry.videoResolution,
+                telemetry.frameRate,
+                telemetry.lens ?? telemetry.framing,
+            ]
+        }
+
+        var seen = Set<String>()
+        return settings
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .filter { seen.insert($0.lowercased()).inserted }
+            .prefix(3)
+            .map { $0 }
+    }
+
+    private static func slowMotionRate(from modeParameters: String?) -> String? {
+        guard let token = modeParameters?
+            .split(whereSeparator: \.isWhitespace)
+            .last(where: { part in
+                let uppercased = part.uppercased()
+                return uppercased.hasSuffix("X")
+                    && uppercased.dropLast().allSatisfy(\.isNumber)
+            }) else {
+            return nil
+        }
+        return "\(token.dropLast())×"
+    }
+
+    private static func duration(seconds: UInt32) -> String {
+        let totalMinutes = Int(seconds) / 60
+        let hours = totalMinutes / 60
+        let minutes = totalMinutes % 60
+        if hours > 0, minutes > 0 { return "\(hours)h \(minutes)m" }
+        if hours > 0 { return "\(hours)h" }
+        return "\(max(1, minutes))m"
+    }
+
+    private static func milliseconds(_ value: UInt32) -> String {
+        let seconds = Double(value) / 1_000
+        return seconds.rounded() == seconds
+            ? "\(Int(seconds))s"
+            : String(format: "%.1fs", seconds)
+    }
+
+    private static func timelapseInterval(tenths: UInt16, isHyperlapse: Bool) -> String {
+        if isHyperlapse {
+            return tenths == 0 ? "Auto" : "\(tenths)×"
+        }
+
+        let seconds = Double(tenths) / 10
+        if seconds >= 60, seconds.rounded() == seconds {
+            return duration(seconds: UInt32(seconds))
+        }
+        return seconds.rounded() == seconds
+            ? "\(Int(seconds))s"
+            : String(format: "%.1fs", seconds)
     }
 
     private func publishSnapshotIfNeeded(force: Bool = false) {
