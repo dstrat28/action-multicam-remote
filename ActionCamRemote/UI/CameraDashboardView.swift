@@ -99,7 +99,7 @@ struct CameraDashboardView: View {
             }
             #endif
             .alert(
-                "Confirm Action Multicam",
+                "Confirm Pairing",
                 isPresented: Binding(
                     get: { store.nanoPairingConfirmation != nil },
                     set: { isPresented in
@@ -113,7 +113,7 @@ struct CameraDashboardView: View {
                     store.dismissNanoPairingConfirmation()
                 }
             } message: {
-                Text("On your Osmo Nano, choose Accept for Action Multicam. The camera may show MCAM, short for Multicam.")
+                Text("On your \(store.nanoPairingConfirmation?.cameraName ?? "camera"), choose Accept to pair with Multicam.")
             }
         }
     }
@@ -397,6 +397,7 @@ private struct PairingView: View {
             }
         }
         .listStyle(.insetGrouped)
+        .contentMargins(.top, 8, for: .scrollContent)
         .scrollContentBackground(.hidden)
         .background(Color.acrAppBackground)
         .navigationTitle("Manage Cameras")
@@ -423,6 +424,7 @@ private struct PairingView: View {
 private struct PairingCameraRow: View {
     @Environment(CameraStore.self) private var store
     var camera: DiscoveredCamera
+    private let actionLabelWidth: CGFloat = 72
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -453,6 +455,7 @@ private struct PairingCameraRow: View {
                         store.remove(camera)
                     } label: {
                         Text("Remove")
+                            .frame(width: actionLabelWidth)
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -462,6 +465,9 @@ private struct PairingCameraRow: View {
                         store.connect(camera)
                     } label: {
                         Text(pairButtonTitle)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
+                            .frame(width: actionLabelWidth)
                     }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
