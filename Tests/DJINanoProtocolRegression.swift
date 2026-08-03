@@ -40,6 +40,135 @@ enum DJINanoProtocolRegression {
         precondition(CaptureMode.djiNanoMode(for: status[57]) == .superNight)
         precondition(DJINanoProtocol.shootingModeByte(from: Data(repeating: 0, count: 57)) == nil)
 
+        precondition(commandSignature(DJINanoProtocol.sessionInfoCommand) == "88:00:32:3131000000")
+        let subscriptions = DJINanoProtocol.configSubscriptionCommands(startingAt: 0xCBD6)
+        precondition(subscriptions.count == 3)
+        precondition(subscriptions.map(\.destination).allSatisfy { $0 == 0x28 })
+        precondition(subscriptions.map(\.commandSet).allSatisfy { $0 == 0x00 })
+        precondition(subscriptions.map(\.commandID).allSatisfy { $0 == 0x99 })
+        precondition(subscriptions[0].payload.prefix(8) == Data([0x02, 0x02, 0x00, 0x00, 0xD6, 0xCB, 0x00, 0x00]))
+
+        let videoItem = DJINanoProtocol.configItem(
+            from: configItemPayload(name: "cam_video_param_v2", value: Data([0x10, 0x06]))
+        )
+        precondition(videoItem?.name == "cam_video_param_v2")
+        precondition(videoItem?.value == Data([0x10, 0x06]))
+        precondition(videoItem.flatMap(DJINanoProtocol.captureSettingUpdate) == .video(resolution: 0x10, frameRate: 0x06))
+
+        let photoItem = DJINanoProtocol.configItem(
+            from: configItemPayload(name: "cam_photo_param_new", value: Data([0x02, 0x15, 0x00, 0x04, 0x01]))
+        )
+        precondition(photoItem.flatMap(DJINanoProtocol.captureSettingUpdate) == .photo(size: 0x04, aspectRatio: 0x01))
+
+        let fovItem = DJINanoProtocol.configItem(
+            from: configItemPayload(name: "cam_fov", value: Data([0x05]))
+        )
+        precondition(fovItem.flatMap(DJINanoProtocol.captureSettingUpdate) == .fieldOfView(0x05))
+        precondition(DJINanoProtocol.configItem(from: Data([0x02, 0x06])) == nil)
+
+        precondition(
+            DJINanoProtocol.permitsAutomaticConnection(
+                currentAdvertisementAwake: true,
+                passiveReconnectBlocked: false,
+                hasUserInitiatedWakeIntent: false
+            )
+        )
+        precondition(
+            !DJINanoProtocol.permitsAutomaticConnection(
+                currentAdvertisementAwake: nil,
+                passiveReconnectBlocked: false,
+                hasUserInitiatedWakeIntent: false
+            )
+        )
+        precondition(
+            !DJINanoProtocol.permitsAutomaticConnection(
+                currentAdvertisementAwake: true,
+                passiveReconnectBlocked: true,
+                hasUserInitiatedWakeIntent: false
+            )
+        )
+        precondition(
+            DJINanoProtocol.permitsAutomaticConnection(
+                currentAdvertisementAwake: false,
+                passiveReconnectBlocked: true,
+                hasUserInitiatedWakeIntent: true
+            )
+        )
+        precondition(
+            DJINanoProtocol.confirmsFreshPowerOn(
+                previousAdvertisementAwake: false,
+                currentAdvertisementAwake: true
+            )
+        )
+        precondition(
+            !DJINanoProtocol.confirmsFreshPowerOn(
+                previousAdvertisementAwake: nil,
+                currentAdvertisementAwake: true
+            )
+        )
+        precondition(
+            DJINanoProtocol.isAuthoritativeShootingModeReadback(
+                commandSet: 0x02,
+                commandID: 0x80,
+                isResponse: false
+            )
+        )
+        precondition(
+            !DJINanoProtocol.isAuthoritativeShootingModeReadback(
+                commandSet: 0x02,
+                commandID: 0x80,
+                isResponse: true
+            )
+        )
+        precondition(
+            !DJINanoProtocol.isAuthoritativeShootingModeReadback(
+                commandSet: 0x02,
+                commandID: 0x11,
+                isResponse: true
+            )
+        )
+        precondition(
+            !DJINanoProtocol.isAuthoritativeShootingModeReadback(
+                commandSet: 0x02,
+                commandID: 0x70,
+                isResponse: true
+            )
+        )
+
+        let awakeObservedAt = Date(timeIntervalSince1970: 100)
+        precondition(
+            !DJINanoProtocol.hasStableAwakeAdvertisement(
+                isAwake: true,
+                observedSince: awakeObservedAt,
+                now: awakeObservedAt.addingTimeInterval(0.5),
+                minimumDuration: 1
+            )
+        )
+        precondition(
+            DJINanoProtocol.hasStableAwakeAdvertisement(
+                isAwake: true,
+                observedSince: awakeObservedAt,
+                now: awakeObservedAt.addingTimeInterval(1),
+                minimumDuration: 1
+            )
+        )
+        precondition(
+            !DJINanoProtocol.hasStableAwakeAdvertisement(
+                isAwake: false,
+                observedSince: awakeObservedAt,
+                now: awakeObservedAt.addingTimeInterval(2),
+                minimumDuration: 1
+            )
+        )
+        precondition(
+            !DJINanoProtocol.hasStableAwakeAdvertisement(
+                isAwake: true,
+                observedSince: nil,
+                now: awakeObservedAt.addingTimeInterval(2),
+                minimumDuration: 1
+            )
+        )
+
         print("DJI Nano protocol regression checks passed.")
     }
 
@@ -49,5 +178,24 @@ enum DJINanoProtocolRegression {
 
     private static func hex(_ data: Data) -> String {
         data.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func configItemPayload(name: String, value: Data) -> Data {
+        let nameBytes = Data(name.utf8)
+        var payload = Data([0x02, 0x06, 0x00, 0x00])
+        payload.append(contentsOf: [0xD6, 0xCB, 0x00, 0x00])
+        payload.append(contentsOf: [0x00, 0x00, 0x00])
+        appendLittleEndian(UInt16(nameBytes.count + 6), to: &payload)
+        appendLittleEndian(UInt16(nameBytes.count), to: &payload)
+        payload.append(nameBytes)
+        payload.append(contentsOf: [0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+        appendLittleEndian(UInt16(value.count), to: &payload)
+        payload.append(value)
+        return payload
+    }
+
+    private static func appendLittleEndian(_ value: UInt16, to data: inout Data) {
+        data.append(UInt8(value & 0xFF))
+        data.append(UInt8((value >> 8) & 0xFF))
     }
 }

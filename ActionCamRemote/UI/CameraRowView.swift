@@ -325,7 +325,10 @@ struct CameraRowView: View {
     }
 
     private var hasReceivedFreshCaptureSettings: Bool {
-        camera.telemetry?.captureSettingsUpdatedAt != captureSettingsTimestampBeforeModeChange
+        guard let captureSettingsUpdatedAt = camera.telemetry?.captureSettingsUpdatedAt else {
+            return false
+        }
+        return captureSettingsUpdatedAt != captureSettingsTimestampBeforeModeChange
     }
 
     private struct CaptureSummaryItem {

@@ -42,6 +42,10 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
     private var isNanoWriteScheduled = false
     private var lastNanoWriteDate = Date.distantPast
     private var hasStartedNanoSession = false
+    private var hasSentNanoConfigSubscriptions = false
+    private var nextNanoConfigSubscriptionID: UInt32 = 0xCBD6
+    private var nanoCaptureSettingUpdates: [String: DJINanoProtocol.CaptureSettingUpdate] = [:]
+    private var lastNanoCaptureMode: CaptureMode?
     private var nanoKeepAliveTimer: Timer?
     private var silentRSDKStatusSubscriptionSequences: Set<UInt16> = []
     private var dumlRouting: DJIDUMLRouting
@@ -144,6 +148,10 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
         isNanoWriteScheduled = false
         lastNanoWriteDate = .distantPast
         hasStartedNanoSession = false
+        hasSentNanoConfigSubscriptions = false
+        nextNanoConfigSubscriptionID = 0xCBD6
+        nanoCaptureSettingUpdates.removeAll()
+        lastNanoCaptureMode = nil
         nanoKeepAliveTimer?.invalidate()
         nanoKeepAliveTimer = nil
         silentRSDKStatusSubscriptionSequences.removeAll()
@@ -392,12 +400,13 @@ extension DJIExperimentalBLEClient {
         for frame in dumlFrames {
             onProtocolActivity(cameraID)
             updateDumlRouting(from: frame)
-            reportNanoPairingStatus(from: frame)
+            reportNanoPairingStatus(from: frame, to: peripheral)
             acknowledgeNanoRequestIfNeeded(frame, to: peripheral)
             reportLegacyDumlReadyIfNeeded(from: frame)
             applyDumlRecordingHint(from: frame)
             logDumlAck(from: frame)
             logDumlStatusPush(from: frame)
+            applyNanoConfigPush(from: frame)
             logUnhandledDumlPacket(from: frame)
         }
 
@@ -579,6 +588,38 @@ private extension DJIExperimentalBLEClient {
         }
     }
 
+    func enqueueNanoConfigSubscriptions(to peripheral: CBPeripheral, forceRefresh: Bool = false) {
+        guard cameraBehavior.kind == .djiOsmoNano,
+              rSDKWriteCharacteristic != nil,
+              forceRefresh || !hasSentNanoConfigSubscriptions else {
+            return
+        }
+
+        if !hasSentNanoConfigSubscriptions {
+            let sessionInfo = DJINanoProtocol.sessionInfoCommand
+            enqueueNanoWrite(
+                nanoFrame(for: sessionInfo),
+                label: sessionInfo.label,
+                to: peripheral
+            )
+        }
+
+        let commands = DJINanoProtocol.configSubscriptionCommands(
+            startingAt: nextNanoConfigSubscriptionID
+        )
+        nextNanoConfigSubscriptionID &+= UInt32(commands.count)
+        for command in commands {
+            enqueueNanoWrite(
+                nanoFrame(for: command),
+                label: command.label,
+                to: peripheral
+            )
+        }
+
+        hasSentNanoConfigSubscriptions = true
+        onLog("\(cameraName): subscribed to Nano capture-setting updates.")
+    }
+
     func acknowledgeNanoRequestIfNeeded(_ value: Data, to peripheral: CBPeripheral) {
         guard cameraBehavior.kind == .djiOsmoNano,
               let request = DJIDUMLIncomingPacket(data: value),
@@ -607,7 +648,7 @@ private extension DJIExperimentalBLEClient {
         )
     }
 
-    func reportNanoPairingStatus(from value: Data) {
+    func reportNanoPairingStatus(from value: Data, to peripheral: CBPeripheral) {
         guard cameraBehavior.kind == .djiOsmoNano,
               let packet = DJIDUMLIncomingPacket(data: value),
               packet.commandSet == 0x07 else {
@@ -618,8 +659,12 @@ private extension DJIExperimentalBLEClient {
            packet.commandID == 0x45,
            let status = DJINanoProtocol.pairingStatus(fromSetPairingResponse: packet.payload) {
             onNanoPairingStatus(cameraID, status)
+            if status == .alreadyPaired {
+                enqueueNanoConfigSubscriptions(to: peripheral)
+            }
         } else if !packet.isResponse, packet.commandID == 0x46 {
             onNanoPairingStatus(cameraID, .approved)
+            enqueueNanoConfigSubscriptions(to: peripheral)
         }
     }
 
@@ -1465,8 +1510,10 @@ private extension DJIExperimentalBLEClient {
             payload: Data([modeValue])
         )
         pendingModeUpdatesBySequence[packet.sequenceNumber] = mode
+        nanoCaptureSettingUpdates.removeAll()
         let modeName = mode.displayName(for: cameraModel)
         enqueueNanoWrite(packet.data, label: "Nano switch to \(modeName)", to: peripheral)
+        enqueueNanoConfigSubscriptions(to: peripheral, forceRefresh: true)
         return result(
             for: command,
             status: .sent,
@@ -1740,14 +1787,20 @@ private extension DJIExperimentalBLEClient {
         switch packet.commandID {
         case 0x11:
             guard let mode = statusPayload.first else { return nil }
-            if let captureMode = Self.captureMode(forDJIModeByte: mode) {
+            if cameraBehavior.kind != .djiOsmoNano,
+               let captureMode = Self.captureMode(forDJIModeByte: mode) {
                 onCameraStatus(cameraID, CameraStatusUpdate(currentMode: captureMode))
             }
-            return "mode \(Self.cameraStateModeLabel(mode))"
+            let authority = cameraBehavior.kind == .djiOsmoNano ? ", ignored as Nano shooting mode" : ""
+            return "mode \(Self.cameraStateModeLabel(mode))\(authority)"
         case 0x70:
             if let state = DJICameraStateSummary(payload: statusPayload) {
                 if shouldApplyLegacyDumlRecordingStatus {
-                    onCameraStatus(cameraID, cameraStatusUpdate(from: state))
+                    var update = cameraStatusUpdate(from: state)
+                    if cameraBehavior.kind == .djiOsmoNano {
+                        update.currentMode = nil
+                    }
+                    onCameraStatus(cameraID, update)
                 }
                 return state.debugLabel
             }
@@ -1788,6 +1841,20 @@ private extension DJIExperimentalBLEClient {
 
         guard let state = DJICameraStateSummary(payload: packet.payload) else { return }
 
+        let isAuthoritativeNanoModeReadback = cameraBehavior.kind == .djiOsmoNano
+            && DJINanoProtocol.isAuthoritativeShootingModeReadback(
+                commandSet: packet.commandSet,
+                commandID: packet.commandID,
+                isResponse: packet.isResponse
+            )
+
+        if isAuthoritativeNanoModeReadback,
+           let mode = state.captureMode,
+           mode != lastNanoCaptureMode {
+            lastNanoCaptureMode = mode
+            publishNanoCaptureSettingsIfAvailable()
+        }
+
         let now = Date()
         if state.debugLabel != lastCameraStateSummaryLabel
             || now.timeIntervalSince(lastCameraStateSummaryLogDate) >= 5 {
@@ -1799,6 +1866,9 @@ private extension DJIExperimentalBLEClient {
         let telemetry = cameraTelemetry(from: state)
         if shouldApplyLegacyDumlRecordingStatus {
             var update = cameraStatusUpdate(from: state)
+            if cameraBehavior.kind == .djiOsmoNano, !isAuthoritativeNanoModeReadback {
+                update.currentMode = nil
+            }
             update.telemetry = telemetry
             onCameraStatus(cameraID, update)
         } else if let telemetry {
@@ -1806,6 +1876,54 @@ private extension DJIExperimentalBLEClient {
             // does not include external power. Continue merging compact DUML telemetry.
             onCameraStatus(cameraID, CameraStatusUpdate(telemetry: telemetry))
         }
+    }
+
+    func applyNanoConfigPush(from value: Data) {
+        guard cameraBehavior.kind == .djiOsmoNano,
+              let packet = DJIDUMLIncomingPacket(data: value),
+              packet.isNanoConfigPush,
+              let item = DJINanoProtocol.configItem(from: packet.payload),
+              let update = DJINanoProtocol.captureSettingUpdate(from: item) else {
+            return
+        }
+
+        nanoCaptureSettingUpdates[item.name] = update
+        publishNanoCaptureSettingsIfAvailable()
+    }
+
+    func publishNanoCaptureSettingsIfAvailable() {
+        guard let mode = lastNanoCaptureMode else { return }
+
+        var telemetry = CameraTelemetry()
+        switch mode {
+        case .photo:
+            if case let .photo(size, aspectRatio)? = nanoCaptureSettingUpdates["cam_photo_param_new"] {
+                telemetry.videoResolution = DJIRSDKStatusPush.photoFormatLabel(size, cameraModel: cameraModel)
+                telemetry.photoAspectRatio = DJIRSDKStatusPush.photoAspectRatioLabel(aspectRatio)
+            }
+        case .slowMotion, .video, .timelapse, .hyperlapse, .superNight:
+            if case let .video(resolution, frameRate)? = nanoCaptureSettingUpdates["cam_video_param_v2"] {
+                telemetry.videoResolution = DJIRSDKStatusPush.videoResolutionLabel(resolution)
+                telemetry.frameRate = DJIRSDKStatusPush.frameRateLabel(frameRate)
+            }
+            if case let .fieldOfView(fieldOfView)? = nanoCaptureSettingUpdates["cam_fov"] {
+                telemetry.fieldOfViewType = fieldOfView
+                telemetry.framing = switch fieldOfView {
+                case 0x01: "Wide"
+                case 0x05: "Natural Wide"
+                default: nil
+                }
+            }
+        case .selfie, .boostVideo, .vortex, .panoramicSuperNight, .singleLensSuperNight:
+            break
+        }
+
+        guard !telemetry.isEmpty else { return }
+        let now = Date()
+        telemetry.captureSettingsUpdatedAt = now
+        telemetry.lastUpdated = now
+        onCameraStatus(cameraID, CameraStatusUpdate(telemetry: telemetry))
+        onLog("\(cameraName): Nano capture settings updated for \(mode.displayName(for: cameraModel)).")
     }
 
 #if DEBUG
@@ -2054,7 +2172,7 @@ private extension DJIExperimentalBLEClient {
            packet.isPocket3NoisyStatePacket {
             return false
         }
-        return !packet.isHighFrequencyStatePush
+        return !packet.isHighFrequencyStatePush && !packet.isNanoConfigPush
     }
 
     func nextDumlPacket(
@@ -2117,6 +2235,10 @@ private struct DJIDUMLIncomingPacket {
     var isCameraStatePush: Bool {
         (commandSet == 0x02 && commandID == 0x80)
             || (commandSet == 0x0D && commandID == 0x02)
+    }
+
+    var isNanoConfigPush: Bool {
+        !isResponse && commandSet == 0x00 && commandID == 0x99
     }
 
     var isPocket3NoisyStatePacket: Bool {
