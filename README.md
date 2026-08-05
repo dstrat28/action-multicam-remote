@@ -91,7 +91,7 @@ Thank you to these projects for helping make Multicam possible:
 
 - [dji-sdk/Osmo-GPS-Controller-Demo](https://github.com/dji-sdk/Osmo-GPS-Controller-Demo) for DJI's R SDK BLE, camera-control, status, and GPS reference implementation.
 - [gopro/OpenGoPro](https://github.com/gopro/OpenGoPro) for GoPro's official BLE interface specification, documentation, and demos.
-- [KonradIT/DJI-ESP32-Remote](https://github.com/KonradIT/DJI-ESP32-Remote) for Osmo Nano wake, pairing, and shooting-mode research.
+- [KonradIT/osmosis](https://github.com/KonradIT/osmosis) for DJI Osmo Nano DUML research and documentation.
 - [rhoenschrat/DJI-Remote](https://github.com/rhoenschrat/DJI-Remote) for DJI highlight-tag research.
 
 ## License
