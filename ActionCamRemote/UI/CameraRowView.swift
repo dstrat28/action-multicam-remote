@@ -661,6 +661,14 @@ struct CameraProductThumbnail: View {
         case .djiOsmo360:
             1.05
         case .djiOsmoPocket3,
+             .insta360AcePro2,
+             .insta360AcePro,
+             .insta360Ace,
+             .insta360X5,
+             .insta360X4Air,
+             .insta360X4,
+             .insta360X3,
+             .insta360OneRS,
              .unknown:
             1
         }
@@ -689,6 +697,14 @@ struct CameraProductThumbnail: View {
              .djiAction2,
              .djiOsmoAction,
              .djiOsmoPocket3,
+             .insta360AcePro2,
+             .insta360AcePro,
+             .insta360Ace,
+             .insta360X5,
+             .insta360X4Air,
+             .insta360X4,
+             .insta360X3,
+             .insta360OneRS,
              .unknown:
             0
         }
@@ -727,7 +743,16 @@ struct CameraProductThumbnail: View {
             "CameraGoProMax"
         case .goproHero8Black:
             "CameraGoProHero8"
-        case .djiOsmoPocket3, .unknown:
+        case .djiOsmoPocket3,
+             .insta360AcePro2,
+             .insta360AcePro,
+             .insta360Ace,
+             .insta360X5,
+             .insta360X4Air,
+             .insta360X4,
+             .insta360X3,
+             .insta360OneRS,
+             .unknown:
             nil
         }
     }
