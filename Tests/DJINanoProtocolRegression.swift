@@ -19,6 +19,28 @@ enum DJINanoProtocolRegression {
         precondition(commandSignature(sequence[2]) == "f0:00:2b:0101")
         precondition(commandSignature(sequence[3]) == "1c:53:10:00000000")
 
+        precondition(DJIPocket3Protocol.notifyPrimePayload == Data([0x01, 0x00]))
+        precondition(commandSignature(DJIPocket3Protocol.sessionOpenCommand) == "f0:00:2b:0400")
+        precondition(DJIPocket3Protocol.pairingCommand.destination == 0x07)
+        precondition(DJIPocket3Protocol.pairingCommand.commandSet == 0x07)
+        precondition(DJIPocket3Protocol.pairingCommand.commandID == 0x45)
+        precondition(DJIPocket3Protocol.pairingCommand.payload.first == 32)
+        precondition(DJIPocket3Protocol.pairingCommand.payload.suffix(5) == Data([4, 0x6F, 0x73, 0x6D, 0x6F]))
+        precondition(commandSignature(DJIPocket3Protocol.keepAliveCommand) == "f0:00:2b:0101")
+        precondition(commandSignature(DJIPocket3Protocol.wakeCommand) == "1c:53:10:00000000")
+
+        let pocketRecordFrame = DJINanoProtocol.frame(
+            sequenceNumber: 0x1234,
+            destination: 0x01,
+            commandSet: 0x02,
+            commandID: 0x02,
+            payload: Data([0x01])
+        )
+        precondition(pocketRecordFrame[4] == 0x02 && pocketRecordFrame[5] == 0x01)
+        precondition(pocketRecordFrame[8] == 0x40)
+        precondition(pocketRecordFrame[9] == 0x02 && pocketRecordFrame[10] == 0x02)
+        precondition(pocketRecordFrame[11] == 0x01)
+
         let wakeFrame = DJINanoProtocol.frame(
             sequenceNumber: 0x1234,
             destination: sequence[3].destination,

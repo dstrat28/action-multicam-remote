@@ -37,6 +37,16 @@ enum DJIWakeEligibilityRegression {
         precondition(pairedNano.canWakeFromSleep, "A paired, advertising Nano should expose Wake")
         precondition(pairedNano.displayConnectionLabel == "Available", "A wakeable Nano should show Available")
 
+        let pocket3 = makeCamera(model: .djiOsmoPocket3, state: .connected)
+        precondition(pocket3.isSupportedByApp, "Pocket 3 should be enabled for the BLE hardware test")
+        precondition(pocket3.behavior.usesLegacyDJIControl, "Pocket 3 should use the DUML BLE control path")
+        precondition(!pocket3.behavior.usesDJIRSDKControl, "Pocket 3 must not use Action-family R SDK commands")
+        precondition(!pocket3.supportsExperimentalDJISleepWake, "Pocket 3 wake must remain hidden until hardware verification")
+        precondition(!pocket3.supportsDJIPhoneGPS, "Pocket 3 must not expose the incompatible R SDK GPS option")
+        precondition(pocket3.availableCaptureModes.isEmpty, "Pocket 3 mode switching must remain hidden during record-only testing")
+        precondition(pocket3.supportsBatchRecord, "A connected Pocket 3 should expose recording control")
+        precondition(pocket3.canSelectForBatch, "A connected Pocket 3 should be selectable for BLE recording tests")
+
         var goPro = DiscoveredCamera(
             id: UUID(),
             name: "GoPro HERO13 Black",

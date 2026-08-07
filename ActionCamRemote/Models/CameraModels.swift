@@ -739,7 +739,7 @@ struct CameraBehaviorProfile: Equatable {
     }
 
     var usesLegacyDJIControl: Bool {
-        kind == .djiOsmoNano
+        kind == .djiOsmoNano || kind == .djiOsmoPocket3
     }
 }
 
@@ -799,7 +799,8 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
              .djiOsmoAction5Pro,
              .djiOsmoAction6,
              .djiOsmo360,
-             .djiOsmoNano:
+             .djiOsmoNano,
+             .djiOsmoPocket3:
             return true
         case .goproHero,
              .goproMax,
@@ -807,7 +808,6 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
              .djiOsmoAction3,
              .djiAction2,
              .djiOsmoAction,
-             .djiOsmoPocket3,
              .unknown:
             break
         }
@@ -842,7 +842,8 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
                  .djiOsmoAction5Pro,
                  .djiOsmoAction6,
                  .djiOsmo360,
-                 .djiOsmoNano:
+                 .djiOsmoNano,
+                 .djiOsmoPocket3:
                 return true
             case .goproLitHero,
                  .goproMax2,
@@ -858,7 +859,6 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
                  .djiOsmoAction3,
                  .djiAction2,
                  .djiOsmoAction,
-                 .djiOsmoPocket3,
                  .unknown:
                 return false
             }

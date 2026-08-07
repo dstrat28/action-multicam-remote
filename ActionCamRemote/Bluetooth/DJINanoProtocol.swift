@@ -317,6 +317,59 @@ struct DJINanoProtocol {
     }
 }
 
+struct DJIPocket3Protocol {
+    static let notifyPrimePayload = Data([0x01, 0x00])
+    static let pairingToken = "osmo"
+
+    private static let pairingIdentifier = "5f8e0d34c1a749b6a2713e90d4c25f68"
+
+    static let sessionOpenCommand = DJINanoProtocol.Command(
+        label: "Pocket 3 session open",
+        destination: DJINanoProtocol.sessionAddress,
+        commandSet: 0x00,
+        commandID: 0x2B,
+        payload: Data([0x04, 0x00])
+    )
+
+    static let pairingCommand = DJINanoProtocol.Command(
+        label: "Pocket 3 SetPairingPIN",
+        destination: DJINanoProtocol.wifiAddress,
+        commandSet: 0x07,
+        commandID: 0x45,
+        payload: pairingPayload
+    )
+
+    static let keepAliveCommand = DJINanoProtocol.Command(
+        label: "Pocket 3 session keepalive",
+        destination: DJINanoProtocol.sessionAddress,
+        commandSet: 0x00,
+        commandID: 0x2B,
+        payload: Data([0x01, 0x01])
+    )
+
+    static let wakeCommand = DJINanoProtocol.Command(
+        label: "Pocket 3 wake",
+        destination: DJINanoProtocol.systemAddress,
+        commandSet: 0x53,
+        commandID: 0x10,
+        payload: Data([0x00, 0x00, 0x00, 0x00])
+    )
+
+    private static var pairingPayload: Data {
+        var payload = Data()
+        appendPackedString(pairingIdentifier, to: &payload)
+        appendPackedString(pairingToken, to: &payload)
+        return payload
+    }
+
+    private static func appendPackedString(_ value: String, to data: inout Data) {
+        let bytes = Data(value.utf8)
+        precondition(bytes.count <= UInt8.max)
+        data.append(UInt8(bytes.count))
+        data.append(bytes)
+    }
+}
+
 private extension Data {
     func byte(at offset: Int) -> UInt8? {
         guard offset >= 0, offset < count else { return nil }

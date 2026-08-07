@@ -47,6 +47,10 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
     private var nanoCaptureSettingUpdates: [String: DJINanoProtocol.CaptureSettingUpdate] = [:]
     private var lastNanoCaptureMode: CaptureMode?
     private var nanoKeepAliveTimer: Timer?
+    private var hasStartedPocket3Session = false
+    private var isPocket3NotifyPrimePending = false
+    private var hasPrimedPocket3NotifyValue = false
+    private var hasCompletedPocket3Pairing = false
     private var silentRSDKStatusSubscriptionSequences: Set<UInt16> = []
     private var dumlRouting: DJIDUMLRouting
     private var sequenceNumber: UInt16 = UInt16.random(in: .min ... .max)
@@ -121,8 +125,8 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
     func didConnect() {
         peripheral?.delegate = self
         peripheral?.discoverServices(nil)
-        if cameraBehavior.kind == .djiOsmoNano {
-            onLog("\(cameraName): DJI Nano BLE connected; discovering legacy DUML characteristics.")
+        if cameraBehavior.usesLegacyDJIControl {
+            onLog("\(cameraName): DJI BLE connected; discovering DUML control characteristics.")
         } else {
             onLog("\(cameraName): DJI BLE connected; discovering R SDK characteristics.")
         }
@@ -154,6 +158,10 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
         lastNanoCaptureMode = nil
         nanoKeepAliveTimer?.invalidate()
         nanoKeepAliveTimer = nil
+        hasStartedPocket3Session = false
+        isPocket3NotifyPrimePending = false
+        hasPrimedPocket3NotifyValue = false
+        hasCompletedPocket3Pairing = false
         silentRSDKStatusSubscriptionSequences.removeAll()
         pendingRecordActionsBySequence.removeAll()
         pendingModeUpdatesBySequence.removeAll()
@@ -358,12 +366,15 @@ extension DJIExperimentalBLEClient {
             }
         }
 
-        if cameraBehavior.kind == .djiOsmoNano,
+        if cameraBehavior.usesLegacyDJIControl,
            rSDKWriteCharacteristic != nil || !writeTargets.isEmpty {
-            onStatus(cameraID, .connecting, "DJI Nano control ready; waiting for camera status.")
+            onStatus(cameraID, .connecting, "DJI DUML characteristics ready; initializing the camera session.")
             if rSDKWriteCharacteristic != nil {
-                if rSDKNotifyCharacteristic?.isNotifying == true {
+                if cameraBehavior.kind == .djiOsmoNano,
+                   rSDKNotifyCharacteristic?.isNotifying == true {
                     startNanoSessionIfReady(to: peripheral)
+                } else if cameraBehavior.kind == .djiOsmoPocket3 {
+                    startPocket3SessionIfReady(to: peripheral)
                 }
             } else if hasConfirmedAwakeNanoAdvertisement {
                 onLog("\(cameraName): awake Nano advertisement confirmed; requesting legacy camera status.")
@@ -400,8 +411,8 @@ extension DJIExperimentalBLEClient {
         for frame in dumlFrames {
             onProtocolActivity(cameraID)
             updateDumlRouting(from: frame)
-            reportNanoPairingStatus(from: frame, to: peripheral)
-            acknowledgeNanoRequestIfNeeded(frame, to: peripheral)
+            acknowledgeDumlRequestIfNeeded(frame, to: peripheral)
+            reportDumlPairingStatus(from: frame, to: peripheral)
             reportLegacyDumlReadyIfNeeded(from: frame)
             applyDumlRecordingHint(from: frame)
             logDumlAck(from: frame)
@@ -420,6 +431,25 @@ extension DJIExperimentalBLEClient {
         didWriteValueFor characteristic: CBCharacteristic,
         error: Error?
     ) {
+        if cameraBehavior.kind == .djiOsmoPocket3,
+           characteristic.uuid == DJIRSDKBLEUUID.notifyCharacteristic,
+           isPocket3NotifyPrimePending {
+            isPocket3NotifyPrimePending = false
+            if let error {
+                onLog("\(cameraName): Pocket 3 FFF4 initialization failed: \(error.localizedDescription)")
+                onStatus(cameraID, .failed("Pocket 3 rejected the BLE session initialization."), nil)
+                return
+            }
+
+            hasPrimedPocket3NotifyValue = true
+            onLog("\(cameraName): Pocket 3 FFF4 value initialized; allowing the camera to settle before DUML traffic.")
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(200)) { [weak self, weak peripheral] in
+                guard let self, let peripheral, self.peripheral === peripheral else { return }
+                self.beginPocket3Pairing(to: peripheral)
+            }
+            return
+        }
+
         if let error {
             onLog("\(cameraName): DJI write to \(characteristic.uuid.uuidString) failed: \(error.localizedDescription)")
         }
@@ -430,13 +460,25 @@ extension DJIExperimentalBLEClient {
         didUpdateNotificationStateFor characteristic: CBCharacteristic,
         error: Error?
     ) {
-        guard characteristic.uuid == DJIRSDKBLEUUID.notifyCharacteristic else { return }
+        let isDumlCharacteristic = characteristic.uuid == DJIRSDKBLEUUID.notifyCharacteristic
+            || characteristic.uuid == DJIRSDKBLEUUID.writeCharacteristic
+        guard isDumlCharacteristic else { return }
 
         if let error {
-            let protocolName = cameraBehavior.kind == .djiOsmoNano ? "DJI Nano" : "DJI R SDK"
+            let protocolName = cameraBehavior.usesLegacyDJIControl ? "DJI DUML" : "DJI R SDK"
             onLog("\(cameraName): \(protocolName) notify enable failed: \(error.localizedDescription)")
             return
         }
+
+        if cameraBehavior.kind == .djiOsmoPocket3 {
+            onLog(
+                "\(cameraName): Pocket 3 notifications \(characteristic.isNotifying ? "enabled" : "disabled") on \(characteristic.debugLabel)."
+            )
+            startPocket3SessionIfReady(to: peripheral)
+            return
+        }
+
+        guard characteristic.uuid == DJIRSDKBLEUUID.notifyCharacteristic else { return }
 
         if characteristic.isNotifying {
             if cameraBehavior.kind == .djiOsmoNano {
@@ -474,10 +516,11 @@ private extension DJIExperimentalBLEClient {
     }
 
     func rSDKNotReadyResult(for command: CameraCommand) -> CameraCommandResult {
-        result(
+        let protocolName = cameraBehavior.usesLegacyDJIControl ? "DJI BLE" : "DJI R SDK"
+        return result(
             for: command,
             status: .skipped,
-            message: "DJI R SDK control is not ready. Wait for the camera to finish connecting."
+            message: "\(protocolName) control is not ready. Wait for the camera to finish connecting."
         )
     }
 
@@ -508,6 +551,69 @@ private extension DJIExperimentalBLEClient {
         startNanoKeepAlive(to: peripheral)
     }
 
+    func startPocket3SessionIfReady(to peripheral: CBPeripheral) {
+        guard cameraBehavior.kind == .djiOsmoPocket3,
+              !hasStartedPocket3Session,
+              let writeCharacteristic = rSDKWriteCharacteristic,
+              let notifyCharacteristic = rSDKNotifyCharacteristic,
+              writeCharacteristic.isNotifying,
+              notifyCharacteristic.isNotifying else {
+            return
+        }
+
+        guard notifyCharacteristic.properties.contains(.write) else {
+            onLog("\(cameraName): Pocket 3 FFF4 does not expose the required write-with-response property.")
+            onStatus(cameraID, .failed("Pocket 3 BLE initialization is unavailable on this firmware."), nil)
+            return
+        }
+
+        hasStartedPocket3Session = true
+        isPocket3NotifyPrimePending = true
+        onStatus(cameraID, .connecting, "Initializing the Pocket 3 BLE control session.")
+        onLog("\(cameraName): Pocket 3 FFF4/FFF5 notifications are enabled; writing the FFF4 initialization value.")
+        peripheral.writeValue(
+            DJIPocket3Protocol.notifyPrimePayload,
+            for: notifyCharacteristic,
+            type: .withResponse
+        )
+    }
+
+    func beginPocket3Pairing(to peripheral: CBPeripheral) {
+        guard cameraBehavior.kind == .djiOsmoPocket3,
+              hasPrimedPocket3NotifyValue,
+              !hasCompletedPocket3Pairing else {
+            return
+        }
+
+        for command in [DJIPocket3Protocol.sessionOpenCommand, DJIPocket3Protocol.pairingCommand] {
+            enqueueNanoWrite(
+                nanoFrame(for: command),
+                label: command.label,
+                to: peripheral
+            )
+        }
+        onLog("\(cameraName): Pocket 3 session opened; waiting for the pairing reply before wake or control traffic.")
+    }
+
+    func completePocket3Pairing(to peripheral: CBPeripheral) {
+        guard cameraBehavior.kind == .djiOsmoPocket3,
+              !hasCompletedPocket3Pairing else {
+            return
+        }
+
+        hasCompletedPocket3Pairing = true
+        for command in [DJIPocket3Protocol.keepAliveCommand, DJIPocket3Protocol.wakeCommand] {
+            enqueueNanoWrite(
+                nanoFrame(for: command),
+                label: command.label,
+                to: peripheral
+            )
+        }
+        startPocket3KeepAlive(to: peripheral)
+        onStatus(cameraID, .connecting, "Pocket 3 pairing accepted; waiting for camera status.")
+        onLog("\(cameraName): Pocket 3 pairing completed; queued keepalive and wake after the pairing reply.")
+    }
+
     func nanoFrame(for command: DJINanoProtocol.Command) -> Data {
         let seq = sequenceNumber
         sequenceNumber &+= 1
@@ -526,7 +632,10 @@ private extension DJIExperimentalBLEClient {
         to peripheral: CBPeripheral,
         priority: Bool = false
     ) {
-        if label == DJINanoProtocol.keepAliveCommand.label || label == "Nano status poll" {
+        if label == DJINanoProtocol.keepAliveCommand.label
+            || label == DJIPocket3Protocol.keepAliveCommand.label
+            || label == "Nano status poll"
+            || label == "Pocket 3 status poll" {
             pendingNanoWrites.removeAll { $0.label == label }
         }
 
@@ -540,7 +649,7 @@ private extension DJIExperimentalBLEClient {
     }
 
     func drainNanoWrites(to peripheral: CBPeripheral) {
-        guard cameraBehavior.kind == .djiOsmoNano,
+        guard cameraBehavior.usesLegacyDJIControl,
               !isNanoWriteScheduled,
               !pendingNanoWrites.isEmpty,
               let characteristic = rSDKWriteCharacteristic,
@@ -588,6 +697,22 @@ private extension DJIExperimentalBLEClient {
         }
     }
 
+    func startPocket3KeepAlive(to peripheral: CBPeripheral) {
+        nanoKeepAliveTimer?.invalidate()
+        nanoKeepAliveTimer = commonModeTimer(withTimeInterval: 1, repeats: true) { [weak self, weak peripheral] timer in
+            guard let self, let peripheral, self.peripheral === peripheral else {
+                timer.invalidate()
+                return
+            }
+            let command = DJIPocket3Protocol.keepAliveCommand
+            self.enqueueNanoWrite(
+                self.nanoFrame(for: command),
+                label: command.label,
+                to: peripheral
+            )
+        }
+    }
+
     func enqueueNanoConfigSubscriptions(to peripheral: CBPeripheral, forceRefresh: Bool = false) {
         guard cameraBehavior.kind == .djiOsmoNano,
               rSDKWriteCharacteristic != nil,
@@ -620,8 +745,8 @@ private extension DJIExperimentalBLEClient {
         onLog("\(cameraName): subscribed to Nano capture-setting updates.")
     }
 
-    func acknowledgeNanoRequestIfNeeded(_ value: Data, to peripheral: CBPeripheral) {
-        guard cameraBehavior.kind == .djiOsmoNano,
+    func acknowledgeDumlRequestIfNeeded(_ value: Data, to peripheral: CBPeripheral) {
+        guard cameraBehavior.usesLegacyDJIControl,
               let request = DJIDUMLIncomingPacket(data: value),
               !request.isResponse,
               request.flags & 0x40 == 0x40 else {
@@ -642,14 +767,14 @@ private extension DJIExperimentalBLEClient {
         )
         enqueueNanoWrite(
             response,
-            label: "Nano ACK \(request.commandSet.hexByte)/\(request.commandID.hexByte)",
+            label: "DUML ACK \(request.commandSet.hexByte)/\(request.commandID.hexByte)",
             to: peripheral,
             priority: true
         )
     }
 
-    func reportNanoPairingStatus(from value: Data, to peripheral: CBPeripheral) {
-        guard cameraBehavior.kind == .djiOsmoNano,
+    func reportDumlPairingStatus(from value: Data, to peripheral: CBPeripheral) {
+        guard cameraBehavior.usesLegacyDJIControl,
               let packet = DJIDUMLIncomingPacket(data: value),
               packet.commandSet == 0x07 else {
             return
@@ -658,13 +783,33 @@ private extension DJIExperimentalBLEClient {
         if packet.isResponse,
            packet.commandID == 0x45,
            let status = DJINanoProtocol.pairingStatus(fromSetPairingResponse: packet.payload) {
-            onNanoPairingStatus(cameraID, status)
-            if status == .alreadyPaired {
+            if cameraBehavior.kind == .djiOsmoNano {
+                onNanoPairingStatus(cameraID, status)
+            } else {
+                switch status {
+                case .alreadyPaired:
+                    onLog("\(cameraName): Pocket 3 reports that this controller is already paired.")
+                    completePocket3Pairing(to: peripheral)
+                case .approvalRequired:
+                    onStatus(cameraID, .connecting, "Approve the Bluetooth connection on your Pocket 3.")
+                    onLog("\(cameraName): Pocket 3 is waiting for on-camera pairing approval.")
+                case let .unexpected(value):
+                    onLog("\(cameraName): Pocket 3 returned unexpected pairing status 0x\(value.hexByte).")
+                case .approved:
+                    break
+                }
+            }
+            if cameraBehavior.kind == .djiOsmoNano, status == .alreadyPaired {
                 enqueueNanoConfigSubscriptions(to: peripheral)
             }
         } else if !packet.isResponse, packet.commandID == 0x46 {
-            onNanoPairingStatus(cameraID, .approved)
-            enqueueNanoConfigSubscriptions(to: peripheral)
+            if cameraBehavior.kind == .djiOsmoNano {
+                onNanoPairingStatus(cameraID, .approved)
+                enqueueNanoConfigSubscriptions(to: peripheral)
+            } else {
+                onLog("\(cameraName): Pocket 3 pairing was approved on-camera.")
+                completePocket3Pairing(to: peripheral)
+            }
         }
     }
 
@@ -734,7 +879,7 @@ private extension DJIExperimentalBLEClient {
 #endif
 
     func completeLegacyDumlHandshakeIfNeeded(to peripheral: CBPeripheral) {
-        guard cameraBehavior.kind == .djiOsmoNano,
+        guard cameraBehavior.usesLegacyDJIControl,
               !hasCompletedRSDKHandshake,
               !hasCompletedLegacyDumlHandshake,
               rSDKWriteCharacteristic != nil || !writeTargets.isEmpty else {
@@ -742,14 +887,14 @@ private extension DJIExperimentalBLEClient {
         }
 
         hasCompletedLegacyDumlHandshake = true
-        onLog("\(cameraName): valid DJI DUML activity received; legacy Nano protocol is ready.")
-        onStatus(cameraID, .connecting, "DJI Nano protocol detected; waiting for camera status.")
+        onLog("\(cameraName): valid DJI DUML activity received; the BLE protocol is responding.")
+        onStatus(cameraID, .connecting, "DJI BLE protocol detected; waiting for camera status.")
         scheduleInitialStatusProbe(to: peripheral)
         startStatusPolling(to: peripheral)
     }
 
     func reportLegacyDumlReadyIfNeeded(from value: Data) {
-        guard cameraBehavior.kind == .djiOsmoNano,
+        guard cameraBehavior.usesLegacyDJIControl,
               hasCompletedLegacyDumlHandshake,
               !hasCompletedRSDKHandshake,
               !hasReportedLegacyDumlReady,
@@ -762,8 +907,8 @@ private extension DJIExperimentalBLEClient {
         guard isCameraResponse || isCameraStatePush else { return }
 
         hasReportedLegacyDumlReady = true
-        onLog("\(cameraName): DJI Nano returned camera status; legacy control is ready.")
-        onStatus(cameraID, .connected, "DJI Nano protocol ready.")
+        onLog("\(cameraName): DJI camera returned status; BLE control is ready.")
+        onStatus(cameraID, .connected, "DJI BLE control ready.")
     }
 
     func shouldTrackLegacyWriteCandidate(_ candidate: DJIWritableCharacteristic) -> Bool {
@@ -795,7 +940,7 @@ private extension DJIExperimentalBLEClient {
     }
 
     func bootstrapRSDKIfReady(to peripheral: CBPeripheral) {
-        guard cameraBehavior.kind != .djiOsmoNano else { return }
+        guard !cameraBehavior.usesLegacyDJIControl else { return }
         guard rSDKWriteCharacteristic != nil, let notify = rSDKNotifyCharacteristic else { return }
         guard notify.isNotifying else { return }
         guard !hasSentRSDKConnectionRequest else { return }
@@ -1385,7 +1530,7 @@ private extension DJIExperimentalBLEClient {
             protectAgainstStaleStoppedStatusAfterStart()
         }
 
-        if cameraBehavior.kind == .djiOsmoNano,
+        if cameraBehavior.usesLegacyDJIControl,
            rSDKWriteCharacteristic != nil {
             for burstIndex in 0 ..< burstCount {
                 let packets = djiRecordPackets(for: action)
@@ -1404,7 +1549,7 @@ private extension DJIExperimentalBLEClient {
             return result(
                 for: command,
                 status: .sent,
-                message: "Queued \(packetCount) paced DJI Nano \(action.isStarting ? "start" : "stop") record packets."
+                message: "Queued \(packetCount) paced \(cameraModel.rawValue) \(action.isStarting ? "start" : "stop") record packet\(packetCount == 1 ? "" : "s")."
             )
         }
 
@@ -1440,6 +1585,19 @@ private extension DJIExperimentalBLEClient {
     }
 
     func djiRecordPackets(for action: RecordAction) -> [DJICommandPacket] {
+        if cameraBehavior.kind == .djiOsmoPocket3 {
+            return [
+                DJICommandPacket(
+                    label: "Pocket 3 camera do record \(action.isStarting ? "on" : "off")",
+                    command: nextDumlPacket(
+                        commandSet: 0x02,
+                        commandID: 0x02,
+                        payload: Data([action.isStarting ? 0x01 : 0x00])
+                    )
+                )
+            ]
+        }
+
         var packets = [
             DJICommandPacket(
                 label: action.isStarting ? "special start video" : "special stop video",
@@ -1541,7 +1699,7 @@ private extension DJIExperimentalBLEClient {
         shouldLog: Bool
     ) {
         let packets = djiStatusProbePackets(includeExtendedProbes: includeExtendedProbes)
-        if cameraBehavior.kind == .djiOsmoNano,
+        if cameraBehavior.usesLegacyDJIControl,
            rSDKWriteCharacteristic != nil {
             for packet in packets {
                 if shouldLog {
@@ -1549,7 +1707,9 @@ private extension DJIExperimentalBLEClient {
                 }
                 enqueueNanoWrite(
                     packet.data,
-                    label: shouldLog ? "status probe \(packet.label)" : "Nano status poll",
+                    label: shouldLog
+                        ? "status probe \(packet.label)"
+                        : (cameraBehavior.kind == .djiOsmoPocket3 ? "Pocket 3 status poll" : "Nano status poll"),
                     to: peripheral
                 )
             }
@@ -1667,25 +1827,18 @@ private extension DJIExperimentalBLEClient {
     }
 
     var stopCommandBurstCount: Int {
-        shouldUseNanoStopFallbacks ? 3 : 2
+        if shouldUseNanoStopFallbacks {
+            return 3
+        }
+        return cameraBehavior.kind == .djiOsmoPocket3 ? 1 : 2
     }
 
     var cameraBehavior: CameraBehaviorProfile {
         CameraBehaviorProfile.resolve(brand: .dji, model: cameraModel, name: cameraName)
     }
 
-    static func defaultDumlRouting(cameraModel: CameraModel, cameraName: String) -> DJIDUMLRouting {
-        let profile = CameraBehaviorProfile.resolve(
-            brand: .dji,
-            model: cameraModel,
-            name: cameraName
-        )
-
-        if profile.kind == .djiOsmoPocket3 {
-            return DJIDUMLRouting(appAddress: 0x02, cameraAddress: 0x04)
-        }
-
-        return .default
+    static func defaultDumlRouting(cameraModel _: CameraModel, cameraName _: String) -> DJIDUMLRouting {
+        .default
     }
 
     func updateDumlRouting(from value: Data) {
