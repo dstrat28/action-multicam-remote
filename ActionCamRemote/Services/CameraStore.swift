@@ -26,6 +26,7 @@ final class CameraStore {
     private(set) var djiPhoneGPSCameraIDs: Set<UUID> = []
 
     @ObservationIgnored private let scanner: BLECameraScanner
+    @ObservationIgnored private var insta360Remote: Insta360RemoteService?
     @ObservationIgnored private let phoneGPSProvider = PhoneGPSProvider()
     @ObservationIgnored private let recordingLiveActivityController = RecordingLiveActivityController()
     @ObservationIgnored private var liveActivityStopObserver: NSObjectProtocol?
@@ -155,6 +156,21 @@ final class CameraStore {
         } else if !pairedCameras.isEmpty {
             startScanning()
         }
+    }
+
+    private func insta360RemoteService() -> Insta360RemoteService {
+        if let insta360Remote {
+            return insta360Remote
+        }
+
+        let service = Insta360RemoteService()
+        service.onEvent = { [weak self] event in
+            Task { @MainActor in
+                self?.handleInsta360(event)
+            }
+        }
+        insta360Remote = service
+        return service
     }
 
     var selectedCameras: [DiscoveredCamera] {
@@ -465,6 +481,19 @@ final class CameraStore {
             return
         }
 
+
+        if camera.brand == .insta360 {
+            lastConnectionAttemptByID[camera.id] = Date()
+            updateCamera(camera.id, state: .connecting, detail: nil)
+            setCameraDiagnostic(
+                "On the camera, open Bluetooth Remote settings and connect to \(Insta360RemoteProtocol.remoteName). Keep Multicam open while pairing.",
+                for: camera
+            )
+            scheduleConnectionTimeout(for: camera.id)
+            insta360RemoteService().requestConnection(cameraID: camera.id, cameraName: camera.name)
+            return
+        }
+
         if !camera.isPaired, isPairingModeActive {
             if !pendingManualPairCameraIDs.contains(camera.id) {
                 manualPairConnectionFailuresByCameraID[camera.id] = 0
@@ -533,6 +562,8 @@ final class CameraStore {
                     Task { @MainActor in self?.appendLog(message) }
                 }
             )
+        case .insta360:
+            return
         case .unknown:
             updateCamera(camera.id, state: .unsupported("Unknown camera brand."), detail: nil)
             return
@@ -564,7 +595,12 @@ final class CameraStore {
             return
         }
 
-        scanner.disconnect(from: camera.id)
+        if camera.brand == .insta360 {
+            insta360Remote?.release(cameraID: camera.id)
+            updateCamera(camera.id, state: .disconnected, detail: "Insta360 remote control released.")
+        } else {
+            scanner.disconnect(from: camera.id)
+        }
     }
 
     func wake(_ camera: DiscoveredCamera) {
@@ -826,6 +862,27 @@ private extension CameraStore {
         }
     }
 
+    func handleInsta360(_ event: Insta360RemoteEvent) {
+        switch event {
+        case let .bluetoothStateChanged(state):
+            if state != .poweredOn {
+                appendLog("Insta360 remote Bluetooth state: \(state.displayName).")
+            }
+        case let .cameraConnected(id):
+            updateCamera(
+                id,
+                state: .connected,
+                detail: "Insta360 GPS Remote connected. Recording status is confirmed from camera timer packets."
+            )
+        case let .cameraDisconnected(id):
+            updateCamera(id, state: .disconnected, detail: "Insta360 camera left the GPS Remote service.")
+        case let .cameraStatus(id, update):
+            updateCameraStatus(id, update: update)
+        case let .log(message):
+            appendLog(message)
+        }
+    }
+
     func merge(_ candidate: DiscoveredCameraCandidate) {
         var shouldAutoConnect = false
         var shouldSort = false
@@ -1005,7 +1062,8 @@ private extension CameraStore {
                         let isWakeableGoPro = candidate.brand == .gopro
                             && cameras[index].isPaired
                             && candidate.isAwake == false
-                        cameras[index].connectionState = isAwakeGoPro || isWakeableGoPro || isExplicitWakeTarget
+                        let isAvailableInsta360 = candidate.brand == .insta360
+                        cameras[index].connectionState = isAwakeGoPro || isWakeableGoPro || isExplicitWakeTarget || isAvailableInsta360
                             ? .discovered
                             : .disconnected
                         clearSelectionIfNotConnected(at: index)
@@ -1084,7 +1142,8 @@ private extension CameraStore {
                     rssi: candidate.rssi,
                     capabilities: capabilities,
                     connectionState: unsupportedReason.map(CameraConnectionState.unsupported)
-                        ?? (candidate.brand == .gopro && isConnectable && candidate.isAwake == true
+                        ?? (((candidate.brand == .gopro && candidate.isAwake == true)
+                                || candidate.brand == .insta360) && isConnectable
                             ? .discovered
                             : .disconnected),
                     recordingState: unsupportedReason == nil && capabilities.contains(.record) ? .unknown : .unavailable,
@@ -1109,6 +1168,7 @@ private extension CameraStore {
         }
 
         let shouldTrackDiscoverableAvailability = candidate.brand == .gopro
+            || candidate.brand == .insta360
             || (isNanoAdvertisement && candidate.isAwake == false)
         if cameras.first(where: { $0.id == candidate.id })?.isSupportedByApp == true,
            shouldTrackDiscoverableAvailability,
@@ -1129,6 +1189,17 @@ private extension CameraStore {
         currentAdvertisementAwake: Bool? = nil,
         hadExplicitNanoWakeIntent: Bool = false
     ) -> Bool {
+        if camera.brand == .insta360 {
+            let hasQueuedCommand = pendingStartCameraIDs.contains(camera.id)
+                || pendingStopCameraIDs.contains(camera.id)
+            guard camera.isPaired || hasQueuedCommand else { return false }
+            if let lastAttempt = lastConnectionAttemptByID[camera.id],
+               now.timeIntervalSince(lastAttempt) < autoConnectRetryCooldownInterval {
+                return false
+            }
+            return camera.isAvailableToConnect
+        }
+
         if camera.brand == .dji {
             let hasQueuedCommand = pendingStartCameraIDs.contains(camera.id)
                 || pendingStopCameraIDs.contains(camera.id)
@@ -1382,7 +1453,11 @@ private extension CameraStore {
                     return
                 }
 
-                self.scanner.disconnect(from: id)
+                if latest.brand == .insta360 {
+                    self.insta360Remote?.release(cameraID: id)
+                } else {
+                    self.scanner.disconnect(from: id)
+                }
                 self.clients[id] = nil
 
                 if isPassiveDJIProbe {
@@ -1566,6 +1641,10 @@ private extension CameraStore {
                 return .seconds(10)
             }
             return goProProtocolConnectionTimeoutDelay
+        }
+
+        if camera.brand == .insta360 {
+            return .seconds(30)
         }
 
         return defaultConnectionTimeoutDelay
@@ -1987,6 +2066,8 @@ private extension CameraStore {
             isReady = detail?.contains("Open GoPro protocol ready") == true
         case .dji:
             isReady = isDJIControlReady(detail: detail)
+        case .insta360:
+            isReady = detail?.contains("Insta360 GPS Remote connected") == true
         case .unknown:
             isReady = false
         }
@@ -2314,6 +2395,13 @@ private extension CameraStore {
         }
 
         for camera in cameras {
+            if camera.brand == .insta360 {
+                let result = insta360RemoteService().send(command, to: camera.id, cameraName: camera.name)
+                commandResults.insert(result, at: 0)
+                handleCommandResult(result, for: camera)
+                continue
+            }
+
             guard let client = clients[camera.id] else {
                 commandResults.insert(
                     CameraCommandResult(
@@ -2953,6 +3041,7 @@ private extension CameraStore {
             return .disconnected
         case .discovered:
             if camera.brand == .gopro
+                || camera.brand == .insta360
                 || (camera.supportsExperimentalDJISleepWake
                     && sleepingDJICameraIDs.contains(camera.id)) {
                 return .discovered
@@ -3093,6 +3182,14 @@ private extension CameraStore {
             normalized.insert(.record)
             normalized.insert(.mode)
             normalized.insert(.experimental)
+        }
+        if brand == .insta360 {
+            normalized.insert(.record)
+            normalized.insert(.mode)
+            normalized.insert(.status)
+            normalized.insert(.experimental)
+            normalized.remove(.settings)
+            normalized.remove(.keepAlive)
         }
         return normalized
     }

@@ -1970,7 +1970,7 @@ private extension DJIExperimentalBLEClient {
             telemetry.isExternalPowerConnected = state.compactExternalPowerConnected
         case .djiOsmoNano:
             telemetry.isExternalPowerConnected = state.compactNanoExternalPowerConnected
-        case .djiOsmoPocket3, .genericDJI, .goProOpen, .unknown:
+        case .djiOsmoPocket3, .genericDJI, .goProOpen, .insta360Remote, .unknown:
             telemetry.isExternalPowerConnected = nil
         }
 

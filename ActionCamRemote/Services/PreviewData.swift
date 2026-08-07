@@ -51,6 +51,12 @@ extension CameraStore {
             )
         case .dji:
             djiDemoTelemetry(for: camera, mode: mode)
+        case .insta360:
+            CameraTelemetry(
+                cameraStatus: "GPS Remote",
+                modeName: mode.displayName(for: camera.model),
+                lastUpdated: Date()
+            )
         case .unknown:
             CameraTelemetry()
         }
