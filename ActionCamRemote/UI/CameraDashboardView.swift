@@ -1,16 +1,12 @@
 import SwiftUI
-#if DEBUG
 import UIKit
-#endif
 
 struct CameraDashboardView: View {
     @Environment(CameraStore.self) private var store
     @State private var isManagingCameras = false
     @State private var manageCameraDetent: PresentationDetent = .large
     @State private var selectedCameraDetails: CameraDetailSelection?
-    #if DEBUG
     @State private var isShowingDiagnostics = false
-    #endif
 
     var body: some View {
         NavigationStack {
@@ -43,7 +39,6 @@ struct CameraDashboardView: View {
             .navigationTitle("Multicam Remote")
             .toolbar {
                 ToolbarItemGroup(placement: .topBarTrailing) {
-                    #if DEBUG
                     if !ProcessInfo.processInfo.arguments.contains("--app-store-screenshots") {
                         Button {
                             isShowingDiagnostics = true
@@ -54,7 +49,6 @@ struct CameraDashboardView: View {
                         .accessibilityLabel("Open diagnostics")
                         .help("Diagnostics")
                     }
-                    #endif
 
                     if !store.pairedCameras.isEmpty {
                         Button {
@@ -89,7 +83,6 @@ struct CameraDashboardView: View {
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
             }
-            #if DEBUG
             .sheet(isPresented: $isShowingDiagnostics) {
                 NavigationStack {
                     DiagnosticsSheet()
@@ -97,7 +90,6 @@ struct CameraDashboardView: View {
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
             }
-            #endif
             .alert(
                 "Confirm Pairing",
                 isPresented: Binding(
@@ -517,7 +509,6 @@ private struct PairingCameraRow: View {
     }
 }
 
-#if DEBUG
 private struct DiagnosticsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(CameraStore.self) private var store
@@ -746,7 +737,6 @@ private struct EventLogView: View {
         }
     }
 }
-#endif
 
 #Preview {
     CameraDashboardView()

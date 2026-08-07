@@ -175,7 +175,16 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
             onEvent?(.log("Insta360 remote service could not be published: \(error.localizedDescription)"))
             return
         }
+        onEvent?(.log("Insta360 GPS Remote service published."))
         startAdvertising()
+    }
+
+    func peripheralManagerDidStartAdvertising(_ peripheral: CBPeripheralManager, error: Error?) {
+        if let error {
+            onEvent?(.log("Insta360 GPS Remote advertising failed: \(error.localizedDescription)"))
+        } else {
+            onEvent?(.log("Insta360 GPS Remote is advertising for a camera connection."))
+        }
     }
 
     func peripheralManager(
@@ -184,24 +193,9 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
         didSubscribeTo characteristic: CBCharacteristic
     ) {
         guard characteristic.uuid == Self.notifyCharacteristicUUID else { return }
-
-        let cameraID: UUID
-        if let existing = cameraIDByCentralID[central.identifier] {
-            cameraID = existing
-        } else if let requested = requestedCameraIDs.first(where: { centralByCameraID[$0] == nil }) {
-            cameraID = requested
-            centralByCameraID[requested] = central
-            cameraIDByCentralID[central.identifier] = requested
-        } else {
-            onEvent?(.log("An unassigned Insta360 camera subscribed to the remote service."))
-            return
-        }
-
+        guard let cameraID = assignCameraIfNeeded(central, interaction: "CE82 notification subscription") else { return }
         let name = cameraNamesByID[cameraID] ?? "Insta360 camera"
         onEvent?(.log("\(name): subscribed to Insta360 GPS Remote notifications."))
-        onEvent?(.cameraConnected(cameraID))
-        startStatusTimerIfNeeded()
-        startAdvertising()
     }
 
     func peripheralManager(
@@ -226,6 +220,7 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
             peripheral.respond(to: request, withResult: .requestNotSupported)
             return
         }
+        _ = assignCameraIfNeeded(request.central, interaction: "CE82 read")
         request.value = Data([0x00])
         peripheral.respond(to: request, withResult: .success)
     }
@@ -238,7 +233,7 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
                 continue
             }
 
-            if let cameraID = cameraIDByCentralID[request.central.identifier] {
+            if let cameraID = assignCameraIfNeeded(request.central, interaction: "CE81 write") {
                 handleStatusPacket(data, from: cameraID)
             }
             peripheral.respond(to: request, withResult: .success)
@@ -251,6 +246,26 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
 }
 
 private extension Insta360RemoteService {
+    func assignCameraIfNeeded(_ central: CBCentral, interaction: String) -> UUID? {
+        if let existing = cameraIDByCentralID[central.identifier] {
+            return existing
+        }
+
+        guard let cameraID = requestedCameraIDs.first(where: { centralByCameraID[$0] == nil }) else {
+            onEvent?(.log("An unassigned Insta360 camera initiated a \(interaction)."))
+            return nil
+        }
+
+        centralByCameraID[cameraID] = central
+        cameraIDByCentralID[central.identifier] = cameraID
+        let name = cameraNamesByID[cameraID] ?? "Insta360 camera"
+        onEvent?(.log("\(name): GPS Remote session confirmed by \(interaction)."))
+        onEvent?(.cameraConnected(cameraID))
+        startStatusTimerIfNeeded()
+        startAdvertising()
+        return cameraID
+    }
+
     func publishAndAdvertiseIfPossible() {
         guard peripheralManager.state == .poweredOn, !requestedCameraIDs.isEmpty else { return }
 
