@@ -21,7 +21,7 @@ Multicam is an independent project and is not affiliated with, endorsed by, or s
 | DJI Osmo Action 6 | Supported | Yes |
 | DJI Osmo 360 | Supported | Yes |
 | DJI Osmo Nano | Supported | Yes |
-| Insta360 Ace Pro 2, Ace Pro, Ace, X5, X4 Air, X4, X3, ONE RS | Experimental GPS Remote control | No |
+| Insta360 Ace Pro 2, Ace Pro, Ace, X5, X4 Air, X4, X3, ONE RS, GO Ultra, GO 3S, GO 3 | Experimental GPS Remote control | No |
 | DJI Osmo Pocket 3 | Not supported | Yes |
 | GoPro HERO, MAX, HERO8 Black; DJI Osmo Action 3, Action 2, original Osmo Action | Not supported | No |
 
@@ -100,6 +100,7 @@ Thank you to these projects for helping make Multicam possible:
 - [rhoenschrat/DJI-Remote](https://github.com/rhoenschrat/DJI-Remote) for DJI highlight-tag research.
 - [marcelpallares/insta360-m5stick-remote](https://github.com/marcelpallares/insta360-m5stick-remote) for the MIT-licensed Insta360 GPS Remote, Ace Pro 2/X5, multicamera, command, and recording-status reference implementation.
 - [pchwalek/insta360_ble_esp32](https://github.com/pchwalek/insta360_ble_esp32) for the MIT-licensed CE80/CE81/CE82 GPS Remote service and command reference implementation.
+- [Insta360's GPS Preview Remote documentation](https://onlinemanual.insta360.com/app/en-us/operation-tutorial/stats-dashboard/add-dashboard-data-using-the-gps-video-transmission-remote-control) for the official camera compatibility list, including GO Ultra, GO 3S, and GO 3.
 
 ## License
 

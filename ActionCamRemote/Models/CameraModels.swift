@@ -42,6 +42,9 @@ enum CameraModel: String, Identifiable, Codable {
     case insta360X4 = "X4"
     case insta360X3 = "X3"
     case insta360OneRS = "ONE RS"
+    case insta360GoUltra = "GO Ultra"
+    case insta360Go3S = "GO 3S"
+    case insta360Go3 = "GO 3"
     case unknown = "Unknown Camera"
 
     var id: String { rawValue }
@@ -77,7 +80,10 @@ enum CameraModel: String, Identifiable, Codable {
              .insta360X4Air,
              .insta360X4,
              .insta360X3,
-             .insta360OneRS:
+             .insta360OneRS,
+             .insta360GoUltra,
+             .insta360Go3S,
+             .insta360Go3:
             .insta360
         case .unknown:
             .unknown
@@ -198,6 +204,9 @@ extension CameraModel {
              .insta360X4,
              .insta360X3,
              .insta360OneRS,
+             .insta360GoUltra,
+             .insta360Go3S,
+             .insta360Go3,
              .unknown:
             false
         }
@@ -236,6 +245,9 @@ extension CameraModel {
              .insta360X4,
              .insta360X3,
              .insta360OneRS,
+             .insta360GoUltra,
+             .insta360Go3S,
+             .insta360Go3,
              .unknown:
             false
         }
@@ -855,7 +867,10 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
              .insta360X4Air,
              .insta360X4,
              .insta360X3,
-             .insta360OneRS:
+             .insta360OneRS,
+             .insta360GoUltra,
+             .insta360Go3S,
+             .insta360Go3:
             return true
         case .goproHero,
              .goproMax,
@@ -923,6 +938,9 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
                  .insta360X4,
                  .insta360X3,
                  .insta360OneRS,
+                 .insta360GoUltra,
+                 .insta360Go3S,
+                 .insta360Go3,
                  .unknown:
                 return false
             }

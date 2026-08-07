@@ -58,7 +58,12 @@ struct Insta360CameraNameClassifier {
         switch model {
         case .insta360AcePro2:
             expectedWordCount = 4
-        case .insta360AcePro, .insta360X4Air, .insta360OneRS:
+        case .insta360AcePro,
+             .insta360X4Air,
+             .insta360OneRS,
+             .insta360GoUltra,
+             .insta360Go3S,
+             .insta360Go3:
             expectedWordCount = 3
         case .insta360Ace, .insta360X5, .insta360X4, .insta360X3:
             expectedWordCount = 2
@@ -94,6 +99,15 @@ struct Insta360CameraNameClassifier {
         }
         if signature.hasPrefix("oners") || signature.hasPrefix("rs") {
             return .insta360OneRS
+        }
+        if signature.hasPrefix("goultra") {
+            return .insta360GoUltra
+        }
+        if signature.hasPrefix("go3s") {
+            return .insta360Go3S
+        }
+        if signature.hasPrefix("go3") {
+            return .insta360Go3
         }
 
         return .unknown
