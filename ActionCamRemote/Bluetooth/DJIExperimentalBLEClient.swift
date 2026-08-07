@@ -610,8 +610,9 @@ private extension DJIExperimentalBLEClient {
             )
         }
         startPocket3KeepAlive(to: peripheral)
-        onStatus(cameraID, .connecting, "Pocket 3 pairing accepted; waiting for camera status.")
-        onLog("\(cameraName): Pocket 3 pairing completed; queued keepalive and wake after the pairing reply.")
+        hasReportedLegacyDumlReady = true
+        onStatus(cameraID, .connected, "Pocket 3 BLE paired; recording control is ready to test.")
+        onLog("\(cameraName): Pocket 3 pairing completed; queued keepalive and wake, and enabled the experimental record control.")
     }
 
     func nanoFrame(for command: DJINanoProtocol.Command) -> Data {
