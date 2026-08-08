@@ -869,6 +869,7 @@ private extension CameraStore {
                 appendLog("Insta360 remote Bluetooth state: \(state.displayName).")
             }
         case let .cameraConnected(id):
+            cancelConnectionTimeout(for: id)
             updateCamera(
                 id,
                 state: .connected,
@@ -1453,9 +1454,7 @@ private extension CameraStore {
                     return
                 }
 
-                if latest.brand == .insta360 {
-                    self.insta360Remote?.release(cameraID: id)
-                } else {
+                if latest.brand != .insta360 {
                     self.scanner.disconnect(from: id)
                 }
                 self.clients[id] = nil
@@ -1544,16 +1543,27 @@ private extension CameraStore {
                         return
                     }
 
-                    self.appendLog("\(latest.name): connection timed out before the camera became ready.")
-                    self.setCameraDiagnostic(
-                        "BLE connection timed out before the camera command service was ready. Will retry on a fresh advertisement.",
-                        for: latest
-                    )
-                    self.updateCamera(
-                        id,
-                        state: .disconnected,
-                        detail: nil
-                    )
+                    if latest.brand == .insta360 {
+                        self.appendLog(
+                            "\(latest.name): still waiting for the camera's GPS Remote handshake; late connections remain enabled."
+                        )
+                        self.setCameraDiagnostic(
+                            "Still waiting for the camera to finish connecting to Insta360 GPS Remote. Multicam remains available for a late handshake.",
+                            for: latest
+                        )
+                        self.updateCamera(id, state: .discovered, detail: nil)
+                    } else {
+                        self.appendLog("\(latest.name): connection timed out before the camera became ready.")
+                        self.setCameraDiagnostic(
+                            "BLE connection timed out before the camera command service was ready. Will retry on a fresh advertisement.",
+                            for: latest
+                        )
+                        self.updateCamera(
+                            id,
+                            state: .disconnected,
+                            detail: nil
+                        )
+                    }
                     self.connectionTimeoutTasksByCameraID[id] = nil
                     return
                 }
