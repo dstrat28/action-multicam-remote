@@ -1,6 +1,10 @@
 import CoreBluetooth
 import Foundation
 
+enum Insta360BLEUUID {
+    static let directControl = CBUUID(string: "BE80")
+}
+
 struct DiscoveredCameraCandidate {
     var id: UUID
     var name: String
@@ -76,7 +80,7 @@ final class BLECameraScanner: NSObject {
             withServices: nil,
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
         )
-        onEvent?(.log("Scanning for GoPro and DJI Bluetooth advertisements."))
+        onEvent?(.log("Scanning for GoPro, DJI, and Insta360 Bluetooth advertisements."))
     }
 
     func stop() {
@@ -290,6 +294,19 @@ private extension BLECameraScanner {
             )
         }
 
+        if services.contains(Insta360BLEUUID.directControl)
+            || Insta360CameraNameClassifier.isCredibleCameraName(name) {
+            return DiscoveredCameraCandidate(
+                id: peripheral.identifier,
+                name: name,
+                brand: .insta360,
+                model: Insta360CameraNameClassifier.model(for: name),
+                rssi: rssi,
+                capabilities: [.record, .mode, .status, .experimental],
+                isConnectable: inferConnectableState(from: advertisementData)
+            )
+        }
+
         if DJICameraNameClassifier.isCredibleCameraName(name) {
             let model = inferDJIModel(from: name)
             return DiscoveredCameraCandidate(
@@ -312,7 +329,7 @@ private extension BLECameraScanner {
         peripheral: CBPeripheral,
         advertisementData: [String: Any]
     ) {
-        guard candidate.brand == .dji || candidate.brand == .gopro else { return }
+        guard candidate.brand == .dji || candidate.brand == .gopro || candidate.brand == .insta360 else { return }
 
         let now = Date()
         if let lastLog = lastAdvertisementLogByID[candidate.id],
@@ -372,6 +389,8 @@ private extension BLECameraScanner {
             inferredModel = inferGoProModel(from: name, advertisementData: advertisementData)
         case .dji:
             inferredModel = inferDJIModel(from: name)
+        case .insta360:
+            inferredModel = Insta360CameraNameClassifier.model(for: name)
         case .unknown:
             inferredModel = .unknown
         }
@@ -584,6 +603,8 @@ private extension BLECameraScanner {
             inferGoProAwakeState(from: advertisementData, advertisedServices: advertisedServices)
         case .dji:
             inferDJIAwakeState(for: cameraModel, from: advertisementData)
+        case .insta360:
+            nil
         case .unknown:
             nil
         }

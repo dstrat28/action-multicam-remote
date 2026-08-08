@@ -660,6 +660,20 @@ struct CameraProductThumbnail: View {
             1.05
         case .djiOsmo360:
             1.05
+        case .insta360AcePro2:
+            0.95
+        case .insta360AcePro,
+             .insta360Ace,
+             .insta360OneRS,
+             .insta360GoUltra,
+             .insta360Go3S,
+             .insta360Go3:
+            1.1
+        case .insta360X5,
+             .insta360X4Air,
+             .insta360X4,
+             .insta360X3:
+            1.05
         case .djiOsmoPocket3,
              .unknown:
             1
@@ -689,6 +703,17 @@ struct CameraProductThumbnail: View {
              .djiAction2,
              .djiOsmoAction,
              .djiOsmoPocket3,
+             .insta360AcePro2,
+             .insta360AcePro,
+             .insta360Ace,
+             .insta360X5,
+             .insta360X4Air,
+             .insta360X4,
+             .insta360X3,
+             .insta360OneRS,
+             .insta360GoUltra,
+             .insta360Go3S,
+             .insta360Go3,
              .unknown:
             0
         }
@@ -727,7 +752,30 @@ struct CameraProductThumbnail: View {
             "CameraGoProMax"
         case .goproHero8Black:
             "CameraGoProHero8"
-        case .djiOsmoPocket3, .unknown:
+        case .insta360AcePro2:
+            "CameraInsta360AcePro2"
+        case .insta360AcePro:
+            "CameraInsta360AcePro"
+        case .insta360Ace:
+            "CameraInsta360Ace"
+        case .insta360X5:
+            "CameraInsta360X5"
+        case .insta360X4Air:
+            "CameraInsta360X4Air"
+        case .insta360X4:
+            "CameraInsta360X4"
+        case .insta360X3:
+            "CameraInsta360X3"
+        case .insta360OneRS:
+            "CameraInsta360OneRS"
+        case .insta360GoUltra:
+            "CameraInsta360GoUltra"
+        case .insta360Go3S:
+            "CameraInsta360Go3S"
+        case .insta360Go3:
+            "CameraInsta360Go3"
+        case .djiOsmoPocket3,
+             .unknown:
             nil
         }
     }

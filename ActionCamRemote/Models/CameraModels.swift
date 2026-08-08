@@ -7,6 +7,7 @@ enum FeatureAvailability {
 enum CameraBrand: String, CaseIterable, Identifiable, Codable {
     case gopro = "GoPro"
     case dji = "DJI"
+    case insta360 = "Insta360"
     case unknown = "Unknown"
 
     var id: String { rawValue }
@@ -33,6 +34,17 @@ enum CameraModel: String, Identifiable, Codable {
     case djiAction2 = "DJI Action 2"
     case djiOsmoAction = "Osmo Action"
     case djiOsmoPocket3 = "Osmo Pocket 3"
+    case insta360AcePro2 = "Ace Pro 2"
+    case insta360AcePro = "Ace Pro"
+    case insta360Ace = "Ace"
+    case insta360X5 = "X5"
+    case insta360X4Air = "X4 Air"
+    case insta360X4 = "X4"
+    case insta360X3 = "X3"
+    case insta360OneRS = "ONE RS"
+    case insta360GoUltra = "GO Ultra"
+    case insta360Go3S = "GO 3S"
+    case insta360Go3 = "GO 3"
     case unknown = "Unknown Camera"
 
     var id: String { rawValue }
@@ -61,6 +73,18 @@ enum CameraModel: String, Identifiable, Codable {
              .djiOsmoAction,
              .djiOsmoPocket3:
             .dji
+        case .insta360AcePro2,
+             .insta360AcePro,
+             .insta360Ace,
+             .insta360X5,
+             .insta360X4Air,
+             .insta360X4,
+             .insta360X3,
+             .insta360OneRS,
+             .insta360GoUltra,
+             .insta360Go3S,
+             .insta360Go3:
+            .insta360
         case .unknown:
             .unknown
         }
@@ -172,6 +196,17 @@ extension CameraModel {
              .djiAction2,
              .djiOsmoAction,
              .djiOsmoPocket3,
+             .insta360AcePro2,
+             .insta360AcePro,
+             .insta360Ace,
+             .insta360X5,
+             .insta360X4Air,
+             .insta360X4,
+             .insta360X3,
+             .insta360OneRS,
+             .insta360GoUltra,
+             .insta360Go3S,
+             .insta360Go3,
              .unknown:
             false
         }
@@ -202,6 +237,17 @@ extension CameraModel {
              .djiAction2,
              .djiOsmoAction,
              .djiOsmoPocket3,
+             .insta360AcePro2,
+             .insta360AcePro,
+             .insta360Ace,
+             .insta360X5,
+             .insta360X4Air,
+             .insta360X4,
+             .insta360X3,
+             .insta360OneRS,
+             .insta360GoUltra,
+             .insta360Go3S,
+             .insta360Go3,
              .unknown:
             false
         }
@@ -561,6 +607,7 @@ struct CameraTelemetry: Equatable, Codable {
 
 enum CameraBehaviorKind: Equatable {
     case goProOpen
+    case insta360Remote
     case djiOsmoAction4
     case djiOsmoAction5Pro
     case djiOsmoAction6
@@ -612,6 +659,19 @@ struct CameraBehaviorProfile: Equatable {
             || normalizedName.contains("hd901") {
             return CameraBehaviorProfile(
                 kind: .goProOpen,
+                assumesRecordingAfterUnconfirmedDJIStart: false,
+                preservesActiveDJIRecordingAcrossReconnect: false,
+                trustsDJICompactRecordingStatus: false,
+                trustsDJIFullRecordingStatus: false,
+                trustsDJIRecordingTimerStatus: false,
+                trustsDJIRecordingHints: false,
+                trustsDJIStoppedStatusToClearActiveRecording: false
+            )
+        }
+
+        if brand == .insta360 || model.brand == .insta360 {
+            return CameraBehaviorProfile(
+                kind: .insta360Remote,
                 assumesRecordingAfterUnconfirmedDJIStart: false,
                 preservesActiveDJIRecordingAcrossReconnect: false,
                 trustsDJICompactRecordingStatus: false,
@@ -733,7 +793,7 @@ struct CameraBehaviorProfile: Equatable {
         switch kind {
         case .djiOsmoAction4, .djiOsmoAction5Pro, .djiOsmoAction6, .djiOsmo360:
             true
-        case .goProOpen, .djiOsmoNano, .djiOsmoPocket3, .genericDJI, .unknown:
+        case .goProOpen, .insta360Remote, .djiOsmoNano, .djiOsmoPocket3, .genericDJI, .unknown:
             false
         }
     }
@@ -799,7 +859,18 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
              .djiOsmoAction5Pro,
              .djiOsmoAction6,
              .djiOsmo360,
-             .djiOsmoNano:
+             .djiOsmoNano,
+             .insta360AcePro2,
+             .insta360AcePro,
+             .insta360Ace,
+             .insta360X5,
+             .insta360X4Air,
+             .insta360X4,
+             .insta360X3,
+             .insta360OneRS,
+             .insta360GoUltra,
+             .insta360Go3S,
+             .insta360Go3:
             return true
         case .goproHero,
              .goproMax,
@@ -859,6 +930,17 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
                  .djiAction2,
                  .djiOsmoAction,
                  .djiOsmoPocket3,
+                 .insta360AcePro2,
+                 .insta360AcePro,
+                 .insta360Ace,
+                 .insta360X5,
+                 .insta360X4Air,
+                 .insta360X4,
+                 .insta360X3,
+                 .insta360OneRS,
+                 .insta360GoUltra,
+                 .insta360Go3S,
+                 .insta360Go3,
                  .unknown:
                 return false
             }
@@ -877,7 +959,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
 
     var isAvailableToConnect: Bool {
         connectionState == .discovered
-            && (brand == .gopro || supportsExperimentalDJISleepWake)
+            && (brand == .gopro || brand == .insta360 || supportsExperimentalDJISleepWake)
     }
 
     var canWakeFromSleep: Bool {
@@ -961,7 +1043,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     var displayConnectionLabel: String {
         guard isSupportedByApp else { return "Unsupported" }
         if connectionState == .discovered {
-            if canWakeFromSleep {
+            if canWakeFromSleep || brand == .insta360 {
                 return "Available"
             }
             return CameraConnectionState.disconnected.label
@@ -1016,6 +1098,8 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
         switch behavior.kind {
         case .goProOpen:
             return [.video, .photo, .timelapse]
+        case .insta360Remote:
+            return [.video, .photo]
         case .djiOsmoAction4:
             return [.video, .photo, .slowMotion, .timelapse, .hyperlapse]
         case .djiOsmoAction5Pro, .djiOsmoAction6:
@@ -1056,6 +1140,10 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
 
     var canStartRecordingInCurrentMode: Bool {
         if behavior.kind == .djiOsmoNano {
+            return !isConnected || currentMode == nil || currentMode != .photo
+        }
+
+        if behavior.kind == .insta360Remote {
             return !isConnected || currentMode == nil || currentMode != .photo
         }
 

@@ -33,6 +33,7 @@ extension Color {
     static let acrAccent = Color(red: 0.14, green: 0.34, blue: 0.82)
     static let acrDJI = Color(red: 0.15, green: 0.40, blue: 0.91)
     static let acrGoPro = Color(red: 0.00, green: 0.50, blue: 0.58)
+    static let acrInsta360 = Color(red: 0.89, green: 0.16, blue: 0.20)
     static let acrGlassTint = Color.adaptive(
         light: UIColor(red: 0.80, green: 0.88, blue: 1.00, alpha: 1),
         dark: UIColor(red: 0.16, green: 0.25, blue: 0.42, alpha: 1)
@@ -395,6 +396,8 @@ extension CameraBrand {
             .acrGoPro
         case .dji:
             .acrDJI
+        case .insta360:
+            .acrInsta360
         case .unknown:
             .secondary
         }
