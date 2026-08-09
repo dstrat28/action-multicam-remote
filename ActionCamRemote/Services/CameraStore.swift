@@ -1,7 +1,9 @@
 import CoreBluetooth
+import Darwin
 import Foundation
 import Observation
 import OSLog
+import UIKit
 
 struct NanoPairingConfirmation: Equatable {
     var cameraID: UUID
@@ -240,7 +242,7 @@ final class CameraStore {
     }
 
     var diagnosticsText: String {
-        var sections: [String] = []
+        var sections: [String] = [diagnosticsContext]
 
         if !commandResults.isEmpty {
             sections.append(
@@ -258,6 +260,38 @@ final class CameraStore {
         }
 
         return sections.isEmpty ? "No diagnostics yet." : sections.joined(separator: "\n\n")
+    }
+
+    private var diagnosticsContext: String {
+        let bundle = Bundle.main
+        let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+        let build = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+        let device = UIDevice.current
+        let cameraLines = cameras.map { camera in
+            let identifier = String(camera.id.uuidString.prefix(8))
+            return "Camera: \(camera.displayName) [\(camera.model.rawValue)] id \(identifier), "
+                + "state \(camera.displayConnectionLabel), paired \(camera.isPaired ? "yes" : "no"), "
+                + "selected \(camera.isSelected ? "yes" : "no")"
+        }
+
+        return (
+            [
+                "Diagnostics Context",
+                "Captured: \(Date.now.formatted(date: .numeric, time: .standard))",
+                "App: \(version) (\(build))",
+                "Device: \(device.model) \(Self.hardwareModelIdentifier)",
+                "System: \(device.systemName) \(device.systemVersion)",
+                "Bluetooth: \(bluetoothStateLabel)"
+            ] + (cameraLines.isEmpty ? ["Cameras: none"] : cameraLines)
+        ).joined(separator: "\n")
+    }
+
+    private static var hardwareModelIdentifier: String {
+        var systemInfo = utsname()
+        guard uname(&systemInfo) == 0 else { return "unknown" }
+        return withUnsafePointer(to: &systemInfo.machine) { pointer in
+            pointer.withMemoryRebound(to: CChar.self, capacity: 1) { String(cString: $0) }
+        }
     }
 
     var controllableRecordCameras: [DiscoveredCamera] {

@@ -28,6 +28,30 @@ enum Insta360RemoteProtocolRegression {
         precondition(!Insta360CameraNameClassifier.isCredibleCameraName("GO 3S Speaker ABC123"))
         precondition(Insta360CameraNameClassifier.model(for: "GoPro HERO13 ABC123") == .unknown)
 
+        let firstCameraID = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
+        let secondCameraID = UUID(uuidString: "22222222-2222-2222-2222-222222222222")!
+        precondition(
+            Insta360RemoteAssignmentStrategy.assignment(
+                peerIdentifier: secondCameraID,
+                requestedCameraIDs: [firstCameraID, secondCameraID],
+                assignedCameraIDs: []
+            ) == Insta360RemoteAssignment(cameraID: secondCameraID, match: .exactPeerIdentifier)
+        )
+        precondition(
+            Insta360RemoteAssignmentStrategy.assignment(
+                peerIdentifier: UUID(uuidString: "33333333-3333-3333-3333-333333333333")!,
+                requestedCameraIDs: [firstCameraID, secondCameraID],
+                assignedCameraIDs: [firstCameraID]
+            ) == Insta360RemoteAssignment(cameraID: secondCameraID, match: .requestOrderFallback)
+        )
+        precondition(
+            Insta360RemoteAssignmentStrategy.assignment(
+                peerIdentifier: firstCameraID,
+                requestedCameraIDs: [firstCameraID],
+                assignedCameraIDs: [firstCameraID]
+            ) == nil
+        )
+
         precondition(
             Insta360RemoteProtocol.shutterCommand
                 == Data([0xFC, 0xEF, 0xFE, 0x86, 0x00, 0x03, 0x01, 0x02, 0x00])

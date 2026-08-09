@@ -1,5 +1,39 @@
 import Foundation
 
+enum Insta360RemoteAssignmentMatch: String, Equatable {
+    case exactPeerIdentifier = "exact peer identifier"
+    case requestOrderFallback = "request-order fallback"
+}
+
+struct Insta360RemoteAssignment: Equatable {
+    var cameraID: UUID
+    var match: Insta360RemoteAssignmentMatch
+}
+
+enum Insta360RemoteAssignmentStrategy {
+    static func assignment(
+        peerIdentifier: UUID,
+        requestedCameraIDs: [UUID],
+        assignedCameraIDs: Set<UUID>
+    ) -> Insta360RemoteAssignment? {
+        if requestedCameraIDs.contains(peerIdentifier),
+           !assignedCameraIDs.contains(peerIdentifier) {
+            return Insta360RemoteAssignment(
+                cameraID: peerIdentifier,
+                match: .exactPeerIdentifier
+            )
+        }
+
+        guard let cameraID = requestedCameraIDs.first(where: { !assignedCameraIDs.contains($0) }) else {
+            return nil
+        }
+        return Insta360RemoteAssignment(
+            cameraID: cameraID,
+            match: .requestOrderFallback
+        )
+    }
+}
+
 enum Insta360RemoteProtocol {
     static let remoteName = "Insta360 GPS Remote"
 

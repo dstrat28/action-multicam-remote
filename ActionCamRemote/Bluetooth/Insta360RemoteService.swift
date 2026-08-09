@@ -85,7 +85,9 @@ final class Insta360RemoteService: NSObject {
         cameraIDByCentralID.removeValue(forKey: central.identifier)
         pendingUpdates.removeAll { $0.cameraID == cameraID }
         let name = cameraNamesByID[cameraID] ?? "Insta360 camera"
-        onEvent?(.log("\(name): incomplete GPS Remote session reset while continuing to advertise."))
+        onEvent?(.log(
+            "\(name): incomplete GPS Remote session for peer \(peerLabel(central.identifier)) reset while continuing to advertise."
+        ))
         startAdvertising()
     }
 
@@ -215,6 +217,10 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
         didSubscribeTo characteristic: CBCharacteristic
     ) {
         guard characteristic.uuid == Self.notifyCharacteristicUUID else { return }
+        onEvent?(.log(
+            "Insta360 peer \(peerLabel(central.identifier)) subscribed to CE82 notifications "
+                + "(maximum update \(central.maximumUpdateValueLength) bytes)."
+        ))
         guard let cameraID = assignCameraIfNeeded(central, interaction: "CE82 notification subscription") else { return }
         subscribedCentralIDs.insert(central.identifier)
         let name = cameraNamesByID[cameraID] ?? "Insta360 camera"
@@ -229,8 +235,13 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
         central: CBCentral,
         didUnsubscribeFrom characteristic: CBCharacteristic
     ) {
-        guard characteristic.uuid == Self.notifyCharacteristicUUID,
-              let cameraID = cameraIDByCentralID.removeValue(forKey: central.identifier) else {
+        guard characteristic.uuid == Self.notifyCharacteristicUUID else {
+            return
+        }
+        let peer = peerLabel(central.identifier)
+        onEvent?(.log("Insta360 peer \(peer) unsubscribed from CE82 notifications."))
+        guard let cameraID = cameraIDByCentralID.removeValue(forKey: central.identifier) else {
+            onEvent?(.log("Insta360 peer \(peer) was not assigned when it unsubscribed."))
             return
         }
 
@@ -243,10 +254,15 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveRead request: CBATTRequest) {
+        let peer = peerLabel(request.central.identifier)
         guard request.characteristic.uuid == Self.notifyCharacteristicUUID else {
+            onEvent?(.log(
+                "Insta360 peer \(peer) requested unsupported read \(request.characteristic.uuid.uuidString)."
+            ))
             peripheral.respond(to: request, withResult: .requestNotSupported)
             return
         }
+        onEvent?(.log("Insta360 peer \(peer) read CE82 at offset \(request.offset)."))
         _ = assignCameraIfNeeded(request.central, interaction: "CE82 read")
         request.value = Data([0x00])
         peripheral.respond(to: request, withResult: .success)
@@ -254,12 +270,20 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
 
     func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveWrite requests: [CBATTRequest]) {
         for request in requests {
+            let peer = peerLabel(request.central.identifier)
             guard request.characteristic.uuid == Self.writeCharacteristicUUID,
                   let data = request.value else {
+                onEvent?(.log(
+                    "Insta360 peer \(peer) sent an unsupported or empty write to "
+                        + "\(request.characteristic.uuid.uuidString)."
+                ))
                 peripheral.respond(to: request, withResult: .requestNotSupported)
                 continue
             }
 
+            onEvent?(.log(
+                "Insta360 peer \(peer) wrote CE81 (\(data.count) bytes): \(hexString(data))"
+            ))
             if let cameraID = assignCameraIfNeeded(request.central, interaction: "CE81 write") {
                 handleStatusPacket(data, from: cameraID)
             }
@@ -278,15 +302,28 @@ private extension Insta360RemoteService {
             return existing
         }
 
-        guard let cameraID = requestedCameraIDs.first(where: { centralByCameraID[$0] == nil }) else {
-            onEvent?(.log("An unassigned Insta360 camera initiated a \(interaction)."))
+        let peer = peerLabel(central.identifier)
+        guard let assignment = Insta360RemoteAssignmentStrategy.assignment(
+            peerIdentifier: central.identifier,
+            requestedCameraIDs: requestedCameraIDs,
+            assignedCameraIDs: Set(centralByCameraID.keys)
+        ) else {
+            onEvent?(.log("Unassigned Insta360 peer \(peer) initiated a \(interaction)."))
             return nil
         }
 
+        let cameraID = assignment.cameraID
         centralByCameraID[cameraID] = central
         cameraIDByCentralID[central.identifier] = cameraID
         let name = cameraNamesByID[cameraID] ?? "Insta360 camera"
-        onEvent?(.log("\(name): GPS Remote session confirmed by \(interaction)."))
+        onEvent?(.log(
+            "\(name): assigned Insta360 peer \(peer) by \(assignment.match.rawValue) during \(interaction)."
+        ))
+        if assignment.match == .requestOrderFallback {
+            onEvent?(.log(
+                "\(name): scanned camera identifier did not match peer \(peer); verify camera identity when testing multiple Insta360 cameras."
+            ))
+        }
         startStatusTimerIfNeeded()
         startAdvertising()
         return cameraID
@@ -415,5 +452,13 @@ private extension Insta360RemoteService {
             message: message,
             timestamp: Date()
         )
+    }
+
+    func peerLabel(_ identifier: UUID) -> String {
+        String(identifier.uuidString.prefix(8))
+    }
+
+    func hexString(_ data: Data) -> String {
+        data.map { String(format: "%02X", $0) }.joined(separator: " ")
     }
 }
