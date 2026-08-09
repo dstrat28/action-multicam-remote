@@ -68,6 +68,53 @@ enum Insta360RemoteProtocolRegression {
         precondition(Insta360RemoteProtocol.recordingTimeLabel(from: timerPacket) == "00:01:23")
         precondition(!Insta360RemoteProtocol.isRecordingTimerPacket(Data(repeating: 0, count: 20)))
 
+        let now = Date(timeIntervalSinceReferenceDate: 1_000)
+        precondition(
+            Insta360RemoteSessionPolicy.timeoutDisposition(
+                hasAssignedCentral: false,
+                isSubscribed: false,
+                lastActivity: nil,
+                now: now
+            ) == .waitingForCamera
+        )
+        precondition(
+            Insta360RemoteSessionPolicy.timeoutDisposition(
+                hasAssignedCentral: true,
+                isSubscribed: true,
+                lastActivity: nil,
+                now: now
+            ) == .commandReady
+        )
+        precondition(
+            Insta360RemoteSessionPolicy.timeoutDisposition(
+                hasAssignedCentral: true,
+                isSubscribed: false,
+                lastActivity: now.addingTimeInterval(-5),
+                now: now
+            ) == .activeAwaitingCommands
+        )
+        precondition(
+            Insta360RemoteSessionPolicy.timeoutDisposition(
+                hasAssignedCentral: true,
+                isSubscribed: false,
+                lastActivity: now.addingTimeInterval(-11),
+                now: now
+            ) == .reset
+        )
+        precondition(Insta360RemoteSessionPolicy.shouldLogPacket(lastLoggedAt: nil, now: now))
+        precondition(
+            !Insta360RemoteSessionPolicy.shouldLogPacket(
+                lastLoggedAt: now.addingTimeInterval(-14),
+                now: now
+            )
+        )
+        precondition(
+            Insta360RemoteSessionPolicy.shouldLogPacket(
+                lastLoggedAt: now.addingTimeInterval(-15),
+                now: now
+            )
+        )
+
         print("Insta360 remote protocol regression checks passed (\(expectedModels.count) models).")
     }
 }

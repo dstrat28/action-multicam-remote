@@ -10,6 +10,38 @@ struct Insta360RemoteAssignment: Equatable {
     var match: Insta360RemoteAssignmentMatch
 }
 
+enum Insta360RemoteSessionTimeoutDisposition: Equatable {
+    case commandReady
+    case activeAwaitingCommands
+    case reset
+    case waitingForCamera
+}
+
+enum Insta360RemoteSessionPolicy {
+    static let activityFreshnessInterval: TimeInterval = 10
+    static let duplicatePacketLogInterval: TimeInterval = 15
+
+    static func timeoutDisposition(
+        hasAssignedCentral: Bool,
+        isSubscribed: Bool,
+        lastActivity: Date?,
+        now: Date
+    ) -> Insta360RemoteSessionTimeoutDisposition {
+        guard hasAssignedCentral else { return .waitingForCamera }
+        if isSubscribed { return .commandReady }
+        guard let lastActivity,
+              now.timeIntervalSince(lastActivity) <= activityFreshnessInterval else {
+            return .reset
+        }
+        return .activeAwaitingCommands
+    }
+
+    static func shouldLogPacket(lastLoggedAt: Date?, now: Date) -> Bool {
+        guard let lastLoggedAt else { return true }
+        return now.timeIntervalSince(lastLoggedAt) >= duplicatePacketLogInterval
+    }
+}
+
 enum Insta360RemoteAssignmentStrategy {
     static func assignment(
         peerIdentifier: UUID,

@@ -390,6 +390,8 @@ final class CameraStore {
     func resumeCameraConnections() {
         guard !isDemoMode else { return }
 
+        insta360Remote?.reconcileKnownSessions()
+
         let retryCandidates = pairedCameras.filter {
             $0.connectionState != .connected && $0.connectionState != .connecting
         }
@@ -902,6 +904,16 @@ private extension CameraStore {
             if state != .poweredOn {
                 appendLog("Insta360 remote Bluetooth state: \(state.displayName).")
             }
+        case let .cameraSessionActive(id):
+            guard let camera = cameras.first(where: { $0.id == id }),
+                  camera.connectionState != .connected else {
+                break
+            }
+            setCameraDiagnostic(
+                "Camera link is active. Waiting for the Insta360 CE82 command channel before enabling controls.",
+                for: camera
+            )
+            updateCamera(id, state: .connecting, detail: nil)
         case let .cameraConnected(id):
             cancelConnectionTimeout(for: id)
             updateCamera(
@@ -1489,7 +1501,23 @@ private extension CameraStore {
                 }
 
                 if latest.brand == .insta360 {
-                    self.insta360Remote?.resetIncompleteSession(cameraID: id)
+                    let disposition = self.insta360Remote?.resolveConnectionTimeout(cameraID: id)
+                        ?? .waitingForCamera
+                    switch disposition {
+                    case .commandReady:
+                        self.connectionTimeoutTasksByCameraID[id] = nil
+                        return
+                    case .activeAwaitingCommands:
+                        self.setCameraDiagnostic(
+                            "Camera link is active. Waiting for the Insta360 CE82 command channel before enabling controls.",
+                            for: latest
+                        )
+                        self.connectionTimeoutTasksByCameraID[id] = nil
+                        self.scheduleConnectionTimeout(for: id)
+                        return
+                    case .reset, .waitingForCamera:
+                        break
+                    }
                 } else {
                     self.scanner.disconnect(from: id)
                 }

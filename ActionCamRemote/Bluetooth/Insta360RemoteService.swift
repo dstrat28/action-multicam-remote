@@ -3,6 +3,7 @@ import Foundation
 
 enum Insta360RemoteEvent {
     case bluetoothStateChanged(CBManagerState)
+    case cameraSessionActive(UUID)
     case cameraConnected(UUID)
     case cameraDisconnected(UUID)
     case cameraStatus(UUID, CameraStatusUpdate)
@@ -27,6 +28,9 @@ final class Insta360RemoteService: NSObject {
     private var centralByCameraID: [UUID: CBCentral] = [:]
     private var cameraIDByCentralID: [UUID: UUID] = [:]
     private var subscribedCentralIDs: Set<UUID> = []
+    private var lastActivityByCentralID: [UUID: Date] = [:]
+    private var lastLoggedWriteByCentralID: [UUID: [Data: Date]] = [:]
+    private var reportedActiveCameraIDs: Set<UUID> = []
     private var lastRecordingTimerByCameraID: [UUID: Date] = [:]
     private var pendingUpdates: [PendingUpdate] = []
     private var statusTimer: Timer?
@@ -49,13 +53,24 @@ final class Insta360RemoteService: NSObject {
 
     func requestConnection(cameraID: UUID, cameraName: String) {
         cameraNamesByID[cameraID] = cameraName
+        if !requestedCameraIDs.contains(cameraID) {
+            requestedCameraIDs.append(cameraID)
+        }
         if let central = centralByCameraID[cameraID],
            subscribedCentralIDs.contains(central.identifier) {
             onEvent?(.cameraConnected(cameraID))
             return
         }
-        if !requestedCameraIDs.contains(cameraID) {
-            requestedCameraIDs.append(cameraID)
+        if let central = centralByCameraID[cameraID],
+           Insta360RemoteSessionPolicy.timeoutDisposition(
+               hasAssignedCentral: true,
+               isSubscribed: false,
+               lastActivity: lastActivityByCentralID[central.identifier],
+               now: Date()
+           ) == .activeAwaitingCommands {
+            reportActiveSessionIfNeeded(cameraID)
+            publishAndAdvertiseIfPossible()
+            return
         }
         publishAndAdvertiseIfPossible()
         onEvent?(.log("\(cameraName): waiting for the camera to connect to the Insta360 GPS Remote service."))
@@ -75,20 +90,60 @@ final class Insta360RemoteService: NSObject {
         }
     }
 
-    func resetIncompleteSession(cameraID: UUID) {
-        guard let central = centralByCameraID[cameraID],
-              !subscribedCentralIDs.contains(central.identifier) else {
-            return
+    func reconcileKnownSessions() {
+        for (cameraID, central) in centralByCameraID {
+            if subscribedCentralIDs.contains(central.identifier) {
+                onEvent?(.cameraConnected(cameraID))
+            } else if Insta360RemoteSessionPolicy.timeoutDisposition(
+                hasAssignedCentral: true,
+                isSubscribed: false,
+                lastActivity: lastActivityByCentralID[central.identifier],
+                now: Date()
+            ) == .activeAwaitingCommands {
+                onEvent?(.cameraSessionActive(cameraID))
+            }
+        }
+    }
+
+    func resolveConnectionTimeout(
+        cameraID: UUID,
+        now: Date = Date()
+    ) -> Insta360RemoteSessionTimeoutDisposition {
+        let central = centralByCameraID[cameraID]
+        let disposition = Insta360RemoteSessionPolicy.timeoutDisposition(
+            hasAssignedCentral: central != nil,
+            isSubscribed: central.map { subscribedCentralIDs.contains($0.identifier) } ?? false,
+            lastActivity: central.flatMap { lastActivityByCentralID[$0.identifier] },
+            now: now
+        )
+
+        switch disposition {
+        case .commandReady:
+            onEvent?(.cameraConnected(cameraID))
+        case .activeAwaitingCommands:
+            reportActiveSessionIfNeeded(cameraID)
+            let name = cameraNamesByID[cameraID] ?? "Insta360 camera"
+            onEvent?(.log(
+                "\(name): GPS Remote session is still active; preserving it while waiting for the CE82 command subscription."
+            ))
+        case .reset:
+            guard let central else { break }
+            centralByCameraID.removeValue(forKey: cameraID)
+            cameraIDByCentralID.removeValue(forKey: central.identifier)
+            lastActivityByCentralID.removeValue(forKey: central.identifier)
+            lastLoggedWriteByCentralID.removeValue(forKey: central.identifier)
+            reportedActiveCameraIDs.remove(cameraID)
+            pendingUpdates.removeAll { $0.cameraID == cameraID }
+            let name = cameraNamesByID[cameraID] ?? "Insta360 camera"
+            onEvent?(.log(
+                "\(name): inactive GPS Remote session for peer \(peerLabel(central.identifier)) reset while continuing to advertise."
+            ))
+        case .waitingForCamera:
+            break
         }
 
-        centralByCameraID.removeValue(forKey: cameraID)
-        cameraIDByCentralID.removeValue(forKey: central.identifier)
-        pendingUpdates.removeAll { $0.cameraID == cameraID }
-        let name = cameraNamesByID[cameraID] ?? "Insta360 camera"
-        onEvent?(.log(
-            "\(name): incomplete GPS Remote session for peer \(peerLabel(central.identifier)) reset while continuing to advertise."
-        ))
         startAdvertising()
+        return disposition
     }
 
     func send(_ command: CameraCommand, to cameraID: UUID, cameraName: String) -> CameraCommandResult {
@@ -185,6 +240,9 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
             centralByCameraID.removeAll()
             cameraIDByCentralID.removeAll()
             subscribedCentralIDs.removeAll()
+            lastActivityByCentralID.removeAll()
+            lastLoggedWriteByCentralID.removeAll()
+            reportedActiveCameraIDs.removeAll()
             connectedCameraIDs.forEach { onEvent?(.cameraDisconnected($0)) }
             return
         }
@@ -223,6 +281,8 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
         ))
         guard let cameraID = assignCameraIfNeeded(central, interaction: "CE82 notification subscription") else { return }
         subscribedCentralIDs.insert(central.identifier)
+        lastActivityByCentralID[central.identifier] = Date()
+        reportedActiveCameraIDs.remove(cameraID)
         let name = cameraNamesByID[cameraID] ?? "Insta360 camera"
         onEvent?(.log("\(name): subscribed to Insta360 GPS Remote notifications."))
         onEvent?(.cameraConnected(cameraID))
@@ -246,6 +306,9 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
         }
 
         subscribedCentralIDs.remove(central.identifier)
+        lastActivityByCentralID.removeValue(forKey: central.identifier)
+        lastLoggedWriteByCentralID.removeValue(forKey: central.identifier)
+        reportedActiveCameraIDs.remove(cameraID)
         centralByCameraID.removeValue(forKey: cameraID)
         lastRecordingTimerByCameraID.removeValue(forKey: cameraID)
         pendingUpdates.removeAll { $0.cameraID == cameraID }
@@ -263,7 +326,9 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
             return
         }
         onEvent?(.log("Insta360 peer \(peer) read CE82 at offset \(request.offset)."))
-        _ = assignCameraIfNeeded(request.central, interaction: "CE82 read")
+        if let cameraID = assignCameraIfNeeded(request.central, interaction: "CE82 read") {
+            noteSessionActivity(for: request.central, cameraID: cameraID)
+        }
         request.value = Data([0x00])
         peripheral.respond(to: request, withResult: .success)
     }
@@ -281,10 +346,14 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
                 continue
             }
 
-            onEvent?(.log(
-                "Insta360 peer \(peer) wrote CE81 (\(data.count) bytes): \(hexString(data))"
-            ))
+            let now = Date()
+            if shouldLogWrite(data, from: request.central, now: now) {
+                onEvent?(.log(
+                    "Insta360 peer \(peer) wrote CE81 (\(data.count) bytes): \(hexString(data))"
+                ))
+            }
             if let cameraID = assignCameraIfNeeded(request.central, interaction: "CE81 write") {
+                noteSessionActivity(for: request.central, cameraID: cameraID, now: now)
                 handleStatusPacket(data, from: cameraID)
             }
             peripheral.respond(to: request, withResult: .success)
@@ -329,6 +398,36 @@ private extension Insta360RemoteService {
         return cameraID
     }
 
+    func noteSessionActivity(for central: CBCentral, cameraID: UUID, now: Date = Date()) {
+        lastActivityByCentralID[central.identifier] = now
+        guard !subscribedCentralIDs.contains(central.identifier) else { return }
+        reportActiveSessionIfNeeded(cameraID)
+    }
+
+    func reportActiveSessionIfNeeded(_ cameraID: UUID) {
+        guard reportedActiveCameraIDs.insert(cameraID).inserted else { return }
+        let name = cameraNamesByID[cameraID] ?? "Insta360 camera"
+        onEvent?(.log("\(name): camera link is active; waiting for the CE82 command subscription."))
+        onEvent?(.cameraSessionActive(cameraID))
+    }
+
+    func shouldLogWrite(_ data: Data, from central: CBCentral, now: Date) -> Bool {
+        var loggedWrites = lastLoggedWriteByCentralID[central.identifier] ?? [:]
+        let shouldLog = Insta360RemoteSessionPolicy.shouldLogPacket(
+            lastLoggedAt: loggedWrites[data],
+            now: now
+        )
+        guard shouldLog else { return false }
+
+        loggedWrites[data] = now
+        if loggedWrites.count > 32,
+           let oldest = loggedWrites.min(by: { $0.value < $1.value })?.key {
+            loggedWrites.removeValue(forKey: oldest)
+        }
+        lastLoggedWriteByCentralID[central.identifier] = loggedWrites
+        return true
+    }
+
     func publishAndAdvertiseIfPossible() {
         guard peripheralManager.state == .poweredOn, !requestedCameraIDs.isEmpty else { return }
 
@@ -364,9 +463,7 @@ private extension Insta360RemoteService {
             return
         }
 
-        if peripheralManager.isAdvertising {
-            peripheralManager.stopAdvertising()
-        }
+        guard !peripheralManager.isAdvertising else { return }
         peripheralManager.startAdvertising([
             CBAdvertisementDataLocalNameKey: Insta360RemoteProtocol.remoteName,
             CBAdvertisementDataServiceUUIDsKey: [Self.serviceUUID]
