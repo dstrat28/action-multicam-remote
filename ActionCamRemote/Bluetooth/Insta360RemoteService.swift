@@ -26,6 +26,7 @@ final class Insta360RemoteService: NSObject {
     private var cameraNamesByID: [UUID: String] = [:]
     private var centralByCameraID: [UUID: CBCentral] = [:]
     private var cameraIDByCentralID: [UUID: UUID] = [:]
+    private var subscribedCentralIDs: Set<UUID> = []
     private var lastRecordingTimerByCameraID: [UUID: Date] = [:]
     private var pendingUpdates: [PendingUpdate] = []
     private var statusTimer: Timer?
@@ -48,7 +49,8 @@ final class Insta360RemoteService: NSObject {
 
     func requestConnection(cameraID: UUID, cameraName: String) {
         cameraNamesByID[cameraID] = cameraName
-        if centralByCameraID[cameraID] != nil {
+        if let central = centralByCameraID[cameraID],
+           subscribedCentralIDs.contains(central.identifier) {
             onEvent?(.cameraConnected(cameraID))
             return
         }
@@ -73,14 +75,29 @@ final class Insta360RemoteService: NSObject {
         }
     }
 
+    func resetIncompleteSession(cameraID: UUID) {
+        guard let central = centralByCameraID[cameraID],
+              !subscribedCentralIDs.contains(central.identifier) else {
+            return
+        }
+
+        centralByCameraID.removeValue(forKey: cameraID)
+        cameraIDByCentralID.removeValue(forKey: central.identifier)
+        pendingUpdates.removeAll { $0.cameraID == cameraID }
+        let name = cameraNamesByID[cameraID] ?? "Insta360 camera"
+        onEvent?(.log("\(name): incomplete GPS Remote session reset while continuing to advertise."))
+        startAdvertising()
+    }
+
     func send(_ command: CameraCommand, to cameraID: UUID, cameraName: String) -> CameraCommandResult {
-        guard centralByCameraID[cameraID] != nil else {
+        guard let central = centralByCameraID[cameraID],
+              subscribedCentralIDs.contains(central.identifier) else {
             return result(
                 cameraID: cameraID,
                 cameraName: cameraName,
                 command: command,
                 status: .skipped,
-                message: "Open the camera's Bluetooth Remote settings and connect to Insta360 GPS Remote first."
+                message: "The camera has not subscribed to Insta360 GPS Remote commands yet. Open its Bluetooth Remote menu and reconnect."
             )
         }
 
@@ -94,8 +111,13 @@ final class Insta360RemoteService: NSObject {
             packet = Insta360RemoteProtocol.cycleModeCommand
             message = "Sent the Insta360 remote mode-cycle command."
         case .setMode:
-            packet = Insta360RemoteProtocol.cycleModeCommand
-            message = "Sent one Insta360 remote mode-cycle command; verify the selected mode on the camera."
+            return result(
+                cameraID: cameraID,
+                cameraName: cameraName,
+                command: command,
+                status: .unsupported,
+                message: "Insta360 GPS Remote can only cycle modes; it cannot select a specific capture mode safely."
+            )
         case .addHighlight:
             return result(
                 cameraID: cameraID,
@@ -122,6 +144,8 @@ final class Insta360RemoteService: NSObject {
             )
         }
 
+        let packetHex = packet.map { String(format: "%02X", $0) }.joined(separator: " ")
+        onEvent?(.log("\(cameraName): sending \(command.label) on subscribed CE82: \(packetHex)"))
         let status = enqueueOrSend(packet, to: cameraID)
         if status == .failed {
             return result(
@@ -133,9 +157,6 @@ final class Insta360RemoteService: NSObject {
             )
         }
 
-        if case let .setMode(mode) = command {
-            onEvent?(.cameraStatus(cameraID, CameraStatusUpdate(currentMode: mode)))
-        }
         if command == .cycleMode {
             onEvent?(.cameraStatus(cameraID, CameraStatusUpdate(currentMode: nil)))
         }
@@ -161,6 +182,7 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
             let connectedCameraIDs = Array(centralByCameraID.keys)
             centralByCameraID.removeAll()
             cameraIDByCentralID.removeAll()
+            subscribedCentralIDs.removeAll()
             connectedCameraIDs.forEach { onEvent?(.cameraDisconnected($0)) }
             return
         }
@@ -194,8 +216,12 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
     ) {
         guard characteristic.uuid == Self.notifyCharacteristicUUID else { return }
         guard let cameraID = assignCameraIfNeeded(central, interaction: "CE82 notification subscription") else { return }
+        subscribedCentralIDs.insert(central.identifier)
         let name = cameraNamesByID[cameraID] ?? "Insta360 camera"
         onEvent?(.log("\(name): subscribed to Insta360 GPS Remote notifications."))
+        onEvent?(.cameraConnected(cameraID))
+        startStatusTimerIfNeeded()
+        startAdvertising()
     }
 
     func peripheralManager(
@@ -208,6 +234,7 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
             return
         }
 
+        subscribedCentralIDs.remove(central.identifier)
         centralByCameraID.removeValue(forKey: cameraID)
         lastRecordingTimerByCameraID.removeValue(forKey: cameraID)
         pendingUpdates.removeAll { $0.cameraID == cameraID }
@@ -260,7 +287,6 @@ private extension Insta360RemoteService {
         cameraIDByCentralID[central.identifier] = cameraID
         let name = cameraNamesByID[cameraID] ?? "Insta360 camera"
         onEvent?(.log("\(name): GPS Remote session confirmed by \(interaction)."))
-        onEvent?(.cameraConnected(cameraID))
         startStatusTimerIfNeeded()
         startAdvertising()
         return cameraID
@@ -312,7 +338,8 @@ private extension Insta360RemoteService {
 
     func enqueueOrSend(_ data: Data, to cameraID: UUID) -> CameraCommandStatus {
         guard let notifyCharacteristic,
-              let central = centralByCameraID[cameraID] else {
+              let central = centralByCameraID[cameraID],
+              subscribedCentralIDs.contains(central.identifier) else {
             return .failed
         }
 
@@ -327,7 +354,8 @@ private extension Insta360RemoteService {
     func flushPendingUpdates() {
         while let update = pendingUpdates.first,
               let notifyCharacteristic,
-              let central = centralByCameraID[update.cameraID] {
+              let central = centralByCameraID[update.cameraID],
+              subscribedCentralIDs.contains(central.identifier) {
             guard peripheralManager.updateValue(
                 update.data,
                 for: notifyCharacteristic,

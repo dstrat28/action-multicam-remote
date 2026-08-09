@@ -1454,7 +1454,9 @@ private extension CameraStore {
                     return
                 }
 
-                if latest.brand != .insta360 {
+                if latest.brand == .insta360 {
+                    self.insta360Remote?.resetIncompleteSession(cameraID: id)
+                } else {
                     self.scanner.disconnect(from: id)
                 }
                 self.clients[id] = nil
@@ -3195,9 +3197,9 @@ private extension CameraStore {
         }
         if brand == .insta360 {
             normalized.insert(.record)
-            normalized.insert(.mode)
             normalized.insert(.status)
             normalized.insert(.experimental)
+            normalized.remove(.mode)
             normalized.remove(.settings)
             normalized.remove(.keepAlive)
         }
