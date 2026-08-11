@@ -143,6 +143,19 @@ final class CameraStore {
         loadPairedCameras()
         syncKnownCamerasWithScanner()
 
+        if !resolvedDemoMode {
+            let rememberedInsta360Cameras = pairedCameras.filter { $0.brand == .insta360 }
+            if !rememberedInsta360Cameras.isEmpty {
+                let remote = insta360RemoteService()
+                for camera in rememberedInsta360Cameras {
+                    remote.requestConnection(cameraID: camera.id, cameraName: camera.name)
+                }
+                appendLog(
+                    "Prepared Insta360 GPS Remote restoration for \(rememberedInsta360Cameras.count) remembered camera(s)."
+                )
+            }
+        }
+
         if resolvedDemoMode {
             bluetoothStateLabel = "Simulator Demo"
 #if DEBUG

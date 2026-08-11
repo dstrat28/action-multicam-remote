@@ -19,14 +19,20 @@ final class Insta360RemoteService: NSObject {
     private static let serviceUUID = CBUUID(string: "CE80")
     private static let writeCharacteristicUUID = CBUUID(string: "CE81")
     private static let notifyCharacteristicUUID = CBUUID(string: "CE82")
+    private static let restoreIdentifier = "com.ds.ActionCamRemote.insta360-gps-remote"
 
-    private lazy var peripheralManager = CBPeripheralManager(delegate: self, queue: nil)
+    private lazy var peripheralManager = CBPeripheralManager(
+        delegate: self,
+        queue: nil,
+        options: [CBPeripheralManagerOptionRestoreIdentifierKey: Self.restoreIdentifier]
+    )
     private var writeCharacteristic: CBMutableCharacteristic?
     private var notifyCharacteristic: CBMutableCharacteristic?
     private var requestedCameraIDs: [UUID] = []
     private var cameraNamesByID: [UUID: String] = [:]
     private var centralByCameraID: [UUID: CBCentral] = [:]
     private var cameraIDByCentralID: [UUID: UUID] = [:]
+    private var restoredCentralsByID: [UUID: CBCentral] = [:]
     private var subscribedCentralIDs: Set<UUID> = []
     private var lastActivityByCentralID: [UUID: Date] = [:]
     private var lastLoggedWriteByCentralID: [UUID: [Data: Date]] = [:]
@@ -35,12 +41,12 @@ final class Insta360RemoteService: NSObject {
     private var pendingUpdates: [PendingUpdate] = []
     private var statusTimer: Timer?
     private var isServicePublished = false
+    private var needsServiceRepublish = false
 
     var onEvent: ((Insta360RemoteEvent) -> Void)?
 
     override init() {
         super.init()
-        _ = peripheralManager
     }
 
     deinit {
@@ -56,6 +62,7 @@ final class Insta360RemoteService: NSObject {
         if !requestedCameraIDs.contains(cameraID) {
             requestedCameraIDs.append(cameraID)
         }
+        reconcileRestoredSubscriptions()
         if let central = centralByCameraID[cameraID],
            subscribedCentralIDs.contains(central.identifier) {
             onEvent?(.cameraConnected(cameraID))
@@ -232,22 +239,66 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
     func peripheralManagerDidUpdateState(_ peripheral: CBPeripheralManager) {
         onEvent?(.bluetoothStateChanged(peripheral.state))
 
-        guard peripheral.state == .poweredOn else {
-            isServicePublished = false
-            writeCharacteristic = nil
-            notifyCharacteristic = nil
-            let connectedCameraIDs = Array(centralByCameraID.keys)
-            centralByCameraID.removeAll()
-            cameraIDByCentralID.removeAll()
-            subscribedCentralIDs.removeAll()
-            lastActivityByCentralID.removeAll()
-            lastLoggedWriteByCentralID.removeAll()
-            reportedActiveCameraIDs.removeAll()
-            connectedCameraIDs.forEach { onEvent?(.cameraDisconnected($0)) }
+        switch peripheral.state {
+        case .poweredOn:
+            if needsServiceRepublish {
+                peripheral.removeAllServices()
+                isServicePublished = false
+                writeCharacteristic = nil
+                notifyCharacteristic = nil
+                needsServiceRepublish = false
+            }
+            publishAndAdvertiseIfPossible()
+        case .unknown:
+            // State restoration is delivered before the first stable manager state.
+            // Preserve restored services and subscribers through this transition.
+            break
+        case .poweredOff:
+            clearActiveSessions(clearPublishedService: false)
+        case .resetting, .unsupported, .unauthorized:
+            clearActiveSessions(clearPublishedService: true)
+        @unknown default:
+            clearActiveSessions(clearPublishedService: true)
+        }
+    }
+
+    func peripheralManager(_ peripheral: CBPeripheralManager, willRestoreState dict: [String: Any]) {
+        let restoredServices = dict[CBPeripheralManagerRestoredStateServicesKey] as? [CBMutableService] ?? []
+        guard let service = restoredServices.first(where: { $0.uuid == Self.serviceUUID }) else {
+            onEvent?(.log("Insta360 state restoration contained no CE80 GPS Remote service; it will be republished."))
             return
         }
 
-        publishAndAdvertiseIfPossible()
+        let characteristics = service.characteristics?.compactMap { $0 as? CBMutableCharacteristic } ?? []
+        writeCharacteristic = characteristics.first(where: { $0.uuid == Self.writeCharacteristicUUID })
+        notifyCharacteristic = characteristics.first(where: { $0.uuid == Self.notifyCharacteristicUUID })
+        guard writeCharacteristic != nil, let notifyCharacteristic else {
+            isServicePublished = false
+            needsServiceRepublish = true
+            onEvent?(.log("Insta360 restored an incomplete CE80 service; CE81 and CE82 will be republished."))
+            return
+        }
+        isServicePublished = true
+        needsServiceRepublish = false
+
+        let restoredCentrals = notifyCharacteristic.subscribedCentrals ?? []
+        let restoredAdvertising = dict[CBPeripheralManagerRestoredStateAdvertisementDataKey] != nil
+        onEvent?(.log(
+            "Restored Insta360 CE80 service with \(restoredCentrals.count) CE82 subscriber(s)"
+                + (restoredAdvertising ? " and active advertisement data." : ".")
+        ))
+
+        let now = Date()
+        for central in restoredCentrals {
+            restoredCentralsByID[central.identifier] = central
+            subscribedCentralIDs.insert(central.identifier)
+            lastActivityByCentralID[central.identifier] = now
+            onEvent?(.log("Restored Insta360 peer \(peerLabel(central.identifier)) CE82 subscription."))
+        }
+        reconcileRestoredSubscriptions()
+        if !restoredCentrals.isEmpty {
+            startStatusTimerIfNeeded()
+        }
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, didAdd service: CBService, error: Error?) {
@@ -300,14 +351,15 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
         }
         let peer = peerLabel(central.identifier)
         onEvent?(.log("Insta360 peer \(peer) unsubscribed from CE82 notifications."))
+        restoredCentralsByID.removeValue(forKey: central.identifier)
+        subscribedCentralIDs.remove(central.identifier)
+        lastActivityByCentralID.removeValue(forKey: central.identifier)
+        lastLoggedWriteByCentralID.removeValue(forKey: central.identifier)
         guard let cameraID = cameraIDByCentralID.removeValue(forKey: central.identifier) else {
             onEvent?(.log("Insta360 peer \(peer) was not assigned when it unsubscribed."))
             return
         }
 
-        subscribedCentralIDs.remove(central.identifier)
-        lastActivityByCentralID.removeValue(forKey: central.identifier)
-        lastLoggedWriteByCentralID.removeValue(forKey: central.identifier)
         reportedActiveCameraIDs.remove(cameraID)
         centralByCameraID.removeValue(forKey: cameraID)
         lastRecordingTimerByCameraID.removeValue(forKey: cameraID)
@@ -366,6 +418,29 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
 }
 
 private extension Insta360RemoteService {
+    func reconcileRestoredSubscriptions() {
+        let unassignedCentrals = restoredCentralsByID.values.filter {
+            cameraIDByCentralID[$0.identifier] == nil
+        }
+        guard !unassignedCentrals.isEmpty, !requestedCameraIDs.isEmpty else { return }
+
+        let assignments = Insta360RemoteAssignmentStrategy.assignments(
+            peerIdentifiers: unassignedCentrals.map(\.identifier),
+            requestedCameraIDs: requestedCameraIDs,
+            assignedCameraIDs: Set(centralByCameraID.keys)
+        )
+        for central in unassignedCentrals {
+            guard let assignment = assignments[central.identifier] else { continue }
+            attach(
+                central,
+                assignment: assignment,
+                interaction: "CoreBluetooth state restoration"
+            )
+            reportedActiveCameraIDs.remove(assignment.cameraID)
+            onEvent?(.cameraConnected(assignment.cameraID))
+        }
+    }
+
     func assignCameraIfNeeded(_ central: CBCentral, interaction: String) -> UUID? {
         if let existing = cameraIDByCentralID[central.identifier] {
             return existing
@@ -381,7 +456,17 @@ private extension Insta360RemoteService {
             return nil
         }
 
+        attach(central, assignment: assignment, interaction: interaction)
+        return assignment.cameraID
+    }
+
+    func attach(
+        _ central: CBCentral,
+        assignment: Insta360RemoteAssignment,
+        interaction: String
+    ) {
         let cameraID = assignment.cameraID
+        let peer = peerLabel(central.identifier)
         centralByCameraID[cameraID] = central
         cameraIDByCentralID[central.identifier] = cameraID
         let name = cameraNamesByID[cameraID] ?? "Insta360 camera"
@@ -395,7 +480,24 @@ private extension Insta360RemoteService {
         }
         startStatusTimerIfNeeded()
         startAdvertising()
-        return cameraID
+    }
+
+    func clearActiveSessions(clearPublishedService: Bool) {
+        let connectedCameraIDs = Array(centralByCameraID.keys)
+        centralByCameraID.removeAll()
+        cameraIDByCentralID.removeAll()
+        restoredCentralsByID.removeAll()
+        subscribedCentralIDs.removeAll()
+        lastActivityByCentralID.removeAll()
+        lastLoggedWriteByCentralID.removeAll()
+        reportedActiveCameraIDs.removeAll()
+        pendingUpdates.removeAll()
+        connectedCameraIDs.forEach { onEvent?(.cameraDisconnected($0)) }
+
+        guard clearPublishedService else { return }
+        isServicePublished = false
+        writeCharacteristic = nil
+        notifyCharacteristic = nil
     }
 
     func noteSessionActivity(for central: CBCentral, cameraID: UUID, now: Date = Date()) {

@@ -43,6 +43,39 @@ enum Insta360RemoteSessionPolicy {
 }
 
 enum Insta360RemoteAssignmentStrategy {
+    static func assignments(
+        peerIdentifiers: [UUID],
+        requestedCameraIDs: [UUID],
+        assignedCameraIDs: Set<UUID>
+    ) -> [UUID: Insta360RemoteAssignment] {
+        var assignments: [UUID: Insta360RemoteAssignment] = [:]
+        var assignedCameraIDs = assignedCameraIDs
+
+        // Restore exact CoreBluetooth identities first so an unmatched peer cannot
+        // consume a remembered camera that has an exact restored subscription.
+        for peerIdentifier in peerIdentifiers where requestedCameraIDs.contains(peerIdentifier) {
+            guard !assignedCameraIDs.contains(peerIdentifier) else { continue }
+            assignments[peerIdentifier] = Insta360RemoteAssignment(
+                cameraID: peerIdentifier,
+                match: .exactPeerIdentifier
+            )
+            assignedCameraIDs.insert(peerIdentifier)
+        }
+
+        for peerIdentifier in peerIdentifiers where assignments[peerIdentifier] == nil {
+            guard let cameraID = requestedCameraIDs.first(where: { !assignedCameraIDs.contains($0) }) else {
+                break
+            }
+            assignments[peerIdentifier] = Insta360RemoteAssignment(
+                cameraID: cameraID,
+                match: .requestOrderFallback
+            )
+            assignedCameraIDs.insert(cameraID)
+        }
+
+        return assignments
+    }
+
     static func assignment(
         peerIdentifier: UUID,
         requestedCameraIDs: [UUID],

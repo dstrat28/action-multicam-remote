@@ -52,6 +52,22 @@ enum Insta360RemoteProtocolRegression {
             ) == nil
         )
 
+        let unmatchedPeerID = UUID(uuidString: "33333333-3333-3333-3333-333333333333")!
+        let restoredAssignments = Insta360RemoteAssignmentStrategy.assignments(
+            peerIdentifiers: [unmatchedPeerID, firstCameraID, secondCameraID],
+            requestedCameraIDs: [firstCameraID, secondCameraID],
+            assignedCameraIDs: []
+        )
+        precondition(
+            restoredAssignments[firstCameraID]
+                == Insta360RemoteAssignment(cameraID: firstCameraID, match: .exactPeerIdentifier)
+        )
+        precondition(
+            restoredAssignments[secondCameraID]
+                == Insta360RemoteAssignment(cameraID: secondCameraID, match: .exactPeerIdentifier)
+        )
+        precondition(restoredAssignments[unmatchedPeerID] == nil)
+
         precondition(
             Insta360RemoteProtocol.shutterCommand
                 == Data([0xFC, 0xEF, 0xFE, 0x86, 0x00, 0x03, 0x01, 0x02, 0x00])
