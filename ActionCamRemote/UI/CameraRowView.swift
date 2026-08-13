@@ -85,7 +85,7 @@ struct CameraRowView: View {
         if isConnectInProgress {
             return .acrWarning
         }
-        return camera.connectionState.statusColor
+        return camera.displayConnectionStatusColor
     }
 
     private var rowStroke: Color {
@@ -172,18 +172,18 @@ struct CameraRowView: View {
 
             batteryStatus
 
-            if camera.canWakeFromSleep {
+            if camera.canConnectFromCurrentState {
                 Button {
-                    store.wake(camera)
+                    store.connectAvailableCamera(camera)
                 } label: {
-                    Label("Wake", systemImage: "power")
+                    Text("Connect")
                         .font(.caption.weight(.semibold))
                         .frame(minWidth: 64, minHeight: 24)
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Color.acrAvailable)
                 .controlSize(.mini)
-                .accessibilityHint("Connects to and wakes the sleeping camera")
+                .accessibilityHint("Connects to this available camera")
             } else if isReadyConnected {
                 Image(systemName: "chevron.right")
                     .font(.caption.weight(.bold))
@@ -198,7 +198,7 @@ struct CameraRowView: View {
         if isConnectInProgress {
             return .acrWarning
         }
-        return connectionText == CameraConnectionState.disconnected.label
+        return camera.displayConnectionLabel == CameraConnectionState.disconnected.label
             ? Color.secondary.opacity(0.55)
             : rowAccent
     }

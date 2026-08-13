@@ -87,6 +87,7 @@ final class CameraStore {
     @ObservationIgnored private var pendingStartCameraIDs: Set<UUID> = []
     @ObservationIgnored private var pendingStopCameraIDs: Set<UUID> = []
     @ObservationIgnored private var pendingManualPairCameraIDs: Set<UUID> = []
+    @ObservationIgnored private var userDisconnectedCameraIDs: Set<UUID> = []
     @ObservationIgnored private var passiveDJIProbeCameraIDs: Set<UUID> = []
     @ObservationIgnored private var sleepingDJICameraIDs: Set<UUID> = []
     @ObservationIgnored private var nanoPassiveReconnectBlockedCameraIDs: Set<UUID> = []
@@ -492,6 +493,8 @@ final class CameraStore {
             return
         }
 
+        userDisconnectedCameraIDs.remove(camera.id)
+
         if camera.needsGoProPairingMode {
             let message = "Put the GoPro in pairing mode from the camera UI, then tap Pair again."
             appendLog("\(camera.name): \(message)")
@@ -638,7 +641,23 @@ final class CameraStore {
         }
     }
 
+    func connectAvailableCamera(_ camera: DiscoveredCamera) {
+        if camera.canWakeFromSleep {
+            wake(camera)
+        } else {
+            connect(camera)
+        }
+    }
+
     func disconnect(_ camera: DiscoveredCamera) {
+        cancelConnectionTimeout(for: camera.id)
+        cancelConnectedStalenessTimeout(for: camera.id)
+        clearStateGuards(for: camera.id)
+        pendingStartCameraIDs.remove(camera.id)
+        pendingStopCameraIDs.remove(camera.id)
+        userDisconnectedCameraIDs.insert(camera.id)
+        appendLog("\(camera.name): user requested disconnect; automatic reconnection is paused.")
+
         if isDemoMode {
             updateCamera(camera.id, state: .disconnected, detail: "Demo camera disconnected.")
             return
@@ -646,7 +665,11 @@ final class CameraStore {
 
         if camera.brand == .insta360 {
             insta360Remote?.release(cameraID: camera.id)
-            updateCamera(camera.id, state: .disconnected, detail: "Insta360 remote control released.")
+            updateCamera(
+                camera.id,
+                state: .disconnected,
+                detail: "Multicam released this Insta360 camera. The camera controls the physical BLE link."
+            )
         } else {
             scanner.disconnect(from: camera.id)
         }
@@ -654,10 +677,12 @@ final class CameraStore {
 
     func wake(_ camera: DiscoveredCamera) {
         guard camera.canWakeFromSleep else {
-            appendLog("\(camera.name): wake is not available without a fresh sleeping-camera advertisement.")
+            appendLog("\(camera.name): wake is not available in the current camera state.")
             refreshWakeScan(for: camera)
             return
         }
+
+        userDisconnectedCameraIDs.remove(camera.id)
 
         if camera.brand == .gopro {
             explicitGoProWakeCameraIDs.insert(camera.id)
@@ -666,6 +691,26 @@ final class CameraStore {
             appendLog("\(camera.name): starting explicit Open GoPro BLE wake connection.")
             setCameraDiagnostic("Waking over Bluetooth.", for: camera)
             connect(camera)
+            return
+        }
+
+        if camera.brand == .insta360 {
+            lastConnectionAttemptByID[camera.id] = Date()
+            updateCamera(camera.id, state: .connecting, detail: nil)
+            setCameraDiagnostic(
+                "Trying an experimental targeted Insta360 wake advertisement, then resuming the GPS Remote service.",
+                for: camera
+            )
+            scheduleConnectionTimeout(for: camera.id)
+            let started = insta360RemoteService().wake(cameraID: camera.id, cameraName: camera.name)
+            if !started {
+                cancelConnectionTimeout(for: camera.id)
+                updateCamera(
+                    camera.id,
+                    state: .failed("The camera name does not contain the identifier needed for BLE wake."),
+                    detail: nil
+                )
+            }
             return
         }
 
@@ -718,6 +763,7 @@ final class CameraStore {
         if camera.connectionState == .connected || camera.connectionState == .connecting {
             disconnect(camera)
         }
+        userDisconnectedCameraIDs.remove(camera.id)
 
         clients[camera.id] = nil
 
@@ -969,6 +1015,8 @@ private extension CameraStore {
             lastDJIAdvertisementByCameraID[candidate.id] = now
         }
         let isConnectable = candidate.isConnectable ?? true
+        let isManuallyDisconnectedDJI = candidate.brand == .dji
+            && userDisconnectedCameraIDs.contains(candidate.id)
         let isConnectionFreshnessAdvertisement = candidate.brand == .dji
             ? candidate.isConnectable == true
             : isConnectable
@@ -1123,7 +1171,13 @@ private extension CameraStore {
                             && cameras[index].isPaired
                             && candidate.isAwake == false
                         let isAvailableInsta360 = candidate.brand == .insta360
-                        cameras[index].connectionState = isAwakeGoPro || isWakeableGoPro || isExplicitWakeTarget || isAvailableInsta360
+                        let isAvailableManuallyDisconnectedDJI = isManuallyDisconnectedDJI
+                            && !sleepingDJICameraIDs.contains(candidate.id)
+                        cameras[index].connectionState = isAwakeGoPro
+                            || isWakeableGoPro
+                            || isExplicitWakeTarget
+                            || isAvailableInsta360
+                            || isAvailableManuallyDisconnectedDJI
                             ? .discovered
                             : .disconnected
                         clearSelectionIfNotConnected(at: index)
@@ -1137,9 +1191,12 @@ private extension CameraStore {
                 case .discovered, .connecting, .connected, .unsupported:
                     let shouldKeepDJIWakeTargetAvailable = cameras[index].supportsExperimentalDJISleepWake
                         && sleepingDJICameraIDs.contains(candidate.id)
+                    let shouldKeepManuallyDisconnectedDJIAvailable = isManuallyDisconnectedDJI
+                        && !sleepingDJICameraIDs.contains(candidate.id)
                     if candidate.brand == .dji,
                        cameras[index].connectionState == .discovered,
-                       !shouldKeepDJIWakeTargetAvailable {
+                       !shouldKeepDJIWakeTargetAvailable,
+                       !shouldKeepManuallyDisconnectedDJIAvailable {
                         cameras[index].connectionState = .disconnected
                         clearSelectionIfNotConnected(at: index)
                         cameras[index].recordingState = cameras[index].supportsBatchRecord ? .unknown : .unavailable
@@ -1230,6 +1287,7 @@ private extension CameraStore {
         let shouldTrackDiscoverableAvailability = candidate.brand == .gopro
             || candidate.brand == .insta360
             || (isNanoAdvertisement && candidate.isAwake == false)
+            || isManuallyDisconnectedDJI
         if cameras.first(where: { $0.id == candidate.id })?.isSupportedByApp == true,
            shouldTrackDiscoverableAvailability,
            isConnectable, !isAvailabilitySuppressed || isPairingModeActive {
@@ -1249,6 +1307,8 @@ private extension CameraStore {
         currentAdvertisementAwake: Bool? = nil,
         hadExplicitNanoWakeIntent: Bool = false
     ) -> Bool {
+        guard !userDisconnectedCameraIDs.contains(camera.id) else { return false }
+
         if camera.brand == .insta360 {
             let hasQueuedCommand = pendingStartCameraIDs.contains(camera.id)
                 || pendingStopCameraIDs.contains(camera.id)

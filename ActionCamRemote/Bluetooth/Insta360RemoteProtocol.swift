@@ -101,6 +101,8 @@ enum Insta360RemoteAssignmentStrategy {
 
 enum Insta360RemoteProtocol {
     static let remoteName = "Insta360 GPS Remote"
+    static let wakeAdvertisementDuration: TimeInterval = 4
+    static let wakeMeasuredPower = -28
 
     static let shutterCommand = Data([0xFC, 0xEF, 0xFE, 0x86, 0x00, 0x03, 0x01, 0x02, 0x00])
     static let cycleModeCommand = Data([0xFC, 0xEF, 0xFE, 0x86, 0x00, 0x03, 0x01, 0x01, 0x00])
@@ -139,6 +141,28 @@ enum Insta360RemoteProtocol {
         let suffix = trimmed.suffix(6)
         guard suffix.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { return nil }
         return Data(suffix.utf8)
+    }
+
+    static func wakeBeaconUUID(from cameraName: String) -> UUID? {
+        guard let identifier = wakeIdentifier(from: cameraName) else { return nil }
+        let bytes = Data([0x09, 0x4F, 0x52, 0x42, 0x49, 0x54, 0x09, 0xFF, 0x0F, 0x00]) + identifier
+        let hex = bytes.map { String(format: "%02X", $0) }.joined()
+        guard hex.count == 32 else { return nil }
+        let part1 = String(hex.prefix(8))
+        let part2 = String(hex.dropFirst(8).prefix(4))
+        let part3 = String(hex.dropFirst(12).prefix(4))
+        let part4 = String(hex.dropFirst(16).prefix(4))
+        let part5 = String(hex.suffix(12))
+        let uuidString = "\(part1)-\(part2)-\(part3)-\(part4)-\(part5)"
+        return UUID(uuidString: uuidString)
+    }
+
+    static func wakeManufacturerData(from cameraName: String) -> Data? {
+        guard let identifier = wakeIdentifier(from: cameraName) else { return nil }
+        return Data([
+            0x4C, 0x00, 0x02, 0x15,
+            0x09, 0x4F, 0x52, 0x42, 0x49, 0x54, 0x09, 0xFF, 0x0F, 0x00
+        ]) + identifier + Data([0x00, 0x00, 0x00, 0x00, 0xE4])
     }
 }
 

@@ -23,6 +23,42 @@ enum Insta360RemoteProtocolRegression {
             precondition(Insta360RemoteProtocol.wakeIdentifier(from: name) == Data(name.suffix(6).utf8))
         }
 
+        precondition(
+            Insta360RemoteProtocol.wakeBeaconUUID(from: "Ace Pro 2 263TAK")
+                == UUID(uuidString: "094F5242-4954-09FF-0F00-32363354414B")
+        )
+        precondition(
+            Insta360RemoteProtocol.wakeManufacturerData(from: "Ace Pro 2 263TAK")
+                == Data([
+                    0x4C, 0x00, 0x02, 0x15,
+                    0x09, 0x4F, 0x52, 0x42, 0x49, 0x54, 0x09, 0xFF, 0x0F, 0x00,
+                    0x32, 0x36, 0x33, 0x54, 0x41, 0x4B,
+                    0x00, 0x00, 0x00, 0x00, 0xE4
+                ])
+        )
+        precondition(Insta360RemoteProtocol.wakeBeaconUUID(from: "Ace Pro 2") == nil)
+
+        var wakeableCamera = DiscoveredCamera(
+            id: UUID(),
+            name: "Ace Pro 2 263TAK",
+            brand: .insta360,
+            model: .insta360AcePro2,
+            rssi: -50,
+            capabilities: [.record, .status],
+            connectionState: .disconnected,
+            recordingState: .unknown,
+            isPaired: true,
+            isSelected: false,
+            lastSeen: Date()
+        )
+        precondition(wakeableCamera.canConnectFromCurrentState)
+        precondition(wakeableCamera.displayConnectionLabel == "Available")
+        precondition(wakeableCamera.defaultSortRank == 2)
+        wakeableCamera.name = "Ace Pro 2"
+        precondition(!wakeableCamera.canConnectFromCurrentState)
+        precondition(wakeableCamera.displayConnectionLabel == "Not Connected")
+        precondition(wakeableCamera.defaultSortRank == 3)
+
         precondition(!Insta360CameraNameClassifier.isCredibleCameraName("X5"))
         precondition(!Insta360CameraNameClassifier.isCredibleCameraName("X5 Speaker ABC123"))
         precondition(!Insta360CameraNameClassifier.isCredibleCameraName("GO 3S Speaker ABC123"))

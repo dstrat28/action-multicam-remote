@@ -343,13 +343,7 @@ private struct CameraListView: View {
     }
 
     private func presentationSortRank(for camera: DiscoveredCamera) -> Int {
-        if store.isCameraReadyConnected(camera) {
-            return 0
-        }
-        if store.isCameraConnectInProgress(camera) {
-            return 1
-        }
-        return 2
+        camera.defaultSortRank
     }
 
     private func shouldMatchConnectedPeerHeight(
@@ -382,7 +376,7 @@ private struct PairingView: View {
                         description: Text("Put a camera in pairing mode.")
                     )
                 } else {
-                    ForEach(store.pairingCameras) { camera in
+                    ForEach(managedCameras) { camera in
                         PairingCameraRow(camera: camera)
                     }
                 }
@@ -411,12 +405,29 @@ private struct PairingView: View {
             }
         }
     }
+
+    private var managedCameras: [DiscoveredCamera] {
+        store.pairingCameras
+            .enumerated()
+            .sorted { lhs, rhs in
+                let lhsRank = managementSortRank(for: lhs.element)
+                let rhsRank = managementSortRank(for: rhs.element)
+                return lhsRank == rhsRank ? lhs.offset < rhs.offset : lhsRank < rhsRank
+            }
+            .map(\.element)
+    }
+
+    private func managementSortRank(for camera: DiscoveredCamera) -> Int {
+        camera.defaultSortRank
+    }
 }
 
 private struct PairingCameraRow: View {
     @Environment(CameraStore.self) private var store
     var camera: DiscoveredCamera
-    private let actionLabelWidth: CGFloat = 72
+    private let actionContentHeight: CGFloat = 20
+    private let connectionActionContentWidth: CGFloat = 82
+    private let pairRemovalActionContentWidth: CGFloat = 62
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -443,25 +454,15 @@ private struct PairingCameraRow: View {
                 Spacer(minLength: 4)
 
                 if camera.isPaired {
-                    Button(role: .destructive) {
-                        store.remove(camera)
-                    } label: {
-                        Text("Remove")
-                            .frame(width: actionLabelWidth)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                    .fixedSize()
+                    pairedCameraActions
                 } else if camera.unsupportedReason == nil {
                     Button {
                         store.connect(camera)
                     } label: {
-                        Text(pairButtonTitle)
-                            .lineLimit(1)
-                            .minimumScaleFactor(0.8)
-                            .frame(width: actionLabelWidth)
+                        actionLabel(pairButtonTitle, width: pairButtonContentWidth)
                     }
                     .buttonStyle(.borderedProminent)
+                    .tint(Color.acrAvailable)
                     .controlSize(.small)
                     .fixedSize()
                     .disabled(camera.connectionState == .connecting || camera.needsGoProPairingMode)
@@ -480,12 +481,12 @@ private struct PairingCameraRow: View {
     private var connectionStatus: some View {
         HStack(spacing: 5) {
             Circle()
-                .fill(camera.connectionState.statusColor)
+                .fill(camera.displayConnectionStatusColor)
                 .frame(width: 6, height: 6)
 
             Text(camera.displayConnectionLabel)
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(camera.connectionState.statusColor)
+                .foregroundStyle(camera.displayConnectionStatusColor)
         }
         .lineLimit(1)
         .fixedSize(horizontal: true, vertical: false)
@@ -497,6 +498,85 @@ private struct PairingCameraRow: View {
             return "Pairing Mode"
         }
         return camera.connectionState == .connecting ? "Pairing" : "Pair"
+    }
+
+    private var canDisconnect: Bool {
+        switch camera.connectionState {
+        case .connecting, .connected, .reconnecting:
+            return true
+        case .discovered, .disconnected, .failed, .unsupported:
+            return false
+        }
+    }
+
+    @ViewBuilder
+    private var pairedCameraActions: some View {
+        HStack(spacing: 6) {
+            if canDisconnect {
+                Button {
+                    store.disconnect(camera)
+                } label: {
+                    actionLabel("Disconnect", width: connectionActionContentWidth)
+                }
+                .buttonStyle(.bordered)
+                .tint(.red)
+            } else if camera.canConnectFromCurrentState {
+                Button {
+                    store.connectAvailableCamera(camera)
+                } label: {
+                    actionLabel("Connect", width: connectionActionContentWidth)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(Color.acrAvailable)
+            } else {
+                Button(role: .destructive) {
+                    store.remove(camera)
+                } label: {
+                    actionLabel("Unpair", width: pairRemovalActionContentWidth)
+                }
+                .buttonStyle(.bordered)
+                .tint(.red)
+            }
+
+            if canDisconnect || camera.canConnectFromCurrentState {
+                Menu {
+                    Button(role: .destructive) {
+                        store.remove(camera)
+                    } label: {
+                        Label("Unpair Camera", systemImage: "trash")
+                    }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.subheadline.weight(.semibold))
+                        .symbolRenderingMode(.monochrome)
+                        .foregroundStyle(Color.acrMutedText)
+                        .frame(width: 16, height: actionContentHeight)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .fixedSize()
+                .accessibilityLabel("More options for \(camera.displayName)")
+            }
+        }
+        .controlSize(.small)
+        .fixedSize()
+    }
+
+    private func actionLabel(
+        _ title: String,
+        width: CGFloat
+    ) -> some View {
+        Text(title)
+            .lineLimit(1)
+            .minimumScaleFactor(0.8)
+            .frame(width: width, height: actionContentHeight)
+    }
+
+    private var pairButtonContentWidth: CGFloat {
+        pairButtonTitle == "Pairing Mode"
+            ? connectionActionContentWidth
+            : pairRemovalActionContentWidth
     }
 
     private var pairingDetail: String? {
@@ -577,7 +657,7 @@ private struct CameraDiagnosticsView: View {
 
                             Text(camera.displayConnectionLabel)
                                 .font(.caption.weight(.semibold))
-                                .foregroundStyle(camera.connectionState.statusColor)
+                                .foregroundStyle(camera.displayConnectionStatusColor)
                         }
 
                         if let detail = camera.connectionState.detail {

@@ -16,7 +16,8 @@ enum DJIWakeEligibilityRegression {
             precondition(!camera.supportsExperimentalDJISleepWake, "\(model.rawValue) must not expose the unsuccessful DJI wake experiment")
             precondition(camera.supportsDJIPhoneGPS, "\(model.rawValue) should expose opt-in phone GPS")
             precondition(!camera.canSelectForBatch, "\(model.rawValue) must not remain selectable while sleeping")
-            precondition(camera.displayConnectionLabel == "Not Connected", "\(model.rawValue) should show Not Connected while sleeping")
+            precondition(camera.displayConnectionLabel == "Available", "\(model.rawValue) should show Available while discovered")
+            precondition(camera.canConnectFromCurrentState, "\(model.rawValue) should be connectable while discovered")
 
             let connectedCamera = makeCamera(model: model, state: .connected)
             precondition(connectedCamera.supportsBatchRecord, "\(model.rawValue) should expose recording control")
@@ -31,7 +32,7 @@ enum DJIWakeEligibilityRegression {
         precondition(nano.supportsExperimentalDJISleepWake, "Nano should expose its model-specific GATT wake path")
         precondition(nano.behavior.usesLegacyDJIControl, "Nano should retain its verified legacy DJI control path")
         precondition(!nano.supportsDJIPhoneGPS, "Nano must not expose the incompatible R SDK GPS option")
-        precondition(nano.displayConnectionLabel == "Not Connected", "Nano must not show an Available state")
+        precondition(nano.displayConnectionLabel == "Available", "A discovered Nano should show Available")
         var pairedNano = nano
         pairedNano.isPaired = true
         precondition(pairedNano.canWakeFromSleep, "A paired, advertising Nano should expose Wake")
@@ -52,12 +53,23 @@ enum DJIWakeEligibilityRegression {
         )
         precondition(!goPro.canSelectForBatch, "A disconnected GoPro must not remain selectable")
         precondition(goPro.displayConnectionLabel == "Not Connected", "A disconnected GoPro must show Not Connected")
+        precondition(
+            !goPro.isRecordingStatusUncertainDuringConnectionTransition,
+            "A terminal disconnect must not keep the recording Live Activity running"
+        )
+
+        goPro.connectionState = .reconnecting
+        precondition(
+            goPro.isRecordingStatusUncertainDuringConnectionTransition,
+            "A reconnecting camera may temporarily retain uncertain recording status"
+        )
 
         goPro.connectionState = .discovered
         goPro.advertisementAwake = true
         precondition(!goPro.canSelectForBatch, "An advertising GoPro must not be selectable before protocol connection")
         precondition(!goPro.canWakeFromSleep, "An awake GoPro must not expose Wake")
-        precondition(goPro.displayConnectionLabel == "Not Connected", "An awake advertising GoPro must not expose Available")
+        precondition(goPro.displayConnectionLabel == "Available", "An awake advertising GoPro should show Available")
+        precondition(goPro.canConnectFromCurrentState, "An awake advertising GoPro should expose Connect")
 
         goPro.advertisementAwake = false
         precondition(goPro.canWakeFromSleep, "A paired low-power GoPro should expose Wake")
@@ -65,11 +77,61 @@ enum DJIWakeEligibilityRegression {
 
         goPro.isPaired = false
         precondition(!goPro.canWakeFromSleep, "An unpaired low-power GoPro must not expose Wake")
-        precondition(goPro.displayConnectionLabel == "Not Connected", "An unpaired low-power GoPro must not show Available")
+        precondition(goPro.displayConnectionLabel == "Available", "An unpaired discovered GoPro should remain Available to pair")
+        precondition(goPro.canConnectFromCurrentState, "An unpaired discovered GoPro should expose Pair")
+        precondition(goPro.defaultSortRank == 2, "An unpaired available camera should share the Available sort group")
 
         goPro.isPaired = true
         goPro.connectionState = .connected
         precondition(goPro.canSelectForBatch, "A connected GoPro should remain selectable")
+
+        var firstRecordingCamera = makeGoPro(
+            id: UUID(),
+            state: .connected,
+            recordingState: .recording
+        )
+        var secondRecordingCamera = makeGoPro(
+            id: UUID(),
+            state: .connected,
+            recordingState: .recording
+        )
+        let recordingCameraIDs: Set<UUID> = [firstRecordingCamera.id, secondRecordingCamera.id]
+        precondition(
+            !RecordingActivityReconciliationPolicy.shouldEnd(
+                cameras: [firstRecordingCamera, secondRecordingCamera],
+                activeCameraIDs: recordingCameraIDs
+            ),
+            "The Live Activity must remain active while multiple cameras are recording"
+        )
+
+        firstRecordingCamera.connectionState = .disconnected
+        firstRecordingCamera.recordingState = .unknown
+        precondition(
+            !RecordingActivityReconciliationPolicy.shouldEnd(
+                cameras: [firstRecordingCamera, secondRecordingCamera],
+                activeCameraIDs: recordingCameraIDs
+            ),
+            "One disconnected camera must not end the Live Activity while another is recording"
+        )
+
+        secondRecordingCamera.connectionState = .disconnected
+        secondRecordingCamera.recordingState = .unknown
+        precondition(
+            RecordingActivityReconciliationPolicy.shouldEnd(
+                cameras: [firstRecordingCamera, secondRecordingCamera],
+                activeCameraIDs: recordingCameraIDs
+            ),
+            "The Live Activity should end after every recording camera is disconnected"
+        )
+
+        secondRecordingCamera.connectionState = .reconnecting
+        precondition(
+            !RecordingActivityReconciliationPolicy.shouldEnd(
+                cameras: [firstRecordingCamera, secondRecordingCamera],
+                activeCameraIDs: recordingCameraIDs
+            ),
+            "An actively reconnecting camera should preserve the Live Activity"
+        )
 
         var sortSamples = [
             makeCamera(model: .djiOsmoAction4, state: .disconnected),
@@ -97,6 +159,26 @@ enum DJIWakeEligibilityRegression {
             capabilities: [.record, .status, .experimental],
             connectionState: state,
             recordingState: .unknown,
+            isPaired: true,
+            isSelected: true,
+            lastSeen: Date()
+        )
+    }
+
+    private static func makeGoPro(
+        id: UUID,
+        state: CameraConnectionState,
+        recordingState: CameraRecordingState
+    ) -> DiscoveredCamera {
+        DiscoveredCamera(
+            id: id,
+            name: "GoPro HERO13 Black",
+            brand: .gopro,
+            model: .goproHero13Black,
+            rssi: -50,
+            capabilities: [.record, .status],
+            connectionState: state,
+            recordingState: recordingState,
             isPaired: true,
             isSelected: true,
             lastSeen: Date()

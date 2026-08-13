@@ -957,13 +957,50 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
         connectionState == .connected
     }
 
+    var isRecordingStatusUncertainDuringConnectionTransition: Bool {
+        guard recordingState == .unknown || recordingState == .starting else {
+            return false
+        }
+
+        switch connectionState {
+        case .connecting, .connected, .reconnecting:
+            return true
+        case .discovered, .disconnected, .failed, .unsupported:
+            return false
+        }
+    }
+
     var isAvailableToConnect: Bool {
         connectionState == .discovered
             && (brand == .gopro || brand == .insta360 || supportsExperimentalDJISleepWake)
     }
 
+    var canConnectFromCurrentState: Bool {
+        guard isSupportedByApp else { return false }
+
+        switch connectionState {
+        case .discovered:
+            return true
+        case .disconnected, .failed:
+            return canWakeFromSleep
+        case .connecting, .connected, .reconnecting, .unsupported:
+            return false
+        }
+    }
+
     var canWakeFromSleep: Bool {
-        guard isPaired, connectionState == .discovered else { return false }
+        guard isPaired else { return false }
+
+        if brand == .insta360 {
+            switch connectionState {
+            case .disconnected, .failed:
+                return Insta360RemoteProtocol.wakeBeaconUUID(from: name) != nil
+            case .discovered, .connecting, .connected, .reconnecting, .unsupported:
+                return false
+            }
+        }
+
+        guard connectionState == .discovered else { return false }
 
         if brand == .gopro {
             return advertisementAwake == false
@@ -973,15 +1010,15 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     }
 
     var defaultSortRank: Int {
-        guard isPaired else { return 5 }
+        if canConnectFromCurrentState {
+            return 2
+        }
 
         switch connectionState {
         case .connected:
             return 0
         case .connecting, .reconnecting:
             return 1
-        case .discovered where canWakeFromSleep:
-            return 2
         case .discovered, .disconnected, .failed:
             return 3
         case .unsupported:
@@ -1042,11 +1079,8 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
 
     var displayConnectionLabel: String {
         guard isSupportedByApp else { return "Unsupported" }
-        if connectionState == .discovered {
-            if canWakeFromSleep || brand == .insta360 {
-                return "Available"
-            }
-            return CameraConnectionState.disconnected.label
+        if canConnectFromCurrentState {
+            return "Available"
         }
         return connectionState.label
     }
@@ -1213,6 +1247,24 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
         default:
             "Very Weak"
         }
+    }
+}
+
+enum RecordingActivityReconciliationPolicy {
+    static func shouldEnd(
+        cameras: [DiscoveredCamera],
+        activeCameraIDs: Set<UUID>
+    ) -> Bool {
+        guard !cameras.contains(where: { $0.recordingState == .recording }) else {
+            return false
+        }
+
+        let relevantCameras = activeCameraIDs.isEmpty
+            ? cameras
+            : cameras.filter { activeCameraIDs.contains($0.id) }
+        return !relevantCameras.contains(
+            where: \.isRecordingStatusUncertainDuringConnectionTransition
+        )
     }
 }
 

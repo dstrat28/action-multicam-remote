@@ -419,6 +419,13 @@ extension CameraConnectionState {
     }
 }
 
+extension DiscoveredCamera {
+    var displayConnectionStatusColor: Color {
+        guard isSupportedByApp else { return .secondary }
+        return canConnectFromCurrentState ? .acrAvailable : connectionState.statusColor
+    }
+}
+
 extension CameraRecordingState {
     var statusColor: Color {
         switch self {

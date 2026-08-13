@@ -1,4 +1,5 @@
 import CoreBluetooth
+import CoreLocation
 import Foundation
 
 enum Insta360RemoteEvent {
@@ -14,6 +15,12 @@ final class Insta360RemoteService: NSObject {
     private struct PendingUpdate {
         var data: Data
         var cameraID: UUID
+    }
+
+    private struct WakeRequest {
+        var cameraID: UUID
+        var cameraName: String
+        var beaconUUID: UUID
     }
 
     private static let serviceUUID = CBUUID(string: "CE80")
@@ -40,8 +47,12 @@ final class Insta360RemoteService: NSObject {
     private var lastRecordingTimerByCameraID: [UUID: Date] = [:]
     private var pendingUpdates: [PendingUpdate] = []
     private var statusTimer: Timer?
+    private var wakeTimer: Timer?
+    private var pendingWake: WakeRequest?
+    private var activeWake: WakeRequest?
     private var isServicePublished = false
     private var needsServiceRepublish = false
+    private var shouldReplaceRestoredWakeAdvertisement = false
 
     var onEvent: ((Insta360RemoteEvent) -> Void)?
 
@@ -51,6 +62,7 @@ final class Insta360RemoteService: NSObject {
 
     deinit {
         statusTimer?.invalidate()
+        wakeTimer?.invalidate()
     }
 
     var bluetoothState: CBManagerState {
@@ -87,6 +99,9 @@ final class Insta360RemoteService: NSObject {
         requestedCameraIDs.removeAll { $0 == cameraID }
         lastRecordingTimerByCameraID.removeValue(forKey: cameraID)
         pendingUpdates.removeAll { $0.cameraID == cameraID }
+        if pendingWake?.cameraID == cameraID || activeWake?.cameraID == cameraID {
+            cancelWakeAndResumeRemoteAdvertising()
+        }
         onEvent?(.cameraDisconnected(cameraID))
 
         // CBPeripheralManager cannot explicitly cancel a central's connection. Keep the
@@ -95,6 +110,25 @@ final class Insta360RemoteService: NSObject {
         if requestedCameraIDs.isEmpty {
             peripheralManager.stopAdvertising()
         }
+    }
+
+    @discardableResult
+    func wake(cameraID: UUID, cameraName: String) -> Bool {
+        guard let beaconUUID = Insta360RemoteProtocol.wakeBeaconUUID(from: cameraName) else {
+            onEvent?(.log(
+                "\(cameraName): cannot build an Insta360 wake advertisement without a six-character camera identifier."
+            ))
+            return false
+        }
+
+        cameraNamesByID[cameraID] = cameraName
+        if !requestedCameraIDs.contains(cameraID) {
+            requestedCameraIDs.append(cameraID)
+        }
+        pendingWake = WakeRequest(cameraID: cameraID, cameraName: cameraName, beaconUUID: beaconUUID)
+        publishAndAdvertiseIfPossible()
+        beginPendingWakeIfPossible()
+        return true
     }
 
     func reconcileKnownSessions() {
@@ -248,7 +282,15 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
                 notifyCharacteristic = nil
                 needsServiceRepublish = false
             }
+            if shouldReplaceRestoredWakeAdvertisement {
+                peripheral.stopAdvertising()
+                shouldReplaceRestoredWakeAdvertisement = false
+                onEvent?(.log(
+                    "Discarded an interrupted Insta360 wake advertisement; resuming the connectable GPS Remote service."
+                ))
+            }
             publishAndAdvertiseIfPossible()
+            beginPendingWakeIfPossible()
         case .unknown:
             // State restoration is delivered before the first stable manager state.
             // Preserve restored services and subscribers through this transition.
@@ -282,7 +324,9 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
         needsServiceRepublish = false
 
         let restoredCentrals = notifyCharacteristic.subscribedCentrals ?? []
-        let restoredAdvertising = dict[CBPeripheralManagerRestoredStateAdvertisementDataKey] != nil
+        let restoredAdvertisement = dict[CBPeripheralManagerRestoredStateAdvertisementDataKey] as? [String: Any]
+        let restoredAdvertising = restoredAdvertisement != nil
+        shouldReplaceRestoredWakeAdvertisement = restoredAdvertisement?[CBAdvertisementDataManufacturerDataKey] != nil
         onEvent?(.log(
             "Restored Insta360 CE80 service with \(restoredCentrals.count) CE82 subscriber(s)"
                 + (restoredAdvertising ? " and active advertisement data." : ".")
@@ -309,10 +353,28 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
             return
         }
         onEvent?(.log("Insta360 GPS Remote service published."))
-        startAdvertising()
+        if pendingWake != nil {
+            beginPendingWakeIfPossible()
+        } else {
+            startAdvertising()
+        }
     }
 
     func peripheralManagerDidStartAdvertising(_ peripheral: CBPeripheralManager, error: Error?) {
+        if let wake = activeWake {
+            if let error {
+                onEvent?(.log(
+                    "\(wake.cameraName): experimental Insta360 wake advertising failed: \(error.localizedDescription)"
+                ))
+                cancelWakeAndResumeRemoteAdvertising()
+            } else {
+                onEvent?(.log(
+                    "\(wake.cameraName): broadcasting the experimental targeted Insta360 wake advertisement."
+                ))
+            }
+            return
+        }
+
         if let error {
             onEvent?(.log("Insta360 GPS Remote advertising failed: \(error.localizedDescription)"))
         } else {
@@ -484,6 +546,11 @@ private extension Insta360RemoteService {
 
     func clearActiveSessions(clearPublishedService: Bool) {
         let connectedCameraIDs = Array(centralByCameraID.keys)
+        wakeTimer?.invalidate()
+        wakeTimer = nil
+        pendingWake = nil
+        activeWake = nil
+        shouldReplaceRestoredWakeAdvertisement = false
         centralByCameraID.removeAll()
         cameraIDByCentralID.removeAll()
         restoredCentralsByID.removeAll()
@@ -534,7 +601,11 @@ private extension Insta360RemoteService {
         guard peripheralManager.state == .poweredOn, !requestedCameraIDs.isEmpty else { return }
 
         if isServicePublished {
-            startAdvertising()
+            if pendingWake != nil {
+                beginPendingWakeIfPossible()
+            } else {
+                startAdvertising()
+            }
             return
         }
 
@@ -561,6 +632,8 @@ private extension Insta360RemoteService {
     func startAdvertising() {
         guard peripheralManager.state == .poweredOn,
               isServicePublished,
+              pendingWake == nil,
+              activeWake == nil,
               !requestedCameraIDs.isEmpty else {
             return
         }
@@ -570,6 +643,62 @@ private extension Insta360RemoteService {
             CBAdvertisementDataLocalNameKey: Insta360RemoteProtocol.remoteName,
             CBAdvertisementDataServiceUUIDsKey: [Self.serviceUUID]
         ])
+    }
+
+    func beginPendingWakeIfPossible() {
+        guard peripheralManager.state == .poweredOn,
+              isServicePublished,
+              activeWake == nil,
+              let wake = pendingWake else {
+            return
+        }
+
+        let region = CLBeaconRegion(
+            uuid: wake.beaconUUID,
+            major: 0,
+            minor: 0,
+            identifier: "com.ds.ActionCamRemote.insta360-wake"
+        )
+        let advertisement = region.peripheralData(
+            withMeasuredPower: NSNumber(value: Insta360RemoteProtocol.wakeMeasuredPower)
+        ) as NSDictionary as! [String: Any]
+
+        pendingWake = nil
+        activeWake = wake
+        wakeTimer?.invalidate()
+        peripheralManager.stopAdvertising()
+        peripheralManager.startAdvertising(advertisement)
+        wakeTimer = Timer.scheduledTimer(
+            withTimeInterval: Insta360RemoteProtocol.wakeAdvertisementDuration,
+            repeats: false
+        ) { [weak self] _ in
+            self?.finishWakeAdvertising(for: wake.cameraID)
+        }
+    }
+
+    func finishWakeAdvertising(for cameraID: UUID) {
+        guard activeWake?.cameraID == cameraID else { return }
+        let name = activeWake?.cameraName ?? "Insta360 camera"
+        wakeTimer?.invalidate()
+        wakeTimer = nil
+        activeWake = nil
+        peripheralManager.stopAdvertising()
+        onEvent?(.log(
+            "\(name): targeted wake advertisement finished; resuming the connectable GPS Remote service."
+        ))
+        startAdvertising()
+    }
+
+    func cancelWakeAndResumeRemoteAdvertising() {
+        wakeTimer?.invalidate()
+        wakeTimer = nil
+        pendingWake = nil
+        let wasAdvertisingWake = activeWake != nil
+        activeWake = nil
+        if wasAdvertisingWake {
+            peripheralManager.stopAdvertising()
+        }
+        startAdvertising()
     }
 
     func enqueueOrSend(_ data: Data, to cameraID: UUID) -> CameraCommandStatus {

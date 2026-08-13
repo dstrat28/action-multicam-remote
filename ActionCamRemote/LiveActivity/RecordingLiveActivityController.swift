@@ -32,25 +32,13 @@ final class RecordingLiveActivityController {
 
         guard let activity else { return }
 
-        // A temporary disconnect can turn an active camera's state unknown. Keep the
-        // activity visible and let its stale date communicate that status is uncertain.
-        let trackedCameras = cameras.filter { activeCameraIDs.contains($0.id) }
-        let hasUncertainTrackedCamera = trackedCameras.contains {
-            $0.recordingState == .unknown || $0.recordingState == .starting
-        }
-
-        if hasUncertainTrackedCamera {
-            return
-        }
-
-        // After process restoration there is no in-memory ID set. Do not dismiss an
-        // existing activity until the camera list has reached a conclusive state.
-        if activeCameraIDs.isEmpty,
-           cameras.contains(where: {
-               $0.recordingState == .unknown || $0.recordingState == .starting
-           }) {
-            return
-        }
+        // Preserve the activity while any tracked camera is still recording or in a
+        // genuine connection transition. End only once every tracked camera has
+        // reached a terminal, non-recording state.
+        guard RecordingActivityReconciliationPolicy.shouldEnd(
+            cameras: cameras,
+            activeCameraIDs: activeCameraIDs
+        ) else { return }
 
         end(activity)
     }
