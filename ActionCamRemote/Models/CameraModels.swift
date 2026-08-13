@@ -1010,20 +1010,20 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     }
 
     var defaultSortRank: Int {
-        if canConnectFromCurrentState {
-            return 2
-        }
-
         switch connectionState {
         case .connected:
             return 0
         case .connecting, .reconnecting:
             return 1
-        case .discovered, .disconnected, .failed:
-            return 3
-        case .unsupported:
-            return 4
+        case .discovered, .disconnected, .failed, .unsupported:
+            break
         }
+
+        if isPaired {
+            return canConnectFromCurrentState ? 2 : 3
+        }
+
+        return canConnectFromCurrentState ? 4 : 5
     }
 
     var needsGoProPairingMode: Bool {

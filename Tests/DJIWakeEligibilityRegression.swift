@@ -79,7 +79,7 @@ enum DJIWakeEligibilityRegression {
         precondition(!goPro.canWakeFromSleep, "An unpaired low-power GoPro must not expose Wake")
         precondition(goPro.displayConnectionLabel == "Available", "An unpaired discovered GoPro should remain Available to pair")
         precondition(goPro.canConnectFromCurrentState, "An unpaired discovered GoPro should expose Pair")
-        precondition(goPro.defaultSortRank == 2, "An unpaired available camera should share the Available sort group")
+        precondition(goPro.defaultSortRank == 4, "An unpaired available camera should sort after remembered cameras")
 
         goPro.isPaired = true
         goPro.connectionState = .connected

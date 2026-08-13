@@ -428,6 +428,7 @@ private struct PairingCameraRow: View {
     private let actionContentHeight: CGFloat = 20
     private let connectionActionContentWidth: CGFloat = 82
     private let pairRemovalActionContentWidth: CGFloat = 62
+    private let cameraInfoLeadingInset: CGFloat = 50
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -459,7 +460,7 @@ private struct PairingCameraRow: View {
                     Button {
                         store.connect(camera)
                     } label: {
-                        actionLabel(pairButtonTitle, width: pairButtonContentWidth)
+                        actionLabel("Pair", width: pairRemovalActionContentWidth)
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(Color.acrAvailable)
@@ -473,6 +474,7 @@ private struct PairingCameraRow: View {
                 Text(detail)
                     .font(.caption)
                     .foregroundStyle(Color.acrMutedText)
+                    .padding(.leading, cameraInfoLeadingInset)
             }
         }
         .padding(.vertical, 4)
@@ -491,13 +493,6 @@ private struct PairingCameraRow: View {
         .lineLimit(1)
         .fixedSize(horizontal: true, vertical: false)
         .accessibilityElement(children: .combine)
-    }
-
-    private var pairButtonTitle: String {
-        if camera.needsGoProPairingMode {
-            return "Pairing Mode"
-        }
-        return camera.connectionState == .connecting ? "Pairing" : "Pair"
     }
 
     private var canDisconnect: Bool {
@@ -573,15 +568,9 @@ private struct PairingCameraRow: View {
             .frame(width: width, height: actionContentHeight)
     }
 
-    private var pairButtonContentWidth: CGFloat {
-        pairButtonTitle == "Pairing Mode"
-            ? connectionActionContentWidth
-            : pairRemovalActionContentWidth
-    }
-
     private var pairingDetail: String? {
         if camera.needsGoProPairingMode {
-            return "Put the GoPro in pairing mode from the camera UI, then tap Pair again."
+            return "Put the GoPro in pairing mode on the camera"
         }
 
         guard camera.unsupportedReason == nil else { return nil }
