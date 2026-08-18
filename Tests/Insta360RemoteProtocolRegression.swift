@@ -38,6 +38,21 @@ enum Insta360RemoteProtocolRegression {
         )
         precondition(Insta360RemoteProtocol.wakeBeaconUUID(from: "Ace Pro 2") == nil)
 
+        let aceIdentifierPacket = Data([
+            0xFE, 0xEF, 0xFE, 0x07, 0x00, 0x06,
+            0x32, 0x36, 0x33, 0x54, 0x41, 0x4B
+        ])
+        precondition(
+            Insta360RemoteProtocol.cameraIdentifier(from: aceIdentifierPacket)
+                == Data("263TAK".utf8)
+        )
+        precondition(
+            Insta360RemoteProtocol.cameraIdentifier(
+                from: Data([0xFE, 0xEF, 0xFE, 0x07, 0x00, 0x06, 0x32, 0x36, 0x33, 0x00, 0x41, 0x4B])
+            ) == nil
+        )
+        precondition(Insta360RemoteProtocol.cameraIdentifier(from: Insta360RemoteProtocol.shutterCommand) == nil)
+
         var wakeableCamera = DiscoveredCamera(
             id: UUID(),
             name: "Ace Pro 2 263TAK",
@@ -66,6 +81,31 @@ enum Insta360RemoteProtocolRegression {
 
         let firstCameraID = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
         let secondCameraID = UUID(uuidString: "22222222-2222-2222-2222-222222222222")!
+        precondition(
+            Insta360RemoteAssignmentStrategy.cameraID(
+                matching: Data("263TAK".utf8),
+                cameraNamesByID: [
+                    firstCameraID: "X4 194DGB",
+                    secondCameraID: "Ace Pro 2 263TAK"
+                ],
+                requestedCameraIDs: [firstCameraID, secondCameraID]
+            ) == secondCameraID
+        )
+        precondition(
+            Insta360RemoteAssignmentStrategy.cameraID(
+                matching: Data("6PP7XT".utf8),
+                cameraNamesByID: [secondCameraID: "Ace Pro 2 263TAK"],
+                requestedCameraIDs: [secondCameraID]
+            ) == nil
+        )
+        precondition(
+            Insta360RemoteAssignmentMatch.cameraSerialIdentifier.authorityRank
+                > Insta360RemoteAssignmentMatch.exactPeerIdentifier.authorityRank
+        )
+        precondition(
+            Insta360RemoteAssignmentMatch.exactPeerIdentifier.authorityRank
+                > Insta360RemoteAssignmentMatch.requestOrderFallback.authorityRank
+        )
         precondition(
             Insta360RemoteAssignmentStrategy.assignment(
                 peerIdentifier: secondCameraID,

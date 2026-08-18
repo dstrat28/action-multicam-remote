@@ -39,6 +39,8 @@ final class Insta360RemoteService: NSObject {
     private var cameraNamesByID: [UUID: String] = [:]
     private var centralByCameraID: [UUID: CBCentral] = [:]
     private var cameraIDByCentralID: [UUID: UUID] = [:]
+    private var assignmentMatchByCentralID: [UUID: Insta360RemoteAssignmentMatch] = [:]
+    private var cameraIdentifierByCentralID: [UUID: Data] = [:]
     private var restoredCentralsByID: [UUID: CBCentral] = [:]
     private var subscribedCentralIDs: Set<UUID> = []
     private var lastActivityByCentralID: [UUID: Date] = [:]
@@ -171,6 +173,8 @@ final class Insta360RemoteService: NSObject {
             guard let central else { break }
             centralByCameraID.removeValue(forKey: cameraID)
             cameraIDByCentralID.removeValue(forKey: central.identifier)
+            assignmentMatchByCentralID.removeValue(forKey: central.identifier)
+            cameraIdentifierByCentralID.removeValue(forKey: central.identifier)
             lastActivityByCentralID.removeValue(forKey: central.identifier)
             lastLoggedWriteByCentralID.removeValue(forKey: central.identifier)
             reportedActiveCameraIDs.remove(cameraID)
@@ -392,9 +396,9 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
             "Insta360 peer \(peerLabel(central.identifier)) subscribed to CE82 notifications "
                 + "(maximum update \(central.maximumUpdateValueLength) bytes)."
         ))
-        guard let cameraID = assignCameraIfNeeded(central, interaction: "CE82 notification subscription") else { return }
         subscribedCentralIDs.insert(central.identifier)
         lastActivityByCentralID[central.identifier] = Date()
+        guard let cameraID = assignCameraIfNeeded(central, interaction: "CE82 notification subscription") else { return }
         reportedActiveCameraIDs.remove(cameraID)
         let name = cameraNamesByID[cameraID] ?? "Insta360 camera"
         onEvent?(.log("\(name): subscribed to Insta360 GPS Remote notifications."))
@@ -417,10 +421,12 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
         subscribedCentralIDs.remove(central.identifier)
         lastActivityByCentralID.removeValue(forKey: central.identifier)
         lastLoggedWriteByCentralID.removeValue(forKey: central.identifier)
+        cameraIdentifierByCentralID.removeValue(forKey: central.identifier)
         guard let cameraID = cameraIDByCentralID.removeValue(forKey: central.identifier) else {
             onEvent?(.log("Insta360 peer \(peer) was not assigned when it unsubscribed."))
             return
         }
+        assignmentMatchByCentralID.removeValue(forKey: central.identifier)
 
         reportedActiveCameraIDs.remove(cameraID)
         centralByCameraID.removeValue(forKey: cameraID)
@@ -466,7 +472,17 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
                     "Insta360 peer \(peer) wrote CE81 (\(data.count) bytes): \(hexString(data))"
                 ))
             }
-            if let cameraID = assignCameraIfNeeded(request.central, interaction: "CE81 write") {
+            let cameraID: UUID?
+            if let identifier = Insta360RemoteProtocol.cameraIdentifier(from: data) {
+                cameraID = assignCamera(
+                    request.central,
+                    usingCameraIdentifier: identifier,
+                    interaction: "CE81 camera identifier"
+                )
+            } else {
+                cameraID = assignCameraIfNeeded(request.central, interaction: "CE81 write")
+            }
+            if let cameraID {
                 noteSessionActivity(for: request.central, cameraID: cameraID, now: now)
                 handleStatusPacket(data, from: cameraID)
             }
@@ -508,6 +524,38 @@ private extension Insta360RemoteService {
             return existing
         }
 
+        if let identifier = cameraIdentifierByCentralID[central.identifier] {
+            return assignCamera(
+                central,
+                usingCameraIdentifier: identifier,
+                interaction: interaction
+            )
+        }
+
+        if requestedCameraIDs.contains(central.identifier) {
+            if let assignedCentral = centralByCameraID[central.identifier],
+               assignedCentral.identifier != central.identifier {
+                let existingMatch = assignmentMatchByCentralID[assignedCentral.identifier]
+                    ?? .requestOrderFallback
+                guard Insta360RemoteAssignmentMatch.exactPeerIdentifier.authorityRank
+                    > existingMatch.authorityRank else {
+                    return nil
+                }
+                displace(
+                    assignedCentral,
+                    from: central.identifier,
+                    replacementIsSubscribed: subscribedCentralIDs.contains(central.identifier),
+                    reason: "an exact peer identifier became available"
+                )
+            }
+            let assignment = Insta360RemoteAssignment(
+                cameraID: central.identifier,
+                match: .exactPeerIdentifier
+            )
+            attach(central, assignment: assignment, interaction: interaction)
+            return assignment.cameraID
+        }
+
         let peer = peerLabel(central.identifier)
         guard let assignment = Insta360RemoteAssignmentStrategy.assignment(
             peerIdentifier: central.identifier,
@@ -522,6 +570,80 @@ private extension Insta360RemoteService {
         return assignment.cameraID
     }
 
+    func assignCamera(
+        _ central: CBCentral,
+        usingCameraIdentifier identifier: Data,
+        interaction: String
+    ) -> UUID? {
+        cameraIdentifierByCentralID[central.identifier] = identifier
+        let identifierLabel = String(data: identifier, encoding: .ascii) ?? hexString(identifier)
+        guard let cameraID = Insta360RemoteAssignmentStrategy.cameraID(
+            matching: identifier,
+            cameraNamesByID: cameraNamesByID,
+            requestedCameraIDs: requestedCameraIDs
+        ) else {
+            let peer = peerLabel(central.identifier)
+            onEvent?(.log(
+                "Insta360 peer \(peer) identified itself as \(identifierLabel), which is not a requested camera."
+            ))
+            if let existingMatch = assignmentMatchByCentralID[central.identifier],
+               existingMatch.authorityRank < Insta360RemoteAssignmentMatch.cameraSerialIdentifier.authorityRank,
+               let fallbackCameraID = cameraIDByCentralID[central.identifier] {
+                unassign(
+                    central,
+                    from: fallbackCameraID,
+                    notifyDisconnected: true,
+                    reason: "camera identifier \(identifierLabel) did not match the \(existingMatch.rawValue) assignment"
+                )
+            }
+            return nil
+        }
+
+        let previousCameraID = cameraIDByCentralID[central.identifier]
+        let previousMatch = assignmentMatchByCentralID[central.identifier]
+        if previousCameraID == cameraID {
+            if previousMatch != .cameraSerialIdentifier {
+                assignmentMatchByCentralID[central.identifier] = .cameraSerialIdentifier
+                let name = cameraNamesByID[cameraID] ?? "Insta360 camera"
+                onEvent?(.log(
+                    "\(name): confirmed peer \(peerLabel(central.identifier)) using camera identifier \(identifierLabel)."
+                ))
+            }
+            reportConnectedIfSubscribed(cameraID, central: central)
+            return cameraID
+        }
+
+        if let previousCameraID {
+            unassign(
+                central,
+                from: previousCameraID,
+                notifyDisconnected: true,
+                reason: "camera identifier \(identifierLabel) superseded \(previousMatch?.rawValue ?? "an earlier assignment")"
+            )
+        }
+
+        if let assignedCentral = centralByCameraID[cameraID],
+           assignedCentral.identifier != central.identifier {
+            displace(
+                assignedCentral,
+                from: cameraID,
+                replacementIsSubscribed: subscribedCentralIDs.contains(central.identifier),
+                reason: "camera identifier \(identifierLabel) identified peer \(peerLabel(central.identifier))"
+            )
+        }
+
+        attach(
+            central,
+            assignment: Insta360RemoteAssignment(
+                cameraID: cameraID,
+                match: .cameraSerialIdentifier
+            ),
+            interaction: interaction
+        )
+        reportConnectedIfSubscribed(cameraID, central: central)
+        return cameraID
+    }
+
     func attach(
         _ central: CBCentral,
         assignment: Insta360RemoteAssignment,
@@ -531,6 +653,7 @@ private extension Insta360RemoteService {
         let peer = peerLabel(central.identifier)
         centralByCameraID[cameraID] = central
         cameraIDByCentralID[central.identifier] = cameraID
+        assignmentMatchByCentralID[central.identifier] = assignment.match
         let name = cameraNamesByID[cameraID] ?? "Insta360 camera"
         onEvent?(.log(
             "\(name): assigned Insta360 peer \(peer) by \(assignment.match.rawValue) during \(interaction)."
@@ -544,6 +667,50 @@ private extension Insta360RemoteService {
         startAdvertising()
     }
 
+    func displace(
+        _ central: CBCentral,
+        from cameraID: UUID,
+        replacementIsSubscribed: Bool,
+        reason: String
+    ) {
+        unassign(
+            central,
+            from: cameraID,
+            notifyDisconnected: !replacementIsSubscribed,
+            reason: reason
+        )
+    }
+
+    func unassign(
+        _ central: CBCentral,
+        from cameraID: UUID,
+        notifyDisconnected: Bool,
+        reason: String
+    ) {
+        guard cameraIDByCentralID[central.identifier] == cameraID else { return }
+        cameraIDByCentralID.removeValue(forKey: central.identifier)
+        assignmentMatchByCentralID.removeValue(forKey: central.identifier)
+        if centralByCameraID[cameraID]?.identifier == central.identifier {
+            centralByCameraID.removeValue(forKey: cameraID)
+        }
+        reportedActiveCameraIDs.remove(cameraID)
+        lastRecordingTimerByCameraID.removeValue(forKey: cameraID)
+        pendingUpdates.removeAll { $0.cameraID == cameraID }
+        let name = cameraNamesByID[cameraID] ?? "Insta360 camera"
+        onEvent?(.log(
+            "\(name): released peer \(peerLabel(central.identifier)) because \(reason)."
+        ))
+        if notifyDisconnected {
+            onEvent?(.cameraDisconnected(cameraID))
+        }
+    }
+
+    func reportConnectedIfSubscribed(_ cameraID: UUID, central: CBCentral) {
+        guard subscribedCentralIDs.contains(central.identifier) else { return }
+        reportedActiveCameraIDs.remove(cameraID)
+        onEvent?(.cameraConnected(cameraID))
+    }
+
     func clearActiveSessions(clearPublishedService: Bool) {
         let connectedCameraIDs = Array(centralByCameraID.keys)
         wakeTimer?.invalidate()
@@ -553,6 +720,8 @@ private extension Insta360RemoteService {
         shouldReplaceRestoredWakeAdvertisement = false
         centralByCameraID.removeAll()
         cameraIDByCentralID.removeAll()
+        assignmentMatchByCentralID.removeAll()
+        cameraIdentifierByCentralID.removeAll()
         restoredCentralsByID.removeAll()
         subscribedCentralIDs.removeAll()
         lastActivityByCentralID.removeAll()

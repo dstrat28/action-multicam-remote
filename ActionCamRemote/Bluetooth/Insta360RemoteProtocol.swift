@@ -1,8 +1,17 @@
 import Foundation
 
 enum Insta360RemoteAssignmentMatch: String, Equatable {
+    case cameraSerialIdentifier = "camera serial identifier"
     case exactPeerIdentifier = "exact peer identifier"
     case requestOrderFallback = "request-order fallback"
+
+    var authorityRank: Int {
+        switch self {
+        case .cameraSerialIdentifier: 3
+        case .exactPeerIdentifier: 2
+        case .requestOrderFallback: 1
+        }
+    }
 }
 
 struct Insta360RemoteAssignment: Equatable {
@@ -43,6 +52,17 @@ enum Insta360RemoteSessionPolicy {
 }
 
 enum Insta360RemoteAssignmentStrategy {
+    static func cameraID(
+        matching identifier: Data,
+        cameraNamesByID: [UUID: String],
+        requestedCameraIDs: [UUID]
+    ) -> UUID? {
+        requestedCameraIDs.first { cameraID in
+            guard let cameraName = cameraNamesByID[cameraID] else { return false }
+            return Insta360RemoteProtocol.wakeIdentifier(from: cameraName) == identifier
+        }
+    }
+
     static func assignments(
         peerIdentifiers: [UUID],
         requestedCameraIDs: [UUID],
@@ -141,6 +161,24 @@ enum Insta360RemoteProtocol {
         let suffix = trimmed.suffix(6)
         guard suffix.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else { return nil }
         return Data(suffix.utf8)
+    }
+
+    static func cameraIdentifier(from data: Data) -> Data? {
+        // The GPS Remote handshake identifies the camera with a CE81 packet shaped as:
+        // FE EF FE 07 00 06 <six ASCII identifier bytes>.
+        guard data.count >= 12,
+              data.starts(with: [0xFE, 0xEF, 0xFE, 0x07, 0x00, 0x06]) else {
+            return nil
+        }
+        let identifier = data.subdata(in: 6 ..< 12)
+        guard identifier.allSatisfy({ byte in
+            (0x30 ... 0x39).contains(byte)
+                || (0x41 ... 0x5A).contains(byte)
+                || (0x61 ... 0x7A).contains(byte)
+        }) else {
+            return nil
+        }
+        return identifier
     }
 
     static func wakeBeaconUUID(from cameraName: String) -> UUID? {
