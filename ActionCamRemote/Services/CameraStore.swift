@@ -2840,6 +2840,12 @@ private extension CameraStore {
 
         if let model = update.model, model != .unknown, cameras[index].model != model {
             cameras[index].model = model
+            cameras[index].capabilities = normalizedCapabilities(
+                cameras[index].capabilities,
+                brand: cameras[index].brand,
+                model: model,
+                name: cameras[index].name
+            )
             shouldSort = true
             shouldPersist = cameras[index].isPaired
         }
