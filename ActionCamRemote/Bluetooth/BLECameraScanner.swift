@@ -278,9 +278,29 @@ private extension BLECameraScanner {
         let advertisedName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
         let services = advertisedServiceUUIDs(from: advertisementData)
         let name = advertisedName ?? peripheral.name ?? "Unnamed Camera"
-        let lowercasedName = name.lowercased()
+        let manufacturerData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data
 
-        if services.contains(GoProBLEUUID.serviceControlAndQuery) || lowercasedName.contains("gopro") {
+        if let model = DJICameraAdvertisementClassifier.discoveryModel(
+            name: name,
+            manufacturerData: manufacturerData
+        ) {
+            return DiscoveredCameraCandidate(
+                id: peripheral.identifier,
+                name: name,
+                brand: .dji,
+                model: model,
+                rssi: rssi,
+                capabilities: [.experimental],
+                isAwake: inferDJIAwakeState(for: model, from: advertisementData),
+                isConnectable: inferConnectableState(from: advertisementData)
+            )
+        }
+
+        if GoProAdvertisementClassifier.isCredibleCamera(
+            name: name,
+            advertisesControlService: services.contains(GoProBLEUUID.serviceControlAndQuery),
+            manufacturerData: manufacturerData
+        ) {
             return DiscoveredCameraCandidate(
                 id: peripheral.identifier,
                 name: name,
@@ -303,20 +323,6 @@ private extension BLECameraScanner {
                 model: Insta360CameraNameClassifier.model(for: name),
                 rssi: rssi,
                 capabilities: [.record, .mode, .status, .experimental],
-                isConnectable: inferConnectableState(from: advertisementData)
-            )
-        }
-
-        if DJICameraNameClassifier.isCredibleCameraName(name) {
-            let model = inferDJIModel(from: name)
-            return DiscoveredCameraCandidate(
-                id: peripheral.identifier,
-                name: name,
-                brand: .dji,
-                model: model,
-                rssi: rssi,
-                capabilities: [.experimental],
-                isAwake: inferDJIAwakeState(for: model, from: advertisementData),
                 isConnectable: inferConnectableState(from: advertisementData)
             )
         }
@@ -576,16 +582,7 @@ private extension BLECameraScanner {
 
     func goProManufacturerData(from advertisementData: [String: Any]) -> Data? {
         guard let manufacturerData = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
-              manufacturerData.count >= 2 else {
-            return nil
-        }
-
-        let firstByte = UInt16(manufacturerData[manufacturerData.startIndex])
-        let secondByte = UInt16(manufacturerData[manufacturerData.index(manufacturerData.startIndex, offsetBy: 1)])
-        let littleEndianCompanyID = firstByte | (secondByte << 8)
-        let bigEndianCompanyID = (firstByte << 8) | secondByte
-
-        guard littleEndianCompanyID == 0xF202 || bigEndianCompanyID == 0xF202 else {
+              GoProAdvertisementClassifier.isCameraManufacturerData(manufacturerData) else {
             return nil
         }
 

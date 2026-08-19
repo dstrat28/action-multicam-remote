@@ -21,7 +21,7 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
 
     let cameraID: UUID
     let cameraName: String
-    let cameraModel: CameraModel
+    private(set) var cameraModel: CameraModel
 
     private weak var peripheral: CBPeripheral?
     private var writeCandidates: [DJIWritableCharacteristic] = []
@@ -1095,6 +1095,11 @@ private extension DJIExperimentalBLEClient {
                 return
             }
             onLog("\(cameraName): DJI R SDK camera verification request \(request.debugLabel).")
+            if let identifiedModel = request.cameraModel, identifiedModel != cameraModel {
+                cameraModel = identifiedModel
+                onCameraStatus(cameraID, CameraStatusUpdate(model: identifiedModel))
+                onLog("\(cameraName): DJI R SDK identified \(identifiedModel.rawValue).")
+            }
 
             if request.verifyMode == 0x02, request.verifyData == 0 {
                 if let peripheral {
@@ -1970,7 +1975,7 @@ private extension DJIExperimentalBLEClient {
             telemetry.isExternalPowerConnected = state.compactExternalPowerConnected
         case .djiOsmoNano:
             telemetry.isExternalPowerConnected = state.compactNanoExternalPowerConnected
-        case .djiOsmoPocket3, .genericDJI, .goProOpen, .insta360Remote, .unknown:
+        case .djiOsmoPocket3, .djiRSDKCamera, .genericDJI, .goProOpen, .insta360Remote, .unknown:
             telemetry.isExternalPowerConnected = nil
         }
 
@@ -2548,6 +2553,7 @@ private struct DJIRSDKIncomingFrame {
 }
 
 private struct DJIRSDKConnectionRequest {
+    var deviceID: UInt32
     var verifyMode: UInt8
     var verifyData: UInt16
     var cameraReserved: UInt8
@@ -2555,6 +2561,7 @@ private struct DJIRSDKConnectionRequest {
     var layoutLabel: String
 
     init?(payload: Data) {
+        guard let deviceID = payload.littleEndianUInt32(at: 0) else { return nil }
         let candidates: [(label: String, verifyModeOffset: Int, verifyDataOffset: Int, cameraReservedOffset: Int)] = [
             ("standard", 26, 27, 29),
             ("compact", 25, 26, 28)
@@ -2574,6 +2581,7 @@ private struct DJIRSDKConnectionRequest {
             return nil
         }
 
+        self.deviceID = deviceID
         self.verifyMode = selected.verifyMode
         self.verifyData = selected.verifyData
         self.cameraReserved = selected.cameraReserved
@@ -2582,7 +2590,11 @@ private struct DJIRSDKConnectionRequest {
     }
 
     var debugLabel: String {
-        "\(layoutLabel) payload \(payloadLength) bytes, mode 0x\(verifyMode.hexByte), data 0x\(verifyData.hexWord), reserved 0x\(cameraReserved.hexByte)"
+        "\(layoutLabel) payload \(payloadLength) bytes, device 0x\(deviceID.hexWord), mode 0x\(verifyMode.hexByte), data 0x\(verifyData.hexWord), reserved 0x\(cameraReserved.hexByte)"
+    }
+
+    var cameraModel: CameraModel? {
+        DJICameraAdvertisementClassifier.model(forEncodedRSDKDeviceID: deviceID)
     }
 }
 

@@ -675,6 +675,7 @@ struct CameraProductThumbnail: View {
              .insta360X3:
             1.05
         case .djiOsmoPocket3,
+             .djiRSDKCamera,
              .unknown:
             1
         }
@@ -703,6 +704,7 @@ struct CameraProductThumbnail: View {
              .djiAction2,
              .djiOsmoAction,
              .djiOsmoPocket3,
+             .djiRSDKCamera,
              .insta360AcePro2,
              .insta360AcePro,
              .insta360Ace,
@@ -775,6 +777,7 @@ struct CameraProductThumbnail: View {
         case .insta360Go3:
             "CameraInsta360Go3"
         case .djiOsmoPocket3,
+             .djiRSDKCamera,
              .unknown:
             nil
         }

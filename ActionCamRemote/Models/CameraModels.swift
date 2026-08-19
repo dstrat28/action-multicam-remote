@@ -34,6 +34,7 @@ enum CameraModel: String, Identifiable, Codable {
     case djiAction2 = "DJI Action 2"
     case djiOsmoAction = "Osmo Action"
     case djiOsmoPocket3 = "Osmo Pocket 3"
+    case djiRSDKCamera = "DJI Osmo Camera"
     case insta360AcePro2 = "Ace Pro 2"
     case insta360AcePro = "Ace Pro"
     case insta360Ace = "Ace"
@@ -71,7 +72,8 @@ enum CameraModel: String, Identifiable, Codable {
              .djiOsmoAction3,
              .djiAction2,
              .djiOsmoAction,
-             .djiOsmoPocket3:
+             .djiOsmoPocket3,
+             .djiRSDKCamera:
             .dji
         case .insta360AcePro2,
              .insta360AcePro,
@@ -172,6 +174,78 @@ struct DJICameraNameClassifier {
     }
 }
 
+struct DJICameraAdvertisementClassifier {
+    static func isRSDKCamera(_ manufacturerData: Data?) -> Bool {
+        guard let manufacturerData, manufacturerData.count >= 5 else { return false }
+        // DJI's R SDK BLE sample uses this manufacturer-data signature instead of the local name.
+        return manufacturerData[manufacturerData.startIndex] == 0xAA
+            && manufacturerData[manufacturerData.index(manufacturerData.startIndex, offsetBy: 1)] == 0x08
+            && manufacturerData[manufacturerData.index(manufacturerData.startIndex, offsetBy: 4)] == 0xFA
+    }
+
+    static func isNanoCamera(_ manufacturerData: Data?) -> Bool {
+        guard let manufacturerData, manufacturerData.count >= 3 else { return false }
+        return manufacturerData[manufacturerData.startIndex] == 0xAA
+            && manufacturerData[manufacturerData.index(manufacturerData.startIndex, offsetBy: 1)] == 0x08
+            && manufacturerData[manufacturerData.index(manufacturerData.startIndex, offsetBy: 2)] == 0x19
+    }
+
+    static func discoveryModel(name: String, manufacturerData: Data?) -> CameraModel? {
+        let nameModel = DJICameraNameClassifier.model(for: name)
+        if nameModel != .unknown {
+            return nameModel
+        }
+        if isNanoCamera(manufacturerData) {
+            return .djiOsmoNano
+        }
+        if isRSDKCamera(manufacturerData) {
+            return .djiRSDKCamera
+        }
+        return DJICameraNameClassifier.isCredibleCameraName(name) ? .unknown : nil
+    }
+
+    static func model(forEncodedRSDKDeviceID deviceID: UInt32) -> CameraModel? {
+        let highWord = UInt16(truncatingIfNeeded: deviceID >> 16)
+        let lowWord = UInt16(truncatingIfNeeded: deviceID)
+        let modelID = highWord == 0 ? lowWord : highWord
+
+        return switch modelID {
+        case 0xFF33:
+            .djiOsmoAction4
+        case 0xFF44:
+            .djiOsmoAction5Pro
+        case 0xFF55:
+            .djiOsmoAction6
+        case 0xFF66:
+            .djiOsmo360
+        default:
+            nil
+        }
+    }
+}
+
+struct GoProAdvertisementClassifier {
+    static func isCameraManufacturerData(_ manufacturerData: Data?) -> Bool {
+        guard let manufacturerData, manufacturerData.count >= 2 else { return false }
+
+        let firstByte = UInt16(manufacturerData[manufacturerData.startIndex])
+        let secondByte = UInt16(manufacturerData[manufacturerData.index(manufacturerData.startIndex, offsetBy: 1)])
+        let littleEndianCompanyID = firstByte | (secondByte << 8)
+        let bigEndianCompanyID = (firstByte << 8) | secondByte
+        return littleEndianCompanyID == 0xF202 || bigEndianCompanyID == 0xF202
+    }
+
+    static func isCredibleCamera(
+        name: String,
+        advertisesControlService: Bool,
+        manufacturerData: Data?
+    ) -> Bool {
+        isCameraManufacturerData(manufacturerData)
+            || advertisesControlService
+            || name.lowercased().contains("gopro")
+    }
+}
+
 extension CameraModel {
     var isOpenGoProCompatible: Bool {
         switch self {
@@ -196,6 +270,7 @@ extension CameraModel {
              .djiAction2,
              .djiOsmoAction,
              .djiOsmoPocket3,
+             .djiRSDKCamera,
              .insta360AcePro2,
              .insta360AcePro,
              .insta360Ace,
@@ -237,6 +312,7 @@ extension CameraModel {
              .djiAction2,
              .djiOsmoAction,
              .djiOsmoPocket3,
+             .djiRSDKCamera,
              .insta360AcePro2,
              .insta360AcePro,
              .insta360Ace,
@@ -614,6 +690,7 @@ enum CameraBehaviorKind: Equatable {
     case djiOsmo360
     case djiOsmoNano
     case djiOsmoPocket3
+    case djiRSDKCamera
     case genericDJI
     case unknown
 }
@@ -760,6 +837,19 @@ struct CameraBehaviorProfile: Equatable {
             )
         }
 
+        if model == .djiRSDKCamera {
+            return CameraBehaviorProfile(
+                kind: .djiRSDKCamera,
+                assumesRecordingAfterUnconfirmedDJIStart: false,
+                preservesActiveDJIRecordingAcrossReconnect: false,
+                trustsDJICompactRecordingStatus: false,
+                trustsDJIFullRecordingStatus: true,
+                trustsDJIRecordingTimerStatus: false,
+                trustsDJIRecordingHints: false,
+                trustsDJIStoppedStatusToClearActiveRecording: true
+            )
+        }
+
         if brand == .dji || model.brand == .dji {
             return CameraBehaviorProfile(
                 kind: .genericDJI,
@@ -791,7 +881,7 @@ struct CameraBehaviorProfile: Equatable {
 
     var usesDJIRSDKControl: Bool {
         switch kind {
-        case .djiOsmoAction4, .djiOsmoAction5Pro, .djiOsmoAction6, .djiOsmo360:
+        case .djiOsmoAction4, .djiOsmoAction5Pro, .djiOsmoAction6, .djiOsmo360, .djiRSDKCamera:
             true
         case .goProOpen, .insta360Remote, .djiOsmoNano, .djiOsmoPocket3, .genericDJI, .unknown:
             false
@@ -860,6 +950,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
              .djiOsmoAction6,
              .djiOsmo360,
              .djiOsmoNano,
+             .djiRSDKCamera,
              .insta360AcePro2,
              .insta360AcePro,
              .insta360Ace,
@@ -913,7 +1004,8 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
                  .djiOsmoAction5Pro,
                  .djiOsmoAction6,
                  .djiOsmo360,
-                 .djiOsmoNano:
+                 .djiOsmoNano,
+                 .djiRSDKCamera:
                 return true
             case .goproLitHero,
                  .goproMax2,
@@ -1151,7 +1243,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
             ]
         case .djiOsmoNano:
             return [.video, .photo, .timelapse, .hyperlapse, .superNight, .slowMotion]
-        case .djiOsmoPocket3, .genericDJI, .unknown:
+        case .djiOsmoPocket3, .djiRSDKCamera, .genericDJI, .unknown:
             return []
         }
     }
