@@ -38,6 +38,7 @@ enum CameraModel: String, Identifiable, Codable {
     case insta360AcePro2 = "Ace Pro 2"
     case insta360AcePro = "Ace Pro"
     case insta360Ace = "Ace"
+    case insta360X6 = "X6"
     case insta360X5 = "X5"
     case insta360X4Air = "X4 Air"
     case insta360X4 = "X4"
@@ -78,6 +79,7 @@ enum CameraModel: String, Identifiable, Codable {
         case .insta360AcePro2,
              .insta360AcePro,
              .insta360Ace,
+             .insta360X6,
              .insta360X5,
              .insta360X4Air,
              .insta360X4,
@@ -274,6 +276,7 @@ extension CameraModel {
              .insta360AcePro2,
              .insta360AcePro,
              .insta360Ace,
+             .insta360X6,
              .insta360X5,
              .insta360X4Air,
              .insta360X4,
@@ -316,6 +319,7 @@ extension CameraModel {
              .insta360AcePro2,
              .insta360AcePro,
              .insta360Ace,
+             .insta360X6,
              .insta360X5,
              .insta360X4Air,
              .insta360X4,
@@ -954,6 +958,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
              .insta360AcePro2,
              .insta360AcePro,
              .insta360Ace,
+             .insta360X6,
              .insta360X5,
              .insta360X4Air,
              .insta360X4,
@@ -1025,6 +1030,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
                  .insta360AcePro2,
                  .insta360AcePro,
                  .insta360Ace,
+                 .insta360X6,
                  .insta360X5,
                  .insta360X4Air,
                  .insta360X4,

@@ -7,6 +7,7 @@ enum Insta360RemoteProtocolRegression {
             ("Ace Pro 2 ABC123", .insta360AcePro2),
             ("ACE PRO X9Y8Z7", .insta360AcePro),
             ("Ace Q1W2E3", .insta360Ace),
+            ("X6 Z9Y8X7", .insta360X6),
             ("X5 A1B2C3", .insta360X5),
             ("X4 Air D4E5F6", .insta360X4Air),
             ("X4 G7H8J9", .insta360X4),
@@ -75,6 +76,8 @@ enum Insta360RemoteProtocolRegression {
         precondition(wakeableCamera.defaultSortRank == 3)
 
         precondition(!Insta360CameraNameClassifier.isCredibleCameraName("X5"))
+        precondition(!Insta360CameraNameClassifier.isCredibleCameraName("X6"))
+        precondition(!Insta360CameraNameClassifier.isCredibleCameraName("X6 Speaker ABC123"))
         precondition(!Insta360CameraNameClassifier.isCredibleCameraName("X5 Speaker ABC123"))
         precondition(!Insta360CameraNameClassifier.isCredibleCameraName("GO 3S Speaker ABC123"))
         precondition(Insta360CameraNameClassifier.model(for: "GoPro HERO13 ABC123") == .unknown)

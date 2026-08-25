@@ -226,7 +226,7 @@ struct Insta360CameraNameClassifier {
              .insta360Go3S,
              .insta360Go3:
             expectedWordCount = 3
-        case .insta360Ace, .insta360X5, .insta360X4, .insta360X3:
+        case .insta360Ace, .insta360X6, .insta360X5, .insta360X4, .insta360X3:
             expectedWordCount = 2
         default:
             return false
@@ -248,6 +248,9 @@ struct Insta360CameraNameClassifier {
         }
         if signature.contains("x4air") {
             return .insta360X4Air
+        }
+        if signature.hasPrefix("x6") {
+            return .insta360X6
         }
         if signature.hasPrefix("x5") {
             return .insta360X5

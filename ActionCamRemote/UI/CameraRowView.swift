@@ -669,7 +669,8 @@ struct CameraProductThumbnail: View {
              .insta360Go3S,
              .insta360Go3:
             1.1
-        case .insta360X5,
+        case .insta360X6,
+             .insta360X5,
              .insta360X4Air,
              .insta360X4,
              .insta360X3:
@@ -708,6 +709,7 @@ struct CameraProductThumbnail: View {
              .insta360AcePro2,
              .insta360AcePro,
              .insta360Ace,
+             .insta360X6,
              .insta360X5,
              .insta360X4Air,
              .insta360X4,
@@ -760,6 +762,8 @@ struct CameraProductThumbnail: View {
             "CameraInsta360AcePro"
         case .insta360Ace:
             "CameraInsta360Ace"
+        case .insta360X6:
+            "CameraInsta360X6"
         case .insta360X5:
             "CameraInsta360X5"
         case .insta360X4Air:
