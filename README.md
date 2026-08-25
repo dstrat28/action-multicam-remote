@@ -21,7 +21,7 @@ Multicam is an independent project and is not affiliated with, endorsed by, or s
 | DJI Osmo Action 6 | Supported | Yes |
 | DJI Osmo 360 | Supported | Yes |
 | DJI Osmo Nano | Supported | Yes |
-| Insta360 Ace Pro 2, Ace Pro, Ace, X5, X4 Air, X4, X3, ONE RS, GO Ultra, GO 3S, GO 3 | Experimental GPS Remote control | No |
+| Insta360 Ace Pro 2, Ace Pro, Ace, X6, X5, X4 Air, X4, X3, ONE RS, GO Ultra, GO 3S, GO 3 | Experimental GPS Remote control | No |
 | DJI Osmo Pocket 3 | Not supported | Yes |
 | GoPro HERO, MAX, HERO8 Black; DJI Osmo Action 3, Action 2, original Osmo Action | Not supported | No |
 
