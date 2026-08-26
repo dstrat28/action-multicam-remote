@@ -81,6 +81,20 @@ enum Insta360RemoteProtocolRegression {
         precondition(!Insta360CameraNameClassifier.isCredibleCameraName("X5 Speaker ABC123"))
         precondition(!Insta360CameraNameClassifier.isCredibleCameraName("GO 3S Speaker ABC123"))
         precondition(Insta360CameraNameClassifier.model(for: "GoPro HERO13 ABC123") == .unknown)
+        precondition(
+            !DiscoveredCamera.isSupportedModel(
+                brand: .insta360,
+                model: .insta360X6,
+                name: "X6 Z9Y8X7"
+            )
+        )
+        precondition(
+            DiscoveredCamera.unsupportedReason(
+                brand: .insta360,
+                model: .insta360X6,
+                name: "X6 Z9Y8X7"
+            ) == "Insta360 X6 uses a Bluetooth remote protocol that Multicam does not support."
+        )
 
         let firstCameraID = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
         let secondCameraID = UUID(uuidString: "22222222-2222-2222-2222-222222222222")!

@@ -932,7 +932,10 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
         model: CameraModel,
         name: String
     ) -> String? {
-        isSupportedModel(brand: brand, model: model, name: name) ? nil : unsupportedCameraReason
+        if model == .insta360X6 {
+            return "Insta360 X6 uses a Bluetooth remote protocol that Multicam does not support."
+        }
+        return isSupportedModel(brand: brand, model: model, name: name) ? nil : unsupportedCameraReason
     }
 
     static func isSupportedModel(
@@ -958,7 +961,6 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
              .insta360AcePro2,
              .insta360AcePro,
              .insta360Ace,
-             .insta360X6,
              .insta360X5,
              .insta360X4Air,
              .insta360X4,
@@ -975,6 +977,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
              .djiAction2,
              .djiOsmoAction,
              .djiOsmoPocket3,
+             .insta360X6,
              .unknown:
             break
         }
