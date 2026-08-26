@@ -21,7 +21,8 @@ Multicam is an independent project and is not affiliated with, endorsed by, or s
 | DJI Osmo Action 6 | Supported | Yes |
 | DJI Osmo 360 | Supported | Yes |
 | DJI Osmo Nano | Supported | Yes |
-| Insta360 Ace Pro 2, Ace Pro, Ace, X6, X5, X4 Air, X4, X3, ONE RS, GO Ultra, GO 3S, GO 3 | Experimental GPS Remote control | No |
+| Insta360 Ace Pro 2, Ace Pro, Ace, X5, X4 Air, X4, X3, ONE RS, GO Ultra, GO 3S, GO 3 | Experimental GPS Remote control | No |
+| Insta360 X6 | Recognized, but control is not supported | Yes (pairing failed) |
 | DJI Osmo Pocket 3 | Not supported | Yes |
 | GoPro HERO, MAX, HERO8 Black; DJI Osmo Action 3, Action 2, original Osmo Action | Not supported | No |
 
@@ -39,6 +40,7 @@ Multicam is an independent project and is not affiliated with, endorsed by, or s
 ## Known Limitations
 
 - Camera behavior can vary by model and firmware; see the hardware-testing status above.
+- Insta360 X6 is discoverable, but it does not accept the GPS Action Remote protocol that Multicam currently emulates.
 - Insta360 support requires selecting `Insta360 GPS Remote` in the camera's Bluetooth Remote settings while Multicam remains open. iOS cannot broadcast the manufacturer-specific wake advertisement used by the physical remote, so sleeping-camera wake is not supported.
 - Pair multiple Insta360 cameras one at a time. iOS does not expose an incoming camera's Bluetooth address, so Multicam assigns new GPS Remote subscriptions in the order connection requests were made.
 - Insta360 GPS Remote control does not expose camera settings, battery/storage telemetry, highlight markers, preview, or media transfer. Mode changes are not acknowledged by the remote protocol and must be verified on the camera.
