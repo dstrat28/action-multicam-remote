@@ -513,6 +513,12 @@ final class CameraStore {
         }
 
         if isDemoMode {
+#if DEBUG
+            if ProcessInfo.processInfo.shouldUsePairingDemo {
+                updateCamera(camera.id, state: .connecting, detail: nil)
+                return
+            }
+#endif
             markCameraAsPaired(camera.id)
             if let index = cameras.firstIndex(where: { $0.id == camera.id }) {
                 cameras[index].telemetry = Self.demoTelemetry(for: cameras[index])
@@ -3356,6 +3362,14 @@ private extension CameraStore {
     }
 
     func discoverNextDemoCamera() {
+#if DEBUG
+        if ProcessInfo.processInfo.shouldUsePairingDemo {
+            guard demoDiscoveryIndex == 0 else { return }
+            demoDiscoveryIndex += 1
+            loadPairingDemo()
+            return
+        }
+#endif
         guard demoDiscoveryIndex < Self.demoCandidates.count else {
             appendLog("No more simulator demo cameras to discover.")
             return
@@ -3459,8 +3473,20 @@ extension CameraStore {
 }
 
 private extension ProcessInfo {
+#if DEBUG
+    var shouldUsePairingDemo: Bool {
+        arguments.contains("--demo-insta360-pairing")
+            || arguments.contains("--demo-gopro-pairing")
+            || arguments.contains("--demo-dji-pairing")
+            || arguments.contains("--demo-nano-pairing")
+    }
+#endif
+
     var shouldUseCameraDemoMode: Bool {
-        arguments.contains("--demo-cameras")
+#if DEBUG
+        if shouldUsePairingDemo { return true }
+#endif
+        return arguments.contains("--demo-cameras")
             || arguments.contains("--demo-connected-cameras")
             || environment["ACTION_CAM_REMOTE_DEMO"] == "1"
     }

@@ -105,7 +105,7 @@ struct CameraDashboardView: View {
                     store.dismissNanoPairingConfirmation()
                 }
             } message: {
-                Text("On your \(store.nanoPairingConfirmation?.cameraName ?? "camera"), choose Accept to pair with Multicam.")
+                Text("On your \(store.nanoPairingConfirmation?.cameraName ?? "camera"), confirm the connection to Multicam.")
             }
         }
     }
@@ -470,6 +470,12 @@ private struct PairingCameraRow: View {
                 }
             }
 
+            if showsInsta360PairingGuide {
+                insta360PairingGuide
+            } else if showsInitialPairingGuide {
+                initialPairingGuide
+            }
+
             if let detail = pairingDetail {
                 Text(detail)
                     .font(.caption)
@@ -486,12 +492,122 @@ private struct PairingCameraRow: View {
                 .fill(camera.displayConnectionStatusColor)
                 .frame(width: 6, height: 6)
 
-            Text(camera.displayConnectionLabel)
+            Text(isWaitingForInsta360 ? "Finish on camera" : camera.displayConnectionLabel)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(camera.displayConnectionStatusColor)
         }
-        .lineLimit(1)
-        .fixedSize(horizontal: true, vertical: false)
+        .lineLimit(isWaitingForInsta360 ? 2 : 1)
+        .fixedSize(horizontal: !isWaitingForInsta360, vertical: isWaitingForInsta360)
+        .accessibilityElement(children: .combine)
+    }
+
+    private var showsInsta360PairingGuide: Bool {
+        camera.brand == .insta360
+            && camera.isSupportedByApp
+            && camera.connectionState != .connected
+    }
+
+    private var isWaitingForInsta360: Bool {
+        showsInsta360PairingGuide && isConnecting
+    }
+
+    private var isConnecting: Bool {
+        camera.connectionState == .connecting || camera.connectionState == .reconnecting
+    }
+
+    private var showsInitialPairingGuide: Bool {
+        camera.isSupportedByApp
+            && !camera.isPaired
+            && camera.connectionState != .connected
+            && (camera.brand == .gopro || camera.brand == .dji)
+    }
+
+    private var initialPairingGuide: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(initialPairingTitle)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(Color.acrInk)
+
+            Text(initialPairingInstructions)
+                .font(.subheadline)
+                .foregroundStyle(Color.acrMutedText)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(14)
+        .background(Color.acrAvailable.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+        .padding(.top, 4)
+    }
+
+    private var initialPairingTitle: String {
+        if camera.brand == .gopro {
+            return isConnecting ? "Complete Bluetooth pairing" : "Put your GoPro in pairing mode"
+        }
+        return isConnecting ? "Check your camera" : "Pair with Multicam"
+    }
+
+    private var initialPairingInstructions: String {
+        if camera.brand == .gopro {
+            if isConnecting {
+                return "If a Bluetooth pairing request appears, tap Pair."
+            }
+            switch camera.model {
+            case .goproHero13Black:
+                return "On your GoPro, swipe down, then left and choose Pair Device. Then tap Pair here."
+            case .goproHero9Black, .goproHero10Black, .goproHero11Black:
+                return "On your GoPro, open Connections → Connect Device → GoPro Quik. Then tap Pair here."
+            default:
+                return "On your GoPro, start pairing with a phone or app. Then tap Pair here."
+            }
+        }
+        return isConnecting
+            ? "Confirm the connection on your camera if prompted."
+            : "Tap Pair, then confirm the connection on your camera if prompted."
+    }
+
+    private var insta360PairingGuide: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(isWaitingForInsta360 ? "Finish on your camera" : (camera.isPaired ? "Connect as GPS Remote" : "Pair as GPS Remote"))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(Color.acrInk)
+
+                if !isWaitingForInsta360 {
+                    Text(insta360PairingIntroduction)
+                        .font(.subheadline)
+                        .foregroundStyle(Color.acrMutedText)
+                }
+            }
+
+            insta360PairingStep("1", title: "Open Settings → Bluetooth Remote")
+            insta360PairingStep("2", title: "Choose \(Insta360RemoteProtocol.remoteName)")
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(14)
+        .background(Color.acrAvailable.opacity(0.07), in: RoundedRectangle(cornerRadius: 12))
+        .padding(.top, 4)
+    }
+
+    private var insta360PairingIntroduction: String {
+        guard camera.isPaired else { return "Tap Pair, then on your camera:" }
+        return camera.canConnectFromCurrentState
+            ? "Tap Connect, then on your camera:"
+            : "Turn on your camera, then:"
+    }
+
+    private func insta360PairingStep(_ number: String, title: String) -> some View {
+        HStack(alignment: .top, spacing: 10) {
+            Text(number)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(Color.acrInk)
+                .frame(width: 22, height: 22)
+                .background(Color.acrAvailable.opacity(0.12), in: Circle())
+
+            Text(title)
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(Color.acrInk)
+        }
         .accessibilityElement(children: .combine)
     }
 
@@ -569,10 +685,6 @@ private struct PairingCameraRow: View {
     }
 
     private var pairingDetail: String? {
-        if camera.needsGoProPairingMode {
-            return "Put the GoPro in pairing mode on the camera"
-        }
-
         guard camera.unsupportedReason == nil else { return nil }
         return camera.connectionState.detail
     }

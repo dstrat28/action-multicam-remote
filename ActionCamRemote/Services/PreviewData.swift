@@ -1,6 +1,47 @@
 import Foundation
 
 extension CameraStore {
+#if DEBUG
+    func loadPairingDemo() {
+        let arguments = ProcessInfo.processInfo.arguments
+        let brand: CameraBrand
+        let model: CameraModel
+        let name: String
+        if arguments.contains("--demo-gopro-pairing") {
+            brand = .gopro
+            model = .goproHero13Black
+            name = "GoPro HERO13"
+        } else if arguments.contains("--demo-dji-pairing") {
+            brand = .dji
+            model = .djiOsmoAction6
+            name = "DJI Action 6"
+        } else if arguments.contains("--demo-nano-pairing") {
+            brand = .dji
+            model = .djiOsmoNano
+            name = "Osmo Nano"
+        } else {
+            brand = .insta360
+            model = .insta360Go3
+            name = "GO 3 X4Y5Z6"
+        }
+        let isConnected = arguments.contains("--demo-pairing-connected")
+        cameras = [DiscoveredCamera(
+            id: UUID(),
+            name: name,
+            brand: brand,
+            model: model,
+            rssi: -48,
+            capabilities: [.record, .status, .experimental],
+            connectionState: isConnected ? .connected : .discovered,
+            recordingState: isConnected ? .stopped : .unknown,
+            isPaired: isConnected,
+            isSelected: isConnected,
+            lastSeen: Date(),
+            isPairingAdvertisement: brand == .gopro ? !arguments.contains("--demo-gopro-not-pairing") : nil
+        )]
+    }
+#endif
+
     func loadDemoCameras() {
         cameras = Self.demoCandidates.map { makeCamera in
             var camera = makeCamera()
