@@ -492,12 +492,12 @@ private struct PairingCameraRow: View {
                 .fill(camera.displayConnectionStatusColor)
                 .frame(width: 6, height: 6)
 
-            Text(isWaitingForInsta360 ? "Finish on camera" : camera.displayConnectionLabel)
+            Text(camera.displayConnectionLabel)
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(camera.displayConnectionStatusColor)
         }
-        .lineLimit(isWaitingForInsta360 ? 2 : 1)
-        .fixedSize(horizontal: !isWaitingForInsta360, vertical: isWaitingForInsta360)
+        .lineLimit(1)
+        .fixedSize(horizontal: true, vertical: false)
         .accessibilityElement(children: .combine)
     }
 
@@ -505,10 +505,6 @@ private struct PairingCameraRow: View {
         camera.brand == .insta360
             && camera.isSupportedByApp
             && camera.connectionState != .connected
-    }
-
-    private var isWaitingForInsta360: Bool {
-        showsInsta360PairingGuide && isConnecting
     }
 
     private var isConnecting: Bool {
@@ -568,15 +564,13 @@ private struct PairingCameraRow: View {
     private var insta360PairingGuide: some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(isWaitingForInsta360 ? "Finish on your camera" : (camera.isPaired ? "Connect as GPS Remote" : "Pair as GPS Remote"))
+                Text(isConnecting ? "Connecting to GPS Remote" : (camera.isPaired ? "Connect as GPS Remote" : "Pair as GPS Remote"))
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(Color.acrInk)
 
-                if !isWaitingForInsta360 {
-                    Text(insta360PairingIntroduction)
-                        .font(.subheadline)
-                        .foregroundStyle(Color.acrMutedText)
-                }
+                Text(insta360PairingIntroduction)
+                    .font(.subheadline)
+                    .foregroundStyle(Color.acrMutedText)
             }
 
             insta360PairingStep("1", title: "Open Settings → Bluetooth Remote")
@@ -590,6 +584,9 @@ private struct PairingCameraRow: View {
     }
 
     private var insta360PairingIntroduction: String {
+        if isConnecting {
+            return "If your camera shows “Remote connected,” Multicam is still waiting for controls. Otherwise:"
+        }
         guard camera.isPaired else { return "Tap Pair, then on your camera:" }
         return camera.canConnectFromCurrentState
             ? "Tap Connect, then on your camera:"
