@@ -26,6 +26,7 @@ final class Insta360RemoteService: NSObject {
     private static let serviceUUID = CBUUID(string: "CE80")
     private static let writeCharacteristicUUID = CBUUID(string: "CE81")
     private static let notifyCharacteristicUUID = CBUUID(string: "CE82")
+    private static let infoCharacteristicUUID = CBUUID(string: "CE83")
     private static let restoreIdentifier = "com.ds.ActionCamRemote.insta360-gps-remote"
 
     private lazy var peripheralManager = CBPeripheralManager(
@@ -35,6 +36,7 @@ final class Insta360RemoteService: NSObject {
     )
     private var writeCharacteristic: CBMutableCharacteristic?
     private var notifyCharacteristic: CBMutableCharacteristic?
+    private var infoCharacteristic: CBMutableCharacteristic?
     private var requestedCameraIDs: [UUID] = []
     private var cameraNamesByID: [UUID: String] = [:]
     private var centralByCameraID: [UUID: CBCentral] = [:]
@@ -284,6 +286,7 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
                 isServicePublished = false
                 writeCharacteristic = nil
                 notifyCharacteristic = nil
+                infoCharacteristic = nil
                 needsServiceRepublish = false
             }
             if shouldReplaceRestoredWakeAdvertisement {
@@ -318,10 +321,14 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
         let characteristics = service.characteristics?.compactMap { $0 as? CBMutableCharacteristic } ?? []
         writeCharacteristic = characteristics.first(where: { $0.uuid == Self.writeCharacteristicUUID })
         notifyCharacteristic = characteristics.first(where: { $0.uuid == Self.notifyCharacteristicUUID })
-        guard writeCharacteristic != nil, let notifyCharacteristic else {
+        infoCharacteristic = characteristics.first(where: { $0.uuid == Self.infoCharacteristicUUID })
+        guard writeCharacteristic != nil,
+              let notifyCharacteristic,
+              notifyCharacteristic.properties == [.notify],
+              infoCharacteristic != nil else {
             isServicePublished = false
             needsServiceRepublish = true
-            onEvent?(.log("Insta360 restored an incomplete CE80 service; CE81 and CE82 will be republished."))
+            onEvent?(.log("Insta360 restored an outdated CE80 service; CE81, CE82, and CE83 will be republished."))
             return
         }
         isServicePublished = true
@@ -438,18 +445,23 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
 
     func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveRead request: CBATTRequest) {
         let peer = peerLabel(request.central.identifier)
-        guard request.characteristic.uuid == Self.notifyCharacteristicUUID else {
+        guard request.characteristic.uuid == Self.infoCharacteristicUUID else {
             onEvent?(.log(
                 "Insta360 peer \(peer) requested unsupported read \(request.characteristic.uuid.uuidString)."
             ))
             peripheral.respond(to: request, withResult: .requestNotSupported)
             return
         }
-        onEvent?(.log("Insta360 peer \(peer) read CE82 at offset \(request.offset)."))
-        if let cameraID = assignCameraIfNeeded(request.central, interaction: "CE82 read") {
+        onEvent?(.log("Insta360 peer \(peer) read CE83 at offset \(request.offset)."))
+        if let cameraID = assignCameraIfNeeded(request.central, interaction: "CE83 read") {
             noteSessionActivity(for: request.central, cameraID: cameraID)
         }
-        request.value = Data([0x00])
+        let infoValue = Data([0x01, 0x02])
+        guard request.offset <= infoValue.count else {
+            peripheral.respond(to: request, withResult: .invalidOffset)
+            return
+        }
+        request.value = Data(infoValue.dropFirst(request.offset))
         peripheral.respond(to: request, withResult: .success)
     }
 
@@ -734,6 +746,7 @@ private extension Insta360RemoteService {
         isServicePublished = false
         writeCharacteristic = nil
         notifyCharacteristic = nil
+        infoCharacteristic = nil
     }
 
     func noteSessionActivity(for central: CBCentral, cameraID: UUID, now: Date = Date()) {
@@ -786,14 +799,21 @@ private extension Insta360RemoteService {
         )
         let notify = CBMutableCharacteristic(
             type: Self.notifyCharacteristicUUID,
-            properties: [.read, .notify],
+            properties: [.notify],
+            value: nil,
+            permissions: []
+        )
+        let info = CBMutableCharacteristic(
+            type: Self.infoCharacteristicUUID,
+            properties: [.read],
             value: nil,
             permissions: [.readable]
         )
         let service = CBMutableService(type: Self.serviceUUID, primary: true)
-        service.characteristics = [write, notify]
+        service.characteristics = [write, notify, info]
         writeCharacteristic = write
         notifyCharacteristic = notify
+        infoCharacteristic = info
         isServicePublished = true
         peripheralManager.add(service)
     }
