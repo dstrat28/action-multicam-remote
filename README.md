@@ -102,7 +102,6 @@ Thank you to these projects for helping make Multicam possible:
 - [rhoenschrat/DJI-Remote](https://github.com/rhoenschrat/DJI-Remote) for DJI highlight-tag research.
 - [marcelpallares/insta360-m5stick-remote](https://github.com/marcelpallares/insta360-m5stick-remote) for the MIT-licensed Insta360 GPS Remote, Ace Pro 2/X5, multicamera, command, and recording-status reference implementation.
 - [pchwalek/insta360_ble_esp32](https://github.com/pchwalek/insta360_ble_esp32) for the MIT-licensed CE80/CE81/CE82 GPS Remote service and command reference implementation.
-- [Insta360's GPS Preview Remote documentation](https://onlinemanual.insta360.com/app/en-us/operation-tutorial/stats-dashboard/add-dashboard-data-using-the-gps-video-transmission-remote-control) for the official camera compatibility list, including GO Ultra, GO 3S, and GO 3.
 
 ## License
 
