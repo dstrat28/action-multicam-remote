@@ -4,7 +4,7 @@ Native iPhone, iPad, and Apple Watch app for controlling multiple action cameras
 
 Pair and control multiple GoPro, DJI, and Insta360 cameras together. Start or stop recording, take photos, switch capture modes, and add highlight markers where supported from iPhone, iPad, or Apple Watch. A Live Activity keeps recording controls on the Lock Screen and Dynamic Island.
 
-[Download Action Multicam Remote on the App Store](https://apps.apple.com/us/app/action-multicam-remote/id6784017391).
+[Download Multicam on the App Store](https://apps.apple.com/us/app/action-multicam-remote/id6784017391).
 
 GoPro support uses the public Open GoPro BLE API. DJI support uses DJI's R SDK protocol and BLE/DUML behavior. Experimental Insta360 support emulates the Bluetooth GPS Remote protocol and does not use Wi-Fi. HERO13 Black, Osmo Action 5 Pro, Action 6, Osmo 360, and Osmo Nano have been tested directly.
 
