@@ -17,6 +17,14 @@ jobs:
       - name: Select Xcode
         run: xcodebuild -version
 
+      - name: Check diagnostic log archive
+        run: |
+          xcrun swiftc -parse-as-library \
+            ActionCamRemote/Services/DiagnosticLogArchive.swift \
+            Tests/DiagnosticLogArchiveRegression.swift \
+            -o "$RUNNER_TEMP/diagnostic-log-regression"
+          "$RUNNER_TEMP/diagnostic-log-regression"
+
       - name: Build
         run: |
           xcodebuild \

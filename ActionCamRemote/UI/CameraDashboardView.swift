@@ -690,7 +690,9 @@ private struct PairingCameraRow: View {
 private struct DiagnosticsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(CameraStore.self) private var store
-    @State private var didCopyDiagnostics = false
+    @State private var shareFile: DiagnosticShareFile?
+    @State private var isPreparingShare = false
+    @State private var shareError: String?
 
     var body: some View {
         ScrollView {
@@ -710,14 +712,20 @@ private struct DiagnosticsSheet: View {
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button {
-                    UIPasteboard.general.string = store.diagnosticsText
-                    didCopyDiagnostics = true
+                    isPreparingShare = true
+                    Task {
+                        defer { isPreparingShare = false }
+                        do {
+                            shareFile = DiagnosticShareFile(url: try await store.exportDiagnostics())
+                        } catch {
+                            shareError = error.localizedDescription
+                        }
+                    }
                 } label: {
-                    Label(
-                        didCopyDiagnostics ? "Copied" : "Copy",
-                        systemImage: didCopyDiagnostics ? "checkmark" : "doc.on.doc"
-                    )
+                    Label(isPreparingShare ? "Preparing…" : "Share", systemImage: "square.and.arrow.up")
                 }
+                .disabled(isPreparingShare)
+                .accessibilityLabel("Share saved diagnostics")
             }
 
             ToolbarItem(placement: .topBarTrailing) {
@@ -726,7 +734,36 @@ private struct DiagnosticsSheet: View {
                 }
             }
         }
+        .sheet(item: $shareFile) { file in
+            DiagnosticsShareSheet(url: file.url) { shareFile = nil }
+        }
+        .alert("Could Not Share Diagnostics", isPresented: Binding(
+            get: { shareError != nil },
+            set: { if !$0 { shareError = nil } }
+        )) {
+            Button("OK", role: .cancel) { shareError = nil }
+        } message: {
+            Text(shareError ?? "Please try again.")
+        }
     }
+}
+
+private struct DiagnosticShareFile: Identifiable {
+    let url: URL
+    var id: URL { url }
+}
+
+private struct DiagnosticsShareSheet: UIViewControllerRepresentable {
+    let url: URL
+    let onComplete: () -> Void
+
+    func makeUIViewController(context: Context) -> UIActivityViewController {
+        let controller = UIActivityViewController(activityItems: [url], applicationActivities: nil)
+        controller.completionWithItemsHandler = { _, _, _, _ in onComplete() }
+        return controller
+    }
+
+    func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
 
 private struct CameraDiagnosticsView: View {
@@ -889,8 +926,29 @@ private struct EventLogView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Bluetooth Log")
-                .font(.headline)
+            HStack {
+                Text("Bluetooth Log")
+                    .font(.headline)
+
+                Spacer()
+
+                Button("Clear") {
+                    store.clearDiagnosticLogs()
+                }
+                .font(.caption)
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.acrToolbarIcon)
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
+                .disabled(store.eventLog.isEmpty)
+                .accessibilityLabel("Clear Bluetooth log")
+            }
+
+            if let error = store.logStorageError {
+                Text("Logs could not be saved: \(error)")
+                    .font(.caption)
+                    .foregroundStyle(Color.acrWarning)
+            }
 
             if store.eventLog.isEmpty {
                 Text("Discovery and protocol messages will appear here.")
@@ -901,7 +959,7 @@ private struct EventLogView: View {
                     .acrInsetPanel()
             } else {
                 VStack(alignment: .leading, spacing: 6) {
-                    ForEach(store.eventLog.prefix(30), id: \.self) { line in
+                    ForEach(Array(store.eventLog.prefix(30).enumerated()), id: \.offset) { _, line in
                         Text(line)
                             .font(.caption.monospaced())
                             .foregroundStyle(.secondary)

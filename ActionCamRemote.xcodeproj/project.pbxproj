@@ -38,6 +38,7 @@
 		ACR000000000000000000129 /* DJINanoProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000029 /* DJINanoProtocol.swift */; };
 		ACR000000000000000000130 /* Insta360RemoteProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000030 /* Insta360RemoteProtocol.swift */; };
 		ACR000000000000000000131 /* Insta360RemoteService.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000031 /* Insta360RemoteService.swift */; };
+		ACR000000000000000000132 /* DiagnosticLogArchive.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000032 /* DiagnosticLogArchive.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -114,6 +115,7 @@
 		ACR000000000000000000029 /* DJINanoProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DJINanoProtocol.swift; sourceTree = "<group>"; };
 		ACR000000000000000000030 /* Insta360RemoteProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Insta360RemoteProtocol.swift; sourceTree = "<group>"; };
 		ACR000000000000000000031 /* Insta360RemoteService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Insta360RemoteService.swift; sourceTree = "<group>"; };
+		ACR000000000000000000032 /* DiagnosticLogArchive.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiagnosticLogArchive.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -203,6 +205,7 @@
 			isa = PBXGroup;
 			children = (
 				ACR000000000000000000007 /* CameraStore.swift */,
+				ACR000000000000000000032 /* DiagnosticLogArchive.swift */,
 				ACR000000000000000000011 /* PreviewData.swift */,
 				ACR000000000000000000015 /* WatchConnectivityController.swift */,
 				ACR000000000000000000020 /* PhoneGPSProvider.swift */,
@@ -390,6 +393,7 @@
 				ACR000000000000000000130 /* Insta360RemoteProtocol.swift in Sources */,
 				ACR000000000000000000131 /* Insta360RemoteService.swift in Sources */,
 				ACR000000000000000000107 /* CameraStore.swift in Sources */,
+				ACR000000000000000000132 /* DiagnosticLogArchive.swift in Sources */,
 				ACR000000000000000000108 /* DesignSystem.swift in Sources */,
 				ACR000000000000000000109 /* CameraDashboardView.swift in Sources */,
 				ACR000000000000000000110 /* CameraRowView.swift in Sources */,
@@ -572,7 +576,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.1.5;
+				MARKETING_VERSION = 1.1.6;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ds.ActionCamRemote;
 				PRODUCT_NAME = Multicam;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -603,7 +607,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.1.5;
+				MARKETING_VERSION = 1.1.6;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ds.ActionCamRemote;
 				PRODUCT_NAME = Multicam;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -633,7 +637,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.1.5;
+				MARKETING_VERSION = 1.1.6;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ds.ActionCamRemote.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -662,7 +666,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.1.5;
+				MARKETING_VERSION = 1.1.6;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ds.ActionCamRemote.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -692,7 +696,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.1.5;
+				MARKETING_VERSION = 1.1.6;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ds.ActionCamRemote.LiveActivity;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -719,7 +723,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.1.5;
+				MARKETING_VERSION = 1.1.6;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ds.ActionCamRemote.LiveActivity;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;

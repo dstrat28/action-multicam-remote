@@ -19,8 +19,16 @@ struct ActionCamRemoteApp: App {
             CameraDashboardView()
                 .environment(store)
                 .onChange(of: scenePhase) { _, phase in
-                    guard phase == .active else { return }
-                    store.resumeCameraConnections()
+                    switch phase {
+                    case .active:
+                        store.resumeCameraConnections()
+                    case .background:
+                        store.saveDiagnosticsBeforeBackgrounding()
+                    case .inactive:
+                        break
+                    @unknown default:
+                        break
+                    }
                 }
         }
     }

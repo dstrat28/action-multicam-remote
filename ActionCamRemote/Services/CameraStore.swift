@@ -20,6 +20,7 @@ final class CameraStore {
     }
     var commandResults: [CameraCommandResult] = []
     var eventLog: [String] = []
+    var logStorageError: String?
     var isScanning = false
     var bluetoothStateLabel = "Unknown"
     var isDemoMode = false
@@ -28,6 +29,7 @@ final class CameraStore {
     private(set) var djiPhoneGPSCameraIDs: Set<UUID> = []
 
     @ObservationIgnored private let scanner: BLECameraScanner
+    @ObservationIgnored private let logArchive: DiagnosticLogArchive
     @ObservationIgnored private var insta360Remote: Insta360RemoteService?
     @ObservationIgnored private let phoneGPSProvider = PhoneGPSProvider()
     @ObservationIgnored private let recordingLiveActivityController = RecordingLiveActivityController()
@@ -103,8 +105,15 @@ final class CameraStore {
     ) {
         self.scanner = scanner
         let resolvedDemoMode = demoMode ?? ProcessInfo.processInfo.shouldUseCameraDemoMode
+        logArchive = DiagnosticLogArchive(directory: resolvedDemoMode ? nil : DiagnosticLogArchive.defaultDirectory)
+        eventLog = logArchive.initialSnapshot.entries.suffix(1_000).reversed().map(\.formattedLine)
+        logStorageError = logArchive.initialSnapshot.storageError
         isDemoMode = resolvedDemoMode
         bluetoothStateLabel = scanner.bluetoothState.displayName
+        let bundle = Bundle.main
+        let version = bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "unknown"
+        let build = bundle.object(forInfoDictionaryKey: "CFBundleVersion") as? String ?? "unknown"
+        appendLog("App launched. Version \(version) (\(build)); \(UIDevice.current.systemName) \(UIDevice.current.systemVersion).")
 
         scanner.onEvent = { [weak self] event in
             Task { @MainActor in
@@ -255,7 +264,28 @@ final class CameraStore {
         connectedCameras.filter(\.supportsBatchRecord)
     }
 
-    var diagnosticsText: String {
+    func clearDiagnosticLogs() {
+        eventLog.removeAll()
+        logArchive.clear { [weak self] error in
+            Task { @MainActor in self?.logStorageError = error }
+        }
+    }
+
+    func saveDiagnosticsBeforeBackgrounding() {
+        let taskID = UIApplication.shared.beginBackgroundTask(withName: "Save diagnostic logs")
+        Task {
+            _ = await logArchive.snapshot()
+            if taskID != .invalid {
+                UIApplication.shared.endBackgroundTask(taskID)
+            }
+        }
+    }
+
+    func exportDiagnostics() async throws -> URL {
+        try await logArchive.export(context: diagnosticsSummary)
+    }
+
+    private var diagnosticsSummary: String {
         var sections: [String] = [diagnosticsContext]
 
         if !commandResults.isEmpty {
@@ -263,17 +293,13 @@ final class CameraStore {
                 (
                     ["Command Results"]
                         + commandResults.prefix(20).map { result in
-                            "\(result.timestamp.formatted(date: .omitted, time: .standard)) \(result.cameraName) \(result.command.label) [\(result.status.rawValue)]: \(result.message)"
+                            "\(result.timestamp.ISO8601Format(.init(includingFractionalSeconds: true))) \(result.cameraName) \(result.command.label) [\(result.status.rawValue)]: \(result.message)"
                         }
                 ).joined(separator: "\n")
             )
         }
 
-        if !eventLog.isEmpty {
-            sections.append((["Bluetooth Log"] + eventLog).joined(separator: "\n"))
-        }
-
-        return sections.isEmpty ? "No diagnostics yet." : sections.joined(separator: "\n\n")
+        return sections.joined(separator: "\n\n")
     }
 
     private var diagnosticsContext: String {
@@ -291,7 +317,7 @@ final class CameraStore {
         return (
             [
                 "Diagnostics Context",
-                "Captured: \(Date.now.formatted(date: .numeric, time: .standard))",
+                "Captured: \(Date.now.ISO8601Format(.init(includingFractionalSeconds: true)))",
                 "App: \(version) (\(build))",
                 "Device: \(device.model) \(Self.hardwareModelIdentifier)",
                 "System: \(device.systemName) \(device.systemVersion)",
@@ -3383,11 +3409,14 @@ private extension CameraStore {
     }
 
     func appendLog(_ message: String) {
-        let timestamp = Date.now.formatted(date: .omitted, time: .standard)
+        let entry = DiagnosticLogEntry(timestamp: .now, message: message)
         logger.info("\(message, privacy: .public)")
         print(message)
-        eventLog.insert("[\(timestamp)] \(message)", at: 0)
-        eventLog = Array(eventLog.prefix(400))
+        eventLog.insert(entry.formattedLine, at: 0)
+        eventLog = Array(eventLog.prefix(1_000))
+        logArchive.append(entry) { [weak self] error in
+            Task { @MainActor in self?.logStorageError = error }
+        }
     }
 
     func setCameraDiagnostic(_ message: String, for camera: DiscoveredCamera) {
