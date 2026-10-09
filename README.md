@@ -16,7 +16,7 @@ Multicam is an independent project and is not affiliated with, endorsed by, or s
 | --- | --- | --- |
 | GoPro HERO13 Black | Yes | Yes |
 | GoPro LIT HERO | Yes | No |
-| GoPro MAX 2 | Yes | No |
+| GoPro MAX 2 | Yes | Yes |
 | GoPro HERO12 Black | Yes | No |
 | GoPro HERO11 Black Mini | Yes | No |
 | GoPro HERO11 Black | Yes | No |
