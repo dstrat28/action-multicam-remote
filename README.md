@@ -12,15 +12,21 @@ Multicam is an independent project and is not affiliated with, endorsed by, or s
 
 ## Camera Support
 
-| Camera | Support | Hardware tested |
+| Camera | Support | Hardware Tested |
 | --- | --- | --- |
-| GoPro HERO13 Black | Supported | Yes |
-| GoPro LIT HERO, MAX 2, HERO12 Black, HERO11 Black Mini, HERO11 Black, HERO10 Black, HERO9 Black | Supported | No |
-| DJI Osmo Action 4 | Supported | No |
-| DJI Osmo Action 5 Pro | Supported | Yes |
-| DJI Osmo Action 6 | Supported | Yes |
-| DJI Osmo 360 | Supported | Yes |
-| DJI Osmo Nano | Supported | Yes |
+| GoPro HERO13 Black | Yes | Yes |
+| GoPro LIT HERO | Yes | No |
+| GoPro MAX 2 | Yes | No |
+| GoPro HERO12 Black | Yes | No |
+| GoPro HERO11 Black Mini | Yes | No |
+| GoPro HERO11 Black | Yes | No |
+| GoPro HERO10 Black | Yes | No |
+| GoPro HERO9 Black | Yes | No |
+| DJI Osmo Action 4 | Yes | No |
+| DJI Osmo Action 5 Pro | Yes | Yes |
+| DJI Osmo Action 6 | Yes | Yes |
+| DJI Osmo 360 | Yes | Yes |
+| DJI Osmo Nano | Yes | Yes |
 | Insta360 Ace Pro 2 | Experimental | No |
 | Insta360 Ace Pro | Experimental | No |
 | Insta360 Ace | Experimental | No |
@@ -33,8 +39,13 @@ Multicam is an independent project and is not affiliated with, endorsed by, or s
 | Insta360 GO 3S | Experimental | No |
 | Insta360 GO 3 | Experimental | No |
 | Insta360 X6 | Experimental | No |
-| DJI Osmo Pocket 3 | Not supported | Yes |
-| GoPro HERO, MAX, HERO8 Black; DJI Osmo Action 3, Action 2, original Osmo Action | Not supported | No |
+| DJI Osmo Pocket 3 | No | Yes |
+| GoPro HERO | No | No |
+| GoPro MAX | No | No |
+| GoPro HERO8 Black | No | No |
+| DJI Osmo Action 3 | No | No |
+| DJI Action 2 | No | No |
+| DJI Osmo Action (original) | No | No |
 
 ## What Works
 
