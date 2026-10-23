@@ -34,6 +34,16 @@ jobs:
             -o "$RUNNER_TEMP/insta360-remote-regression"
           "$RUNNER_TEMP/insta360-remote-regression"
 
+      - name: Check GoPro stop ordering
+        run: |
+          xcrun swiftc -parse-as-library \
+            ActionCamRemote/Models/CameraModels.swift \
+            ActionCamRemote/Bluetooth/Insta360RemoteProtocol.swift \
+            ActionCamRemote/Bluetooth/GoProCommandQueue.swift \
+            Tests/GoProCommandQueueRegression.swift \
+            -o "$RUNNER_TEMP/gopro-command-queue-regression"
+          "$RUNNER_TEMP/gopro-command-queue-regression"
+
       - name: Build
         run: |
           xcodebuild \
