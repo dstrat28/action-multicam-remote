@@ -40,10 +40,9 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
     private var statusPollTimer: Timer?
     private var statusRefreshTimer: Timer?
     private var settingRefreshTimer: Timer?
-    private var pendingWrites: [PendingWrite] = []
+    private var pendingWrites = GoProCommandQueue<PendingWrite>()
     private var activeWrite: PendingWrite?
     private var pendingShutterTargetState: CameraRecordingState?
-    private var deferredCommandWhileBusy: CameraCommand?
     private var isCameraBusy = false
     private var hasReceivedBusyStatus = false
     private var hasReceivedEncodingStatus = false
@@ -85,6 +84,13 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
         super.init()
     }
 
+    deinit {
+        keepAliveTimer?.invalidate()
+        statusPollTimer?.invalidate()
+        statusRefreshTimer?.invalidate()
+        settingRefreshTimer?.invalidate()
+    }
+
     func didConnect() {
         peripheral?.delegate = self
         peripheral?.discoverServices([
@@ -105,7 +111,6 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
         pendingWrites.removeAll()
         activeWrite = nil
         pendingShutterTargetState = nil
-        deferredCommandWhileBusy = nil
         isCameraBusy = false
         hasReceivedBusyStatus = false
         hasReceivedEncodingStatus = false
@@ -132,12 +137,14 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
     }
 
     func send(_ command: CameraCommand) -> CameraCommandResult {
+        // Stop supersedes capture commands that have not reached the camera.
+        pendingWrites.prepare(for: command)
         guard peripheral != nil else {
             return result(for: command, status: .failed, message: "GoPro peripheral is unavailable.")
         }
 
         if isCameraBusy, shouldDeferWhileBusy(command) {
-            deferredCommandWhileBusy = command
+            pendingWrites.deferUntilIdle(command)
             requestStatusValues(shouldLog: false)
             return result(
                 for: command,
@@ -465,7 +472,8 @@ private extension GoProBLEClient {
         enqueueWrite(
             GoProPacket.packetize(goProCommand.payload),
             to: commandCharacteristic,
-            logMessage: "\(cameraName): GoPro \(command.label) -> command \(goProCommand.payload.hexString)"
+            logMessage: "\(cameraName): GoPro \(command.label) -> command \(goProCommand.payload.hexString)",
+            command: command
         )
 
         return result(for: command, status: .sent, message: "Queued \(command.label) over Open GoPro BLE.")
@@ -550,7 +558,8 @@ private extension GoProBLEClient {
         _ data: Data,
         to characteristic: CBCharacteristic,
         logMessage: String?,
-        coalesce: Bool = false
+        coalesce: Bool = false,
+        command: CameraCommand? = nil
     ) {
         if coalesce {
             let isAlreadyQueued = activeWrite.map {
@@ -562,7 +571,8 @@ private extension GoProBLEClient {
         }
 
         pendingWrites.append(
-            PendingWrite(data: data, characteristic: characteristic, logMessage: logMessage)
+            PendingWrite(data: data, characteristic: characteristic, logMessage: logMessage),
+            command: command
         )
         writeNextIfPossible()
     }
@@ -893,8 +903,7 @@ private extension GoProBLEClient {
     }
 
     func executeDeferredCommandIfReady() {
-        guard !isCameraBusy, let command = deferredCommandWhileBusy else { return }
-        deferredCommandWhileBusy = nil
+        guard let command = pendingWrites.takeDeferredCommand(isBusy: isCameraBusy) else { return }
         let commandResult = send(command)
         onLog("\(cameraName): deferred GoPro \(command.label.lowercased()) \(commandResult.status.rawValue.lowercased()).")
     }

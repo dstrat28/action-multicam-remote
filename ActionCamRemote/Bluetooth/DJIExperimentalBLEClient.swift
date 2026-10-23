@@ -118,6 +118,13 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
         super.init()
     }
 
+    deinit {
+        rSDKHandshakePairingRetryTimer?.invalidate()
+        nanoKeepAliveTimer?.invalidate()
+        rSDKModeStatusSettleTimer?.invalidate()
+        statusProbeTimer?.invalidate()
+    }
+
     func didConnect() {
         peripheral?.delegate = self
         peripheral?.discoverServices(nil)
