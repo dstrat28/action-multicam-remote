@@ -40,6 +40,8 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
     private var statusPollTimer: Timer?
     private var statusRefreshTimer: Timer?
     private var settingRefreshTimer: Timer?
+    private var startExpiryTimer: Timer?
+    private var pendingStartResult: CameraCommandResult?
     private var pendingWrites = GoProCommandQueue<PendingWrite>()
     private var activeWrite: PendingWrite?
     private var pendingShutterTargetState: CameraRecordingState?
@@ -64,6 +66,7 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
     private let onStatus: (UUID, CameraConnectionState, String?) -> Void
     private let onCameraStatus: (UUID, CameraStatusUpdate) -> Void
     private let onLog: (String) -> Void
+    private let onCommandCompleted: (CameraCommandResult) -> Void
 
     init(
         cameraID: UUID,
@@ -72,7 +75,8 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
         shouldSendAppPowerOnStart: Bool = false,
         onStatus: @escaping (UUID, CameraConnectionState, String?) -> Void,
         onCameraStatus: @escaping (UUID, CameraStatusUpdate) -> Void,
-        onLog: @escaping (String) -> Void
+        onLog: @escaping (String) -> Void,
+        onCommandCompleted: @escaping (CameraCommandResult) -> Void = { _ in }
     ) {
         self.cameraID = cameraID
         self.cameraName = cameraName
@@ -81,6 +85,7 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
         self.onStatus = onStatus
         self.onCameraStatus = onCameraStatus
         self.onLog = onLog
+        self.onCommandCompleted = onCommandCompleted
         super.init()
     }
 
@@ -89,6 +94,7 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
         statusPollTimer?.invalidate()
         statusRefreshTimer?.invalidate()
         settingRefreshTimer?.invalidate()
+        startExpiryTimer?.invalidate()
     }
 
     func didConnect() {
@@ -108,6 +114,9 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
         statusRefreshTimer = nil
         settingRefreshTimer?.invalidate()
         settingRefreshTimer = nil
+        startExpiryTimer?.invalidate()
+        startExpiryTimer = nil
+        pendingStartResult = nil
         pendingWrites.removeAll()
         activeWrite = nil
         pendingShutterTargetState = nil
@@ -137,8 +146,21 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
     }
 
     func send(_ command: CameraCommand) -> CameraCommandResult {
-        // Stop supersedes capture commands that have not reached the camera.
+        if command == .startRecording || command == .stopRecording {
+            completePendingStart(status: .skipped, message: "A newer recording command replaced the unsent GoPro start.")
+        }
         pendingWrites.prepare(for: command)
+        let result = sendPreparedCommand(command)
+        if command == .startRecording, pendingWrites.hasPendingStart {
+            pendingStartResult = result
+        } else if !pendingWrites.hasPendingStart {
+            completePendingStart(status: .skipped, message: "The unsent GoPro start was replaced.")
+        }
+        scheduleStartExpiry()
+        return result
+    }
+
+    private func sendPreparedCommand(_ command: CameraCommand) -> CameraCommandResult {
         guard peripheral != nil else {
             return result(for: command, status: .failed, message: "GoPro peripheral is unavailable.")
         }
@@ -578,6 +600,7 @@ private extension GoProBLEClient {
     }
 
     func writeNextIfPossible() {
+        expirePendingStart()
         guard activeWrite == nil,
               let peripheral,
               peripheral.state == .connected,
@@ -585,8 +608,14 @@ private extension GoProBLEClient {
             return
         }
 
-        let write = pendingWrites.removeFirst()
+        let next = pendingWrites.removeFirstEntry()
+        let write = next.write
         activeWrite = write
+        if next.command == .startRecording {
+            completePendingStart(status: .sent, message: "GoPro start written over BLE.")
+            startExpiryTimer?.invalidate()
+            startExpiryTimer = nil
+        }
         peripheral.writeValue(write.data, for: write.characteristic, type: .withResponse)
         if let logMessage = write.logMessage {
             onLog(logMessage)
@@ -903,9 +932,42 @@ private extension GoProBLEClient {
     }
 
     func executeDeferredCommandIfReady() {
+        expirePendingStart()
         guard let command = pendingWrites.takeDeferredCommand(isBusy: isCameraBusy) else { return }
-        let commandResult = send(command)
+        // Moving from busy deferral to the write queue preserves the deadline.
+        let commandResult = sendPreparedCommand(command)
+        if command == .startRecording, commandResult.status != .sent, commandResult.status != .queued {
+            completePendingStart(status: commandResult.status, message: commandResult.message)
+        }
+        scheduleStartExpiry()
         onLog("\(cameraName): deferred GoPro \(command.label.lowercased()) \(commandResult.status.rawValue.lowercased()).")
+    }
+
+    func scheduleStartExpiry() {
+        startExpiryTimer?.invalidate()
+        startExpiryTimer = nil
+        guard let remaining = pendingWrites.remainingStartLifetime(at: .now) else { return }
+        startExpiryTimer = commonModeTimer(withTimeInterval: max(0.01, remaining), repeats: false) { [weak self] _ in
+            self?.expirePendingStart()
+            self?.scheduleStartExpiry()
+        }
+    }
+
+    func expirePendingStart() {
+        guard pendingWrites.expireUnsentStart(at: .now) else { return }
+        completePendingStart(status: .skipped, message: "GoPro start expired before BLE delivery; no delayed shutter was sent.")
+        startExpiryTimer?.invalidate()
+        startExpiryTimer = nil
+    }
+
+    func completePendingStart(status: CameraCommandStatus, message: String) {
+        guard var result = pendingStartResult else { return }
+        pendingStartResult = nil
+        result.status = status
+        result.message = message
+        result.timestamp = .now
+        onCommandCompleted(result)
+        onLog("\(cameraName): \(message)")
     }
 
     func goProTelemetry(fromStatusValues values: [UInt8: Data]) -> CameraTelemetry {

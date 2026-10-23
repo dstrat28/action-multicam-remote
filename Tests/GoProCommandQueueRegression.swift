@@ -44,6 +44,74 @@ enum GoProCommandQueueRegression {
         queue.removeAll()
         precondition(queue.isEmpty)
         precondition(queue.takeDeferredCommand(isBusy: false) == nil)
+        let now = Date(timeIntervalSince1970: 100)
+        var delayed = GoProCommandQueue<String>()
+        delayed.prepare(for: .startRecording, at: now)
+        delayed.deferUntilIdle(.startRecording)
+        precondition(delayed.remainingStartLifetime(at: now.addingTimeInterval(9)) == 1)
+        precondition(delayed.takeDeferredCommand(isBusy: false) == .startRecording)
+        delayed.append("query")
+        delayed.append("delayed start", command: .startRecording)
+        precondition(delayed.removeFirstEntry().command == nil)
+        precondition(delayed.hasPendingStart)
+        precondition(!delayed.expireUnsentStart(at: now.addingTimeInterval(9.9)))
+        precondition(delayed.expireUnsentStart(at: now.addingTimeInterval(10)))
+        precondition(delayed.isEmpty)
+        precondition(delayed.takeDeferredCommand(isBusy: false) == nil)
+
+        delayed.prepare(for: .startRecording, at: now)
+        delayed.deferUntilIdle(.startRecording)
+        precondition(delayed.expireUnsentStart(at: now.addingTimeInterval(12)))
+        precondition(delayed.takeDeferredCommand(isBusy: false) == nil)
+
+        delayed.prepare(for: .startRecording, at: now)
+        delayed.append("timely start", command: .startRecording)
+        precondition(delayed.removeFirstEntry().command == .startRecording)
+        precondition(!delayed.expireUnsentStart(at: now.addingTimeInterval(12)))
+
+        delayed.prepare(for: .startRecording, at: now)
+        delayed.append("old start", command: .startRecording)
+        delayed.prepare(for: .startRecording, at: now.addingTimeInterval(9))
+        delayed.append("new start", command: .startRecording)
+        precondition(!delayed.expireUnsentStart(at: now.addingTimeInterval(12)))
+        precondition(delayed.removeFirst() == "new start")
+        precondition(delayed.isEmpty)
+
+        delayed.prepare(for: .startRecording, at: now)
+        delayed.append("unsent start", command: .startRecording)
+        delayed.prepare(for: .stopRecording, at: now.addingTimeInterval(1))
+        delayed.append("stop", command: .stopRecording)
+        precondition(!delayed.expireUnsentStart(at: now.addingTimeInterval(20)))
+        precondition(delayed.removeFirst() == "stop")
+
+        delayed.prepare(for: .startRecording, at: now)
+        delayed.append("clock change", command: .startRecording)
+        precondition(delayed.expireUnsentStart(at: now.addingTimeInterval(-1)))
+
+        for brand in [CameraBrand.gopro, .dji] {
+            precondition(CameraRecordingStartPolicy.shouldDispatch(
+                brand: brand, recordingState: .recording, hasPendingExplicitStart: true
+            ))
+            precondition(!CameraRecordingStartPolicy.shouldDispatch(
+                brand: brand, recordingState: .recording, hasPendingExplicitStart: false
+            ))
+        }
+        precondition(!CameraRecordingStartPolicy.shouldDispatch(
+            brand: .insta360, recordingState: .recording, hasPendingExplicitStart: true
+        ))
+        precondition(CameraRecordingStartPolicy.shouldDispatch(
+            brand: .insta360, recordingState: .unknown, hasPendingExplicitStart: true
+        ))
+
+        let cameraID = UUID()
+        func result(_ command: CameraCommand) -> CameraCommandResult {
+            .init(cameraID: cameraID, cameraName: "GoPro", command: command,
+                  status: .queued, message: "Queued", timestamp: now)
+        }
+        let start = result(.startRecording)
+        precondition(CameraRecordingStartPolicy.isLatestCaptureResult(start, among: [result(.addHighlight), start]))
+        precondition(!CameraRecordingStartPolicy.isLatestCaptureResult(start, among: [result(.stopRecording), start]))
+        precondition(!CameraRecordingStartPolicy.isLatestCaptureResult(start, among: [result(.startRecording), start]))
         print("GoPro command queue regression checks passed.")
     }
 }
