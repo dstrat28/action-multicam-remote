@@ -176,6 +176,9 @@ enum Insta360RemoteProtocolRegression {
         precondition(Insta360RemoteProtocol.isRecordingTimerPacket(timerPacket))
         precondition(Insta360RemoteProtocol.recordingTimeLabel(from: timerPacket) == "00:01:23")
         precondition(!Insta360RemoteProtocol.isRecordingTimerPacket(Data(repeating: 0, count: 20)))
+        checkTimerValidation()
+        checkRecordingStatus()
+        checkQueuedCommands()
 
         let now = Date(timeIntervalSinceReferenceDate: 1_000)
         precondition(
@@ -225,5 +228,159 @@ enum Insta360RemoteProtocolRegression {
         )
 
         print("Insta360 remote protocol regression checks passed (\(expectedModels.count) models).")
+    }
+
+    private static func packet(containing text: String) -> Data {
+        Data(repeating: 0, count: 6) + Data(text.utf8) + Data(repeating: 0, count: 12)
+    }
+
+    private static func checkTimerValidation() {
+        for time in ["00:01:23", "01:23", "1:23", "1:02:03", "123:45", "00:00:00", "23:59:59"] {
+            precondition(Insta360RemoteProtocol.recordingTimeLabel(from: packet(containing: time)) == time)
+        }
+        let invalidTimers = [
+            ":", "99:99:99", "12:60", "00:60:00", "12::34", ":12:34",
+            "12:34:", "12:3", "12:34:56:78", "12:34.5", "-12:34", "status:armed"
+        ]
+        for invalid in invalidTimers {
+            precondition(!Insta360RemoteProtocol.isRecordingTimerPacket(packet(containing: invalid)), invalid)
+        }
+        var binaryPacket = Data(repeating: 0xAA, count: 20)
+        binaryPacket[10] = 0x3A
+        precondition(!Insta360RemoteProtocol.isRecordingTimerPacket(binaryPacket))
+        precondition(!Insta360RemoteProtocol.isRecordingTimerPacket(Data("00:01:23".utf8)))
+    }
+
+    private static func checkRecordingStatus() {
+        let now = Date(timeIntervalSinceReferenceDate: 2_000)
+        var status = Insta360RemoteRecordingStatus()
+        precondition(status.state == .unknown)
+        precondition(status.rejectionReason(for: .stopRecording) != nil)
+        precondition(status.rejectionReason(for: .startRecording) == nil)
+        precondition(!status.expire(at: now))
+        precondition(status.observeTimer(at: now))
+        let recordingRevision = status.revision
+        precondition(status.state == .recording)
+        precondition(status.rejectionReason(for: .startRecording) != nil)
+        precondition(status.rejectionReason(for: .capturePhoto) != nil)
+        precondition(status.rejectionReason(for: .stopRecording) == nil)
+        precondition(!status.expire(at: now.addingTimeInterval(5)))
+        precondition(!status.observeTimer(at: now.addingTimeInterval(4)))
+        precondition(status.revision == recordingRevision, "Routine timer refreshes must not invalidate a queued stop")
+        precondition(!status.expire(at: now.addingTimeInterval(8)))
+        precondition(status.expire(at: now.addingTimeInterval(10)))
+        precondition(status.state == .unknown, "Missing packets must not claim recording stopped")
+        precondition(status.revision > recordingRevision)
+        precondition(!status.expire(at: now.addingTimeInterval(11)))
+        precondition(status.observeTimer(at: now.addingTimeInterval(12)))
+        precondition(status.state == .recording, "A fresh timer must recover recording status")
+
+        var unconfirmedStart = Insta360RemoteRecordingStatus()
+        unconfirmedStart.shutterSent(at: now)
+        precondition(!unconfirmedStart.expire(at: now.addingTimeInterval(5)))
+        precondition(unconfirmedStart.expire(at: now.addingTimeInterval(6)))
+        precondition(unconfirmedStart.state == .unknown, "A sent shutter is not a recording confirmation")
+
+        var pendingStop = Insta360RemoteRecordingStatus()
+        pendingStop.observeTimer(at: now)
+        let beforeStop = pendingStop.revision
+        pendingStop.shutterSent(at: now.addingTimeInterval(4))
+        precondition(pendingStop.revision > beforeStop)
+        precondition(!pendingStop.expire(at: now.addingTimeInterval(6)))
+        precondition(pendingStop.expire(at: now.addingTimeInterval(10)))
+        precondition(pendingStop.state == .unknown)
+    }
+
+    private static func checkQueuedCommands() {
+        let now = Date(timeIntervalSinceReferenceDate: 3_000)
+        let cameraID = UUID()
+        let secondCameraID = UUID()
+        let peerID = UUID()
+        let sessionID = UUID()
+        var recording = Insta360RemoteRecordingStatus()
+        recording.observeTimer(at: now)
+
+        func queued(
+            _ command: CameraCommand,
+            cameraID: UUID,
+            enqueuedAt: Date = now
+        ) -> Insta360RemotePendingCommand {
+            Insta360RemotePendingCommand(
+                data: Insta360RemoteProtocol.shutterCommand,
+                result: CameraCommandResult(
+                    cameraID: cameraID,
+                    cameraName: "Ace Pro 2 ABC123",
+                    command: command,
+                    status: .queued,
+                    message: "Queued",
+                    timestamp: now
+                ),
+                peerID: peerID,
+                sessionID: sessionID,
+                recordingRevision: recording.revision,
+                enqueuedAt: enqueuedAt
+            )
+        }
+
+        let stop = queued(.stopRecording, cameraID: cameraID)
+        func reason(
+            _ command: Insta360RemotePendingCommand,
+            at date: Date = now,
+            peer: UUID? = peerID,
+            session: UUID? = sessionID
+        ) -> String? {
+            command.discardReason(now: date, peerID: peer, sessionID: session, recordingRevision: recording.revision)
+        }
+        precondition(reason(stop) == nil)
+        precondition(reason(stop, at: now.addingTimeInterval(1.99)) == nil)
+        precondition(reason(stop, at: now.addingTimeInterval(2)) != nil)
+        precondition(reason(stop, at: now.addingTimeInterval(-1)) != nil)
+        precondition(reason(stop, peer: UUID()) != nil)
+        precondition(reason(stop, peer: nil) != nil)
+        precondition(reason(stop, session: UUID()) != nil)
+        precondition(reason(stop, session: nil) != nil)
+        recording.observeTimer(at: now.addingTimeInterval(1))
+        precondition(reason(stop, at: now.addingTimeInterval(1)) == nil)
+        recording.expire(at: now.addingTimeInterval(7))
+        precondition(reason(stop) != nil, "A state transition must invalidate the old stop toggle")
+        recording.observeTimer(at: now.addingTimeInterval(8))
+        precondition(reason(stop) != nil, "Returning to recording must not revive an obsolete toggle")
+
+        var queue = Insta360RemoteCommandQueue()
+        let start = queued(.startRecording, cameraID: cameraID)
+        let other = queued(.startRecording, cameraID: secondCameraID)
+        precondition(queue.enqueue(start).isEmpty)
+        precondition(queue.enqueue(other).isEmpty)
+        let replacement = queued(.stopRecording, cameraID: cameraID)
+        precondition(queue.enqueue(replacement).map(\.result.id) == [start.result.id])
+        precondition(queue.commands.map(\.result.id) == [other.result.id, replacement.result.id])
+        precondition(queue.remove(for: cameraID).map(\.result.id) == [replacement.result.id])
+        precondition(queue.first?.result.id == other.result.id, "Discarding one camera must not block another")
+        precondition(queue.removeFirst().result.id == other.result.id)
+        precondition(queue.first == nil)
+        queue.enqueue(start)
+        precondition(queue.removeAll().count == 1)
+        precondition(queue.first == nil)
+
+        // Expiry must be independent of the transport's readiness callback.
+        let older = queued(.stopRecording, cameraID: cameraID)
+        let newer = queued(.startRecording, cameraID: secondCameraID, enqueuedAt: now.addingTimeInterval(1))
+        queue.enqueue(older)
+        queue.enqueue(newer)
+        let expired = queue.discardInvalid { reason($0, at: now.addingTimeInterval(2)) }
+        precondition(expired.map(\.command.result.id) == [older.result.id])
+        precondition(queue.first?.result.id == newer.result.id)
+        precondition(queue.discardInvalid { reason($0, at: now.addingTimeInterval(3)) }.count == 1)
+        precondition(queue.first == nil, "A late readiness callback must have no expired toggle left to send")
+
+        // A stale command behind a valid head must also be discarded while busy.
+        queue.enqueue(older)
+        queue.enqueue(newer)
+        let disconnected = queue.discardInvalid { command in
+            reason(command, at: now.addingTimeInterval(1), session: command.result.cameraID == cameraID ? sessionID : nil)
+        }
+        precondition(disconnected.map(\.command.result.id) == [newer.result.id])
+        precondition(queue.first?.result.id == older.result.id)
+        precondition(queue.discardInvalid { _ in nil }.isEmpty)
     }
 }

@@ -1010,12 +1010,23 @@ private extension CameraStore {
             updateCamera(
                 id,
                 state: .connected,
-                detail: "Insta360 GPS Remote connected. Recording status is confirmed from camera timer packets."
+                detail: "Insta360 GPS Remote connected. Valid timer packets indicate recording; missing timers leave recording status unknown."
             )
         case let .cameraDisconnected(id):
             updateCamera(id, state: .disconnected, detail: "Insta360 camera left the GPS Remote service.")
         case let .cameraStatus(id, update):
             updateCameraStatus(id, update: update)
+        case let .commandCompleted(result):
+            if let index = commandResults.firstIndex(where: { $0.id == result.id }) {
+                commandResults[index] = result
+            } else {
+                commandResults.insert(result, at: 0)
+            }
+            // A discarded older toggle must not reset a newer user action.
+            if commandResults.first(where: { $0.cameraID == result.cameraID })?.id == result.id,
+               let camera = cameras.first(where: { $0.id == result.cameraID }) {
+                handleCommandResult(result, for: camera)
+            }
         case let .log(message):
             appendLog(message)
         }
@@ -2617,6 +2628,21 @@ private extension CameraStore {
 
     func handleCommandResult(_ result: CameraCommandResult, for camera: DiscoveredCamera) {
         let wasSent = result.status == .sent || result.status == .queued
+
+        if !wasSent, camera.brand == .insta360 {
+            // GPS Remote shutter commands toggle state. An expired or failed
+            // command must not enter the generic reconnect-and-retry flow.
+            pendingStartCameraIDs.remove(camera.id)
+            cancelStartRecording(for: camera.id)
+            if result.command == .capturePhoto {
+                cancelPhotoCaptureReset(for: camera.id)
+            }
+            if camera.recordingState == .starting {
+                updateCameraStatus(camera.id, update: CameraStatusUpdate(recordingState: .unknown))
+            }
+            setCameraDiagnostic(result.message, for: camera)
+            return
+        }
 
         if wasSent, case .setMode = result.command,
            let index = cameras.firstIndex(where: { $0.id == camera.id }) {

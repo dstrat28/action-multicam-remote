@@ -25,6 +25,15 @@ jobs:
             -o "$RUNNER_TEMP/diagnostic-log-regression"
           "$RUNNER_TEMP/diagnostic-log-regression"
 
+      - name: Check Insta360 remote protocol
+        run: |
+          xcrun swiftc -parse-as-library \
+            ActionCamRemote/Models/CameraModels.swift \
+            ActionCamRemote/Bluetooth/Insta360RemoteProtocol.swift \
+            Tests/Insta360RemoteProtocolRegression.swift \
+            -o "$RUNNER_TEMP/insta360-remote-regression"
+          "$RUNNER_TEMP/insta360-remote-regression"
+
       - name: Build
         run: |
           xcodebuild \

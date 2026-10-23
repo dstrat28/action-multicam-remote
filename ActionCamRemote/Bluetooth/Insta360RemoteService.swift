@@ -8,15 +8,11 @@ enum Insta360RemoteEvent {
     case cameraConnected(UUID)
     case cameraDisconnected(UUID)
     case cameraStatus(UUID, CameraStatusUpdate)
+    case commandCompleted(CameraCommandResult)
     case log(String)
 }
 
 final class Insta360RemoteService: NSObject {
-    private struct PendingUpdate {
-        var data: Data
-        var cameraID: UUID
-    }
-
     private struct WakeRequest {
         var cameraID: UUID
         var cameraName: String
@@ -48,8 +44,9 @@ final class Insta360RemoteService: NSObject {
     private var lastActivityByCentralID: [UUID: Date] = [:]
     private var lastLoggedWriteByCentralID: [UUID: [Data: Date]] = [:]
     private var reportedActiveCameraIDs: Set<UUID> = []
-    private var lastRecordingTimerByCameraID: [UUID: Date] = [:]
-    private var pendingUpdates: [PendingUpdate] = []
+    private var recordingStatusByCameraID: [UUID: Insta360RemoteRecordingStatus] = [:]
+    private var sessionIDByCameraID: [UUID: UUID] = [:]
+    private var pendingCommands = Insta360RemoteCommandQueue()
     private var statusTimer: Timer?
     private var wakeTimer: Timer?
     private var pendingWake: WakeRequest?
@@ -81,6 +78,9 @@ final class Insta360RemoteService: NSObject {
         reconcileRestoredSubscriptions()
         if let central = centralByCameraID[cameraID],
            subscribedCentralIDs.contains(central.identifier) {
+            if sessionIDByCameraID[cameraID] == nil {
+                beginCommandSession(for: cameraID)
+            }
             onEvent?(.cameraConnected(cameraID))
             return
         }
@@ -101,8 +101,7 @@ final class Insta360RemoteService: NSObject {
 
     func release(cameraID: UUID) {
         requestedCameraIDs.removeAll { $0 == cameraID }
-        lastRecordingTimerByCameraID.removeValue(forKey: cameraID)
-        pendingUpdates.removeAll { $0.cameraID == cameraID }
+        clearCommandSession(for: cameraID)
         if pendingWake?.cameraID == cameraID || activeWake?.cameraID == cameraID {
             cancelWakeAndResumeRemoteAdvertising()
         }
@@ -180,7 +179,7 @@ final class Insta360RemoteService: NSObject {
             lastActivityByCentralID.removeValue(forKey: central.identifier)
             lastLoggedWriteByCentralID.removeValue(forKey: central.identifier)
             reportedActiveCameraIDs.remove(cameraID)
-            pendingUpdates.removeAll { $0.cameraID == cameraID }
+            clearCommandSession(for: cameraID)
             let name = cameraNamesByID[cameraID] ?? "Insta360 camera"
             onEvent?(.log(
                 "\(name): inactive GPS Remote session for peer \(peerLabel(central.identifier)) reset while continuing to advertise."
@@ -194,7 +193,10 @@ final class Insta360RemoteService: NSObject {
     }
 
     func send(_ command: CameraCommand, to cameraID: UUID, cameraName: String) -> CameraCommandResult {
+        expireRecordingTimers()
         guard let central = centralByCameraID[cameraID],
+              requestedCameraIDs.contains(cameraID),
+              sessionIDByCameraID[cameraID] != nil,
               subscribedCentralIDs.contains(central.identifier) else {
             return result(
                 cameraID: cameraID,
@@ -210,7 +212,7 @@ final class Insta360RemoteService: NSObject {
         switch command {
         case .startRecording, .capturePhoto, .stopRecording, .toggleRecording:
             packet = Insta360RemoteProtocol.shutterCommand
-            message = "Sent the Insta360 remote shutter command. Camera timer packets confirm recording state."
+            message = "Sent the Insta360 shutter toggle. Valid camera timer packets indicate recording; silence leaves status unknown."
         case .cycleMode:
             packet = Insta360RemoteProtocol.cycleModeCommand
             message = "Sent the Insta360 remote mode-cycle command."
@@ -248,30 +250,29 @@ final class Insta360RemoteService: NSObject {
             )
         }
 
+        // Keep the latest intent even when no packet is needed for it.
+        for pending in pendingCommands.remove(for: cameraID) {
+            completeQueuedCommand(pending, status: .skipped, message: "A newer Insta360 command replaced the queued command.")
+        }
+        if let reason = recordingStatusByCameraID[cameraID]?.rejectionReason(for: command) {
+            return result(cameraID: cameraID, cameraName: cameraName, command: command, status: .skipped, message: reason)
+        }
+
         let packetHex = packet.map { String(format: "%02X", $0) }.joined(separator: " ")
         onEvent?(.log("\(cameraName): sending \(command.label) on subscribed CE82: \(packetHex)"))
-        let status = enqueueOrSend(packet, to: cameraID)
-        if status == .failed {
-            return result(
-                cameraID: cameraID,
-                cameraName: cameraName,
-                command: command,
-                status: .failed,
-                message: "The Insta360 remote notification characteristic is not ready."
-            )
-        }
+        let result = enqueueOrSend(
+            packet,
+            command: command,
+            cameraID: cameraID,
+            cameraName: cameraName,
+            message: message
+        )
 
         if command == .cycleMode {
             onEvent?(.cameraStatus(cameraID, CameraStatusUpdate(currentMode: nil)))
         }
 
-        return result(
-            cameraID: cameraID,
-            cameraName: cameraName,
-            command: command,
-            status: status,
-            message: message
-        )
+        return result
     }
 }
 
@@ -406,6 +407,7 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
         subscribedCentralIDs.insert(central.identifier)
         lastActivityByCentralID[central.identifier] = Date()
         guard let cameraID = assignCameraIfNeeded(central, interaction: "CE82 notification subscription") else { return }
+        beginCommandSession(for: cameraID)
         reportedActiveCameraIDs.remove(cameraID)
         let name = cameraNamesByID[cameraID] ?? "Insta360 camera"
         onEvent?(.log("\(name): subscribed to Insta360 GPS Remote notifications."))
@@ -437,8 +439,7 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
 
         reportedActiveCameraIDs.remove(cameraID)
         centralByCameraID.removeValue(forKey: cameraID)
-        lastRecordingTimerByCameraID.removeValue(forKey: cameraID)
-        pendingUpdates.removeAll { $0.cameraID == cameraID }
+        clearCommandSession(for: cameraID)
         onEvent?(.cameraDisconnected(cameraID))
         startAdvertising()
     }
@@ -666,6 +667,7 @@ private extension Insta360RemoteService {
         centralByCameraID[cameraID] = central
         cameraIDByCentralID[central.identifier] = cameraID
         assignmentMatchByCentralID[central.identifier] = assignment.match
+        beginCommandSession(for: cameraID)
         let name = cameraNamesByID[cameraID] ?? "Insta360 camera"
         onEvent?(.log(
             "\(name): assigned Insta360 peer \(peer) by \(assignment.match.rawValue) during \(interaction)."
@@ -706,8 +708,7 @@ private extension Insta360RemoteService {
             centralByCameraID.removeValue(forKey: cameraID)
         }
         reportedActiveCameraIDs.remove(cameraID)
-        lastRecordingTimerByCameraID.removeValue(forKey: cameraID)
-        pendingUpdates.removeAll { $0.cameraID == cameraID }
+        clearCommandSession(for: cameraID)
         let name = cameraNamesByID[cameraID] ?? "Insta360 camera"
         onEvent?(.log(
             "\(name): released peer \(peerLabel(central.identifier)) because \(reason)."
@@ -739,7 +740,11 @@ private extension Insta360RemoteService {
         lastActivityByCentralID.removeAll()
         lastLoggedWriteByCentralID.removeAll()
         reportedActiveCameraIDs.removeAll()
-        pendingUpdates.removeAll()
+        recordingStatusByCameraID.removeAll()
+        sessionIDByCameraID.removeAll()
+        for command in pendingCommands.removeAll() {
+            completeQueuedCommand(command, status: .skipped, message: "The Insta360 connection ended; the queued command was discarded.")
+        }
         connectedCameraIDs.forEach { onEvent?(.cameraDisconnected($0)) }
 
         guard clearPublishedService else { return }
@@ -890,26 +895,77 @@ private extension Insta360RemoteService {
         startAdvertising()
     }
 
-    func enqueueOrSend(_ data: Data, to cameraID: UUID) -> CameraCommandStatus {
+    func beginCommandSession(for cameraID: UUID) {
+        clearCommandSession(for: cameraID)
+        sessionIDByCameraID[cameraID] = UUID()
+        recordingStatusByCameraID[cameraID] = Insta360RemoteRecordingStatus()
+    }
+
+    func clearCommandSession(for cameraID: UUID) {
+        sessionIDByCameraID.removeValue(forKey: cameraID)
+        recordingStatusByCameraID.removeValue(forKey: cameraID)
+        for command in pendingCommands.remove(for: cameraID) {
+            completeQueuedCommand(command, status: .skipped, message: "The Insta360 connection changed; the queued command was discarded.")
+        }
+    }
+
+    func enqueueOrSend(
+        _ data: Data,
+        command: CameraCommand,
+        cameraID: UUID,
+        cameraName: String,
+        message: String
+    ) -> CameraCommandResult {
+        var commandResult = result(
+            cameraID: cameraID,
+            cameraName: cameraName,
+            command: command,
+            status: .failed,
+            message: "The Insta360 remote notification characteristic is not ready."
+        )
         guard let notifyCharacteristic,
               let central = centralByCameraID[cameraID],
+              let sessionID = sessionIDByCameraID[cameraID],
               subscribedCentralIDs.contains(central.identifier) else {
-            return .failed
+            return commandResult
         }
 
         if peripheralManager.updateValue(data, for: notifyCharacteristic, onSubscribedCentrals: [central]) {
-            return .sent
+            noteCommandSent(command, to: cameraID)
+            commandResult.status = .sent
+            commandResult.message = message
+            return commandResult
         }
 
-        pendingUpdates.append(PendingUpdate(data: data, cameraID: cameraID))
-        return .queued
+        commandResult.status = .queued
+        commandResult.message = "Insta360 command queued briefly while Bluetooth is busy."
+        pendingCommands.enqueue(Insta360RemotePendingCommand(
+            data: data,
+            result: commandResult,
+            peerID: central.identifier,
+            sessionID: sessionID,
+            recordingRevision: recordingStatusByCameraID[cameraID]?.revision ?? 0,
+            enqueuedAt: Date()
+        ))
+        startStatusTimerIfNeeded()
+        return commandResult
     }
 
-    func flushPendingUpdates() {
-        while let update = pendingUpdates.first,
-              let notifyCharacteristic,
-              let central = centralByCameraID[update.cameraID],
-              subscribedCentralIDs.contains(central.identifier) {
+    func flushPendingUpdates(now: Date = Date()) {
+        expireRecordingTimers(now: now)
+        while let update = pendingCommands.first {
+            let cameraID = update.result.cameraID
+            let central = centralByCameraID[cameraID]
+            if let reason = queuedCommandRejectionReason(update, now: now) {
+                pendingCommands.removeFirst()
+                completeQueuedCommand(update, status: .skipped, message: reason)
+                continue
+            }
+            guard let notifyCharacteristic, let central else {
+                pendingCommands.removeFirst()
+                completeQueuedCommand(update, status: .failed, message: "The Insta360 command channel is no longer available.")
+                continue
+            }
             guard peripheralManager.updateValue(
                 update.data,
                 for: notifyCharacteristic,
@@ -917,40 +973,85 @@ private extension Insta360RemoteService {
             ) else {
                 return
             }
-            pendingUpdates.removeFirst()
+            pendingCommands.removeFirst()
+            noteCommandSent(update.result.command, to: cameraID)
+            completeQueuedCommand(update, status: .sent, message: "Sent the queued Insta360 remote command.")
         }
     }
 
-    func handleStatusPacket(_ data: Data, from cameraID: UUID) {
-        guard Insta360RemoteProtocol.isRecordingTimerPacket(data) else { return }
+    func queuedCommandRejectionReason(_ command: Insta360RemotePendingCommand, now: Date) -> String? {
+        let cameraID = command.result.cameraID
+        let central = centralByCameraID[cameraID]
+        let isSubscribed = central.map { subscribedCentralIDs.contains($0.identifier) } ?? false
+        return command.discardReason(
+            now: now,
+            peerID: isSubscribed ? central?.identifier : nil,
+            sessionID: requestedCameraIDs.contains(cameraID) ? sessionIDByCameraID[cameraID] : nil,
+            recordingRevision: recordingStatusByCameraID[cameraID]?.revision
+        ) ?? recordingStatusByCameraID[cameraID]?.rejectionReason(for: command.result.command)
+    }
 
-        let wasRecording = lastRecordingTimerByCameraID[cameraID] != nil
-        lastRecordingTimerByCameraID[cameraID] = Date()
-        if !wasRecording {
-            onEvent?(.cameraStatus(cameraID, CameraStatusUpdate(recordingState: .recording)))
+    func discardInvalidPendingCommands(now: Date) {
+        let discarded = pendingCommands.discardInvalid {
+            queuedCommandRejectionReason($0, now: now)
+        }
+        for (command, reason) in discarded {
+            completeQueuedCommand(command, status: .skipped, message: reason)
+        }
+    }
+
+    func noteCommandSent(_ command: CameraCommand, to cameraID: UUID) {
+        switch command {
+        case .startRecording, .stopRecording, .capturePhoto, .toggleRecording:
+            var status = recordingStatusByCameraID[cameraID] ?? Insta360RemoteRecordingStatus()
+            status.shutterSent(at: Date())
+            recordingStatusByCameraID[cameraID] = status
+        case .addHighlight, .setMode, .cycleMode, .applySetting, .keepAlive:
+            break
+        }
+    }
+
+    func completeQueuedCommand(_ command: Insta360RemotePendingCommand, status: CameraCommandStatus, message: String) {
+        var result = command.result
+        result.status = status
+        result.message = message
+        result.timestamp = Date()
+        onEvent?(.commandCompleted(result))
+        onEvent?(.log("\(result.cameraName): \(message)"))
+    }
+
+    func handleStatusPacket(_ data: Data, from cameraID: UUID) {
+        guard requestedCameraIDs.contains(cameraID),
+              let timer = Insta360RemoteProtocol.recordingTimeLabel(from: data) else { return }
+
+        var status = recordingStatusByCameraID[cameraID] ?? Insta360RemoteRecordingStatus()
+        let changed = status.observeTimer(at: Date())
+        recordingStatusByCameraID[cameraID] = status
+        onEvent?(.cameraStatus(cameraID, CameraStatusUpdate(recordingState: .recording)))
+        if changed {
             let name = cameraNamesByID[cameraID] ?? "Insta360 camera"
-            if let timer = Insta360RemoteProtocol.recordingTimeLabel(from: data) {
-                onEvent?(.log("\(name): recording timer started at \(timer)."))
-            }
+            onEvent?(.log("\(name): recording timer started at \(timer)."))
         }
     }
 
     func startStatusTimerIfNeeded() {
         guard statusTimer == nil else { return }
         statusTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
-            self?.expireRecordingTimers()
+            let now = Date()
+            self?.expireRecordingTimers(now: now)
+            // Expire unsent toggles even if CoreBluetooth stays busy. Retry
+            // transmission only after peripheralManagerIsReady is delivered.
+            self?.discardInvalidPendingCommands(now: now)
         }
     }
 
     func expireRecordingTimers(now: Date = Date()) {
-        let expiredCameraIDs = lastRecordingTimerByCameraID.compactMap { cameraID, lastTimer in
-            now.timeIntervalSince(lastTimer) > Insta360RemoteProtocol.recordingStatusTimeout
-                ? cameraID
-                : nil
-        }
-        for cameraID in expiredCameraIDs {
-            lastRecordingTimerByCameraID.removeValue(forKey: cameraID)
-            onEvent?(.cameraStatus(cameraID, CameraStatusUpdate(recordingState: .stopped)))
+        for cameraID in Array(recordingStatusByCameraID.keys) {
+            guard var status = recordingStatusByCameraID[cameraID], status.expire(at: now) else { continue }
+            recordingStatusByCameraID[cameraID] = status
+            onEvent?(.cameraStatus(cameraID, CameraStatusUpdate(recordingState: .unknown)))
+            let name = cameraNamesByID[cameraID] ?? "Insta360 camera"
+            onEvent?(.log("\(name): recording timer packets stopped arriving; recording status is unknown."))
         }
     }
 
