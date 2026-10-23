@@ -71,7 +71,23 @@ struct GoProCommandQueue<Write> {
     mutating func removeFirst() -> Write { removeFirstEntry().write }
 
     mutating func removeFirstEntry() -> (write: Write, command: CameraCommand?) {
-        let entry = entries.removeFirst()
+        removeEntry(at: 0)
+    }
+
+    /// Hold an unsent start until the latest camera status confirms idle Video
+    /// mode. Other writes must still pass so queries can refresh that status.
+    mutating func removeFirstReadyEntry(
+        isBusy: Bool?,
+        captureMode: CaptureMode?
+    ) -> (write: Write, command: CameraCommand?)? {
+        guard let index = entries.firstIndex(where: {
+            $0.command != .startRecording || (isBusy == false && captureMode == .video)
+        }) else { return nil }
+        return removeEntry(at: index)
+    }
+
+    private mutating func removeEntry(at index: Int) -> (write: Write, command: CameraCommand?) {
+        let entry = entries.remove(at: index)
         if entry.command == .startRecording, !hasPendingStart { startRequestedAt = nil }
         return (entry.write, entry.command)
     }

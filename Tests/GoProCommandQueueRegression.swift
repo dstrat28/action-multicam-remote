@@ -88,6 +88,42 @@ enum GoProCommandQueueRegression {
         delayed.append("clock change", command: .startRecording)
         precondition(delayed.expireUnsentStart(at: now.addingTimeInterval(-1)))
 
+        // Readiness may change after enqueueing while an earlier GATT write is
+        // active. Require idle Video mode at delivery, including known status.
+        let blockedReadiness: [(Bool?, CaptureMode?)] = [
+            (true, .video), (false, .photo), (nil, .video), (false, nil),
+        ]
+        for (busy, mode) in blockedReadiness {
+            var waiting = GoProCommandQueue<String>()
+            waiting.prepare(for: .startRecording, at: now)
+            waiting.append("start", command: .startRecording)
+            waiting.append("status query")
+            waiting.append("select video", command: .setMode(.video))
+            precondition(waiting.removeFirstReadyEntry(isBusy: busy, captureMode: mode)?.write == "status query")
+            precondition(waiting.removeFirstReadyEntry(isBusy: busy, captureMode: mode)?.write == "select video")
+            precondition(waiting.removeFirstReadyEntry(isBusy: busy, captureMode: mode) == nil)
+            precondition(waiting.hasPendingStart)
+            precondition(waiting.remainingStartLifetime(at: now.addingTimeInterval(9)) == 1)
+            precondition(waiting.removeFirstReadyEntry(isBusy: false, captureMode: .video)?.command == .startRecording)
+            precondition(!waiting.hasPendingStart)
+            precondition(waiting.isEmpty)
+
+            // Waiting for a new ready report never renews the original deadline.
+            waiting.prepare(for: .startRecording, at: now)
+            waiting.append("expired start", command: .startRecording)
+            precondition(waiting.removeFirstReadyEntry(isBusy: busy, captureMode: mode) == nil)
+            precondition(waiting.expireUnsentStart(at: now.addingTimeInterval(10)))
+            precondition(waiting.removeFirstReadyEntry(isBusy: false, captureMode: .video) == nil)
+
+            // Stop remains eligible even if the camera never becomes ready.
+            waiting.prepare(for: .startRecording, at: now)
+            waiting.append("cancelled start", command: .startRecording)
+            waiting.prepare(for: .stopRecording, at: now.addingTimeInterval(1))
+            waiting.append("stop", command: .stopRecording)
+            precondition(waiting.removeFirstReadyEntry(isBusy: busy, captureMode: mode)?.command == .stopRecording)
+            precondition(waiting.isEmpty)
+        }
+
         for brand in [CameraBrand.gopro, .dji] {
             precondition(CameraRecordingStartPolicy.shouldDispatch(
                 brand: brand, recordingState: .recording, hasPendingExplicitStart: true

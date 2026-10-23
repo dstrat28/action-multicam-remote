@@ -608,7 +608,10 @@ private extension GoProBLEClient {
             return
         }
 
-        let next = pendingWrites.removeFirstEntry()
+        guard let next = pendingWrites.removeFirstReadyEntry(
+            isBusy: hasReceivedBusyStatus ? isCameraBusy : nil,
+            captureMode: reportedCaptureMode
+        ) else { return }
         let write = next.write
         activeWrite = write
         if next.command == .startRecording {
@@ -900,6 +903,9 @@ private extension GoProBLEClient {
         }
 
         executeDeferredCommandIfReady()
+        // A fresh status can unblock a queued shutter without waiting for
+        // another write callback or the next periodic status query.
+        writeNextIfPossible()
     }
 
 #if DEBUG
