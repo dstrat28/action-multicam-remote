@@ -620,6 +620,9 @@ final class CameraStore {
                 },
                 onLog: { [weak self] message in
                     Task { @MainActor in self?.appendLog(message) }
+                },
+                onCommandCompleted: { [weak self] result in
+                    Task { @MainActor in self?.handleGoProCommandCompletion(result) }
                 }
             )
         case .dji:
@@ -2281,6 +2284,8 @@ private extension CameraStore {
 
         var connectedCamerasForStart: [DiscoveredCamera] = []
         for camera in cameras {
+            // A new explicit Start supersedes a Stop waiting for reconnect.
+            pendingStopCameraIDs.remove(camera.id)
             startRecordingTasksByCameraID[camera.id]?.cancel()
             videoModeTasksByCameraID[camera.id]?.cancel()
             modeSwitchAttemptsByCameraID[camera.id] = 0
@@ -2386,7 +2391,11 @@ private extension CameraStore {
                     guard let latest = self.cameras.first(where: { $0.id == id }) else { return }
                     guard self.startRecordingTasksByCameraID[id] != nil else { return }
                     guard latest.connectionState == .connected,
-                          latest.recordingState != .recording,
+                          CameraRecordingStartPolicy.shouldDispatch(
+                              brand: latest.brand,
+                              recordingState: latest.recordingState,
+                              hasPendingExplicitStart: self.pendingStartCameraIDs.contains(id)
+                          ),
                           latest.recordingState != .unavailable else {
                         self.startRecordingTasksByCameraID[id] = nil
                         return
@@ -2624,6 +2633,21 @@ private extension CameraStore {
             commandResults.insert(result, at: 0)
             handleCommandResult(result, for: camera)
         }
+    }
+
+    func handleGoProCommandCompletion(_ result: CameraCommandResult) {
+        if let index = commandResults.firstIndex(where: { $0.id == result.id }) {
+            commandResults[index] = result
+        }
+        guard result.status != .sent, result.status != .queued,
+              CameraRecordingStartPolicy.isLatestCaptureResult(result, among: commandResults),
+              let camera = cameras.first(where: { $0.id == result.cameraID }) else { return }
+        pendingStartCameraIDs.remove(camera.id)
+        cancelStartRecording(for: camera.id)
+        cancelWakeRetry(for: camera.id)
+        // An expired capture intent must not enter reconnect-and-retry logic.
+        updateCameraStatus(camera.id, update: CameraStatusUpdate(recordingState: .unknown))
+        setCameraDiagnostic(result.message, for: camera)
     }
 
     func handleCommandResult(_ result: CameraCommandResult, for camera: DiscoveredCamera) {

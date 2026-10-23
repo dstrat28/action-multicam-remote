@@ -1626,6 +1626,27 @@ struct CameraStatusUpdate: Equatable {
     var replacesDJIRSDKStatus: Bool = false
 }
 
+enum CameraRecordingStartPolicy {
+    static func isLatestCaptureResult(_ result: CameraCommandResult, among results: [CameraCommandResult]) -> Bool {
+        results.first {
+            guard $0.cameraID == result.cameraID else { return false }
+            switch $0.command {
+            case .startRecording, .stopRecording, .capturePhoto, .toggleRecording: return true
+            default: return false
+            }
+        }?.id == result.id
+    }
+
+    static func shouldDispatch(
+        brand: CameraBrand,
+        recordingState: CameraRecordingState,
+        hasPendingExplicitStart: Bool
+    ) -> Bool {
+        recordingState != .recording
+            || (hasPendingExplicitStart && (brand == .gopro || brand == .dji))
+    }
+}
+
 enum CameraCommand: Equatable, Codable {
     case startRecording
     case capturePhoto
