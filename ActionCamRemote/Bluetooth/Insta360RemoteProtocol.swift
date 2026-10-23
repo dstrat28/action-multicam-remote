@@ -19,6 +19,129 @@ struct Insta360RemoteAssignment: Equatable {
     var match: Insta360RemoteAssignmentMatch
 }
 
+struct Insta360RemoteRecordingStatus {
+    private(set) var state: CameraRecordingState = .unknown
+    private(set) var revision = 0
+    private(set) var lastTimerAt: Date?
+    private var awaitingFeedbackSince: Date?
+
+    func rejectionReason(for command: CameraCommand) -> String? {
+        switch command {
+        case .startRecording where state == .recording:
+            return "The Insta360 camera is already recording; no shutter toggle was sent."
+        case .stopRecording where state != .recording:
+            return "Insta360 recording is not currently confirmed; the stop toggle was not sent. Check the camera before using its shutter."
+        case .capturePhoto where state == .recording:
+            return "The Insta360 camera is recording; a photo shutter would stop recording."
+        default:
+            return nil
+        }
+    }
+
+    mutating func shutterSent(at now: Date) {
+        awaitingFeedbackSince = now
+        revision += 1
+    }
+
+    @discardableResult
+    mutating func observeTimer(at now: Date) -> Bool {
+        lastTimerAt = now
+        awaitingFeedbackSince = nil
+        guard state != .recording else { return false }
+        state = .recording
+        revision += 1
+        return true
+    }
+
+    @discardableResult
+    mutating func expire(at now: Date) -> Bool {
+        guard let lastObservation = awaitingFeedbackSince ?? lastTimerAt,
+              now.timeIntervalSince(lastObservation) > Insta360RemoteProtocol.recordingStatusTimeout else {
+            return false
+        }
+        self.lastTimerAt = nil
+        awaitingFeedbackSince = nil
+        // Silence can mean stopped recording, lost traffic, or a suspended app.
+        // The GPS Remote protocol does not give us an authoritative stop event.
+        state = .unknown
+        revision += 1
+        return true
+    }
+}
+
+struct Insta360RemotePendingCommand {
+    static let lifetime: TimeInterval = 2
+
+    let data: Data
+    let result: CameraCommandResult
+    let peerID: UUID
+    let sessionID: UUID
+    let recordingRevision: Int
+    let enqueuedAt: Date
+
+    func discardReason(
+        now: Date,
+        peerID: UUID?,
+        sessionID: UUID?,
+        recordingRevision: Int?
+    ) -> String? {
+        let age = now.timeIntervalSince(enqueuedAt)
+        guard age >= 0, age < Self.lifetime else {
+            return "The queued Insta360 command expired; no delayed shutter toggle was sent."
+        }
+        guard self.peerID == peerID, self.sessionID == sessionID else {
+            return "The Insta360 connection changed; the queued command was discarded."
+        }
+        guard self.recordingRevision == recordingRevision else {
+            return "Recording status changed while the Insta360 command was queued; no toggle was sent."
+        }
+        return nil
+    }
+}
+
+struct Insta360RemoteCommandQueue {
+    private(set) var commands: [Insta360RemotePendingCommand] = []
+
+    var first: Insta360RemotePendingCommand? { commands.first }
+
+    @discardableResult
+    mutating func enqueue(_ command: Insta360RemotePendingCommand) -> [Insta360RemotePendingCommand] {
+        let superseded = remove(for: command.result.cameraID)
+        commands.append(command)
+        return superseded
+    }
+
+    @discardableResult
+    mutating func removeFirst() -> Insta360RemotePendingCommand {
+        commands.removeFirst()
+    }
+
+    @discardableResult
+    mutating func remove(for cameraID: UUID) -> [Insta360RemotePendingCommand] {
+        let removed = commands.filter { $0.result.cameraID == cameraID }
+        commands.removeAll { $0.result.cameraID == cameraID }
+        return removed
+    }
+
+    mutating func removeAll() -> [Insta360RemotePendingCommand] {
+        let removed = commands
+        commands.removeAll()
+        return removed
+    }
+
+    mutating func discardInvalid(
+        reasonForCommand: (Insta360RemotePendingCommand) -> String?
+    ) -> [(command: Insta360RemotePendingCommand, reason: String)] {
+        var discarded: [(command: Insta360RemotePendingCommand, reason: String)] = []
+        commands.removeAll { command in
+            guard let reason = reasonForCommand(command) else { return false }
+            discarded.append((command, reason))
+            return true
+        }
+        return discarded
+    }
+}
+
 enum Insta360RemoteSessionTimeoutDisposition: Equatable {
     case commandReady
     case activeAwaitingCommands
@@ -132,27 +255,31 @@ enum Insta360RemoteProtocol {
     static let recordingStatusTimeout: TimeInterval = 5
 
     static func isRecordingTimerPacket(_ data: Data) -> Bool {
-        data.count >= 18 && data.contains(0x3A)
+        recordingTimeLabel(from: data) != nil
     }
 
     static func recordingTimeLabel(from data: Data) -> String? {
-        guard isRecordingTimerPacket(data) else { return nil }
-
-        let printable = data.map { byte -> Character in
-            if (0x20 ... 0x7E).contains(byte), let scalar = UnicodeScalar(Int(byte)) {
-                return Character(scalar)
-            }
-            return " "
+        guard data.count >= 18 else { return nil }
+        // Keep whole printable tokens so malformed times cannot be accepted
+        // by matching a valid-looking substring inside another value.
+        let tokens = data.split { byte in
+            !(0x21 ... 0x7E).contains(byte)
         }
-        let text = String(printable)
-        return text
-            .split(whereSeparator: \Character.isWhitespace)
-            .map(String.init)
-            .first(where: { token in
-                let components = token.split(separator: ":")
-                return components.count >= 2
-                    && components.allSatisfy { !$0.isEmpty && $0.allSatisfy(\.isNumber) }
-            })
+        for token in tokens {
+            guard token.allSatisfy({ $0 == 0x3A || (0x30 ... 0x39).contains($0) }) else { continue }
+            let components = token.split(separator: 0x3A, omittingEmptySubsequences: false)
+            guard components.count == 2 || components.count == 3,
+                  components.allSatisfy({ !$0.isEmpty }),
+                  components.dropFirst().allSatisfy({ component in
+                      guard component.count == 2,
+                            let value = Int(String(decoding: component, as: UTF8.self)) else { return false }
+                      return value < 60
+                  }) else {
+                continue
+            }
+            return String(decoding: token, as: UTF8.self)
+        }
+        return nil
     }
 
     static func wakeIdentifier(from cameraName: String) -> Data? {

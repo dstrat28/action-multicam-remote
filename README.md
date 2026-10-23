@@ -56,16 +56,18 @@ Multicam is an independent project and is not affiliated with, endorsed by, or s
 - Control recording and highlights from Apple Watch or a Live Activity.
 - Send optional iPhone GPS, altitude, direction, and speed telemetry to DJI Action 4/5/6 and Osmo 360 recordings.
 - Wake paired GoPros for up to eight hours after sleep, and wake Osmo Nano over Bluetooth.
-- Control awake Insta360 cameras through an emulated GPS Remote connection. Recording status is confirmed from camera timer packets; mode changes use the remote's cycle command.
+- Control awake Insta360 cameras through an emulated GPS Remote connection. Valid camera timer packets indicate recording; missing or stale timers leave recording status unknown. The remote protocol provides a mode-cycle command.
 
 ## Known Limitations
 
 - Camera behavior can vary by model and firmware; see the hardware-testing status above.
 - Insta360 X6 is discoverable, but it does not accept the GPS Action Remote protocol that Multicam currently emulates.
-- Insta360 support requires selecting `Insta360 GPS Remote` in the camera's Bluetooth Remote settings while Multicam remains open. iOS cannot broadcast the manufacturer-specific wake advertisement used by the physical remote, so sleeping-camera wake is not supported.
+- Insta360 support requires selecting `Insta360 GPS Remote` in the camera's Bluetooth Remote settings while Multicam remains open.
+- Insta360 wake is experimental and has not been verified on hardware. Multicam attempts a targeted iBeacon advertisement while the app is in the foreground. iOS supports this fixed beacon format, but the ESP32 remote reference includes an extra byte that this format does not reproduce; successful wake must not be assumed.
+- Insta360 recording and photo commands use the same shutter toggle in the camera's current mode. Recording state is inferred from timer packets, and an unknown state does not establish that the camera is stopped or in Video mode. Verify the camera's mode before using group recording. Bluetooth queues retain only the latest unsent command per camera for up to two seconds and discard it if the connection or observed recording state changes. Discarded commands are reported in Diagnostics and are not automatically retried.
 - Pair multiple Insta360 cameras one at a time. iOS does not expose an incoming camera's Bluetooth address, so Multicam assigns new GPS Remote subscriptions in the order connection requests were made.
 - Insta360 GPS Remote control does not expose camera settings, battery/storage telemetry, highlight markers, preview, or media transfer. Mode changes are not acknowledged by the remote protocol and must be verified on the camera.
-- Wake is not supported on other DJI cameras because they require a manufacturer-data wake advertisement that iPhone apps cannot broadcast.
+- Wake is not supported on other DJI cameras because their `WKP` manufacturer-data wake advertisement cannot be reproduced through iOS's fixed iBeacon format or ordinary Core Bluetooth advertising.
 - Highlights are recording-only. DJI cameras do not acknowledge highlight commands, so verify markers before relying on them for critical footage.
 - Phone GPS requires location permission and the iPhone app to remain open and connected. Enabling it writes precise location telemetry to recordings; the complete path has been tested on Action 6.
 - Apple Watch commands pass through the paired iPhone; the Watch does not connect directly to cameras.
