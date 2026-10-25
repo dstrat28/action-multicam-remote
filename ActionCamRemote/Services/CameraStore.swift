@@ -877,6 +877,40 @@ final class CameraStore {
     }
 
     @discardableResult
+    func startCarPlayRecording() -> Bool {
+        let state = CarPlayCameraState(cameras: cameras)
+        guard state.canStart else {
+            appendLog("CarPlay start skipped: \(state.startDetail).")
+            return false
+        }
+
+        let targetIDs = Set(state.startCameraIDs)
+        startRecordingSequence(for: cameras.filter { targetIDs.contains($0.id) })
+        return true
+    }
+
+    @discardableResult
+    func stopCarPlayRecording() -> Bool {
+        let state = CarPlayCameraState(cameras: cameras)
+        guard state.canStop else {
+            appendLog("CarPlay stop skipped: no selected cameras are recording.")
+            return false
+        }
+
+        let targetIDs = Set(state.stopCameraIDs)
+        // The existing path cancels pending starts and queues Stop on reconnect.
+        for camera in cameras.filter({ targetIDs.contains($0.id) }) {
+            stopRecording(camera)
+            if camera.brand == .insta360 {
+                // GPS Remote uses a shutter toggle. Disable repeated Stop taps
+                // until fresh timer feedback confirms the recording state.
+                updateCameraStatus(camera.id, update: CameraStatusUpdate(recordingState: .unknown))
+            }
+        }
+        return true
+    }
+
+    @discardableResult
     func stopAllRecording() -> Bool {
         let targets = cameras.filter {
             $0.supportsBatchRecord

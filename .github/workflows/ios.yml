@@ -44,6 +44,16 @@ jobs:
             -o "$RUNNER_TEMP/gopro-command-queue-regression"
           "$RUNNER_TEMP/gopro-command-queue-regression"
 
+      - name: Check CarPlay camera controls
+        run: |
+          xcrun swiftc -parse-as-library \
+            ActionCamRemote/Models/CameraModels.swift \
+            ActionCamRemote/Bluetooth/Insta360RemoteProtocol.swift \
+            ActionCamRemote/CarPlay/CarPlayCameraState.swift \
+            Tests/CarPlayCameraStateRegression.swift \
+            -o "$RUNNER_TEMP/carplay-camera-regression"
+          "$RUNNER_TEMP/carplay-camera-regression"
+
       - name: Build
         run: |
           xcodebuild \

@@ -111,9 +111,37 @@ xcodebuild \
 - `ActionCamRemote/Bluetooth`: CoreBluetooth scanner plus brand-specific BLE clients.
 - `ActionCamRemote/LiveActivity`: shared ActivityKit state, controller, and App Intents.
 - `ActionCamRemote/Services`: app-level store/coordinator.
+- `ActionCamRemote/CarPlay`: paired-camera selection and video recording controls, awaiting Apple's entitlement approval.
 - `ActionCamRemote/UI`: SwiftUI app surfaces.
 - `MulticamLiveActivity`: Lock Screen and Dynamic Island Live Activity extension.
 - `MulticamWatchApp`: Apple Watch remote UI and WatchConnectivity session model.
+
+## CarPlay (Awaiting Entitlement Approval)
+
+The CarPlay implementation is compiled into the iPhone app, but the restricted entitlement is **off by default**. Ordinary Debug, Release, and archive builds retain their existing signing requirements. Do not enable CarPlay signing or test the CarPlay interface until Apple approves the Driving Task request for `com.ds.ActionCamRemote` (team `2WX2Z9452K`).
+
+The single CarPlay screen lists previously paired cameras with selection checkmarks, connection/recording status, and separate Start Recording and Stop Recording actions. It shares the iPhone's camera store, including on a CarPlay-first launch. Camera selection changes are shared with the iPhone. Start requires every selected camera to be connected, in confirmed Video mode, and confirmed ready/stopped; it does not take photos, change modes, or partially start a group. Stop affects selected cameras that are recording or starting, including the existing reconnect-and-stop path. Pairing and detailed settings remain on iPhone before the drive. Periodic CarPlay status refreshes occur at most once every 10 seconds; selections and commands refresh immediately.
+
+Insta360 remote mode/status reporting can remain unknown. Such cameras cannot start recording through CarPlay until Video mode and stopped/ready state are known. A confirmed recording can still be stopped. Hardware validation is required for each supported brand.
+
+After approval:
+
+1. Enable **CarPlay Driving Task App** for this App ID in the developer portal and refresh the development/distribution provisioning profiles.
+2. Build the iPhone target with `MULTICAM_CARPLAY_ENABLED=YES`. This selects `ActionCamRemote/CarPlay/MulticamCarPlay.entitlements` for that target only; Watch and Live Activity signing are unaffected. Set the user-defined setting on the iPhone target in Xcode, or pass it to `xcodebuild` for a dedicated build. Keep it off for builds that should not advertise CarPlay.
+3. Use Apple's CarPlay Simulator with a physical iPhone to validate Bluetooth camera control. Xcode's iOS Simulator can validate templates with `--demo-connected-cameras`, but cannot connect to real cameras. Reuse the existing local simulator pool and hold `/tmp/trackside-ios-<UDID>.lock` for the entire install/UI session.
+4. Verify CarPlay-first launch with iPhone locked, concurrent phone/CarPlay selection, selected-only Start/Stop, Start followed immediately by Stop, camera disconnect/reconnect during recording, empty/unsupported/photo/unknown-status states, CarPlay disconnect/reconnect, and each supported camera brand on a real head unit. Check that selecting/deselecting cameras never sends a shutter command and that Stop does not affect deselected cameras.
+
+The host regression check runs without a CarPlay entitlement or simulator:
+
+```sh
+xcrun swiftc -parse-as-library \
+  ActionCamRemote/Models/CameraModels.swift \
+  ActionCamRemote/Bluetooth/Insta360RemoteProtocol.swift \
+  ActionCamRemote/CarPlay/CarPlayCameraState.swift \
+  Tests/CarPlayCameraStateRegression.swift \
+  -o /tmp/multicam-carplay-regression
+/tmp/multicam-carplay-regression
+```
 
 ## Acknowledgements
 
