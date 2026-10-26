@@ -596,7 +596,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CODE_SIGN_ENTITLEMENTS = "$(MULTICAM_CARPLAY_ENTITLEMENTS_$(MULTICAM_CARPLAY_ENABLED))";
-				MULTICAM_CARPLAY_ENABLED = NO;
+				MULTICAM_CARPLAY_ENABLED = YES;
 				MULTICAM_CARPLAY_ENTITLEMENTS_NO = "";
 				MULTICAM_CARPLAY_ENTITLEMENTS_YES = ActionCamRemote/CarPlay/MulticamCarPlay.entitlements;
 				CURRENT_PROJECT_VERSION = 41;
@@ -610,7 +610,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.1.7;
+				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ds.ActionCamRemote;
 				PRODUCT_NAME = Multicam;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -631,7 +631,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CODE_SIGN_ENTITLEMENTS = "$(MULTICAM_CARPLAY_ENTITLEMENTS_$(MULTICAM_CARPLAY_ENABLED))";
-				MULTICAM_CARPLAY_ENABLED = NO;
+				MULTICAM_CARPLAY_ENABLED = YES;
 				MULTICAM_CARPLAY_ENTITLEMENTS_NO = "";
 				MULTICAM_CARPLAY_ENTITLEMENTS_YES = ActionCamRemote/CarPlay/MulticamCarPlay.entitlements;
 				CURRENT_PROJECT_VERSION = 41;
@@ -645,7 +645,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.1.7;
+				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ds.ActionCamRemote;
 				PRODUCT_NAME = Multicam;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
@@ -675,7 +675,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.1.7;
+				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ds.ActionCamRemote.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -704,7 +704,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.1.7;
+				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ds.ActionCamRemote.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -734,7 +734,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.1.7;
+				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ds.ActionCamRemote.LiveActivity;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -761,7 +761,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.1.7;
+				MARKETING_VERSION = 1.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.ds.ActionCamRemote.LiveActivity;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;

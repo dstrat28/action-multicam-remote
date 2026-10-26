@@ -18,14 +18,86 @@ enum CarPlayCameraStateRegression {
         precondition(ready.startCameraIDs == [front.id], "Start must honor selection")
         precondition(!ready.canStop)
         precondition(ready.recordingAction == .start && ready.canPerformRecordingAction)
-        precondition(ready.recordingActionTitle == "Start Recording")
+        precondition(ready.recordingActionTitle == "Record")
         precondition(ready.cameras.allSatisfy(\.canToggleSelection))
+        precondition(ready.cameras.allSatisfy { $0.detail == "Connected" },
+                     "The checkmark alone represents selection; status must match the phone")
+
+        var statusCamera = makeCamera(name: "Status")
+        for isSelected in [true, false] {
+            statusCamera.isSelected = isSelected
+            for connectionState in [CameraConnectionState.discovered, .disconnected, .failed("Unavailable")] {
+                statusCamera.connectionState = connectionState
+                statusCamera.recordingState = .recording
+                precondition(CarPlayCameraState(cameras: [statusCamera]).cameras[0].detail == "Not Connected",
+                             "Offline status must not include selection or a stale recording status")
+            }
+            for connectionState in [CameraConnectionState.connecting, .reconnecting] {
+                statusCamera.connectionState = connectionState
+                precondition(CarPlayCameraState(cameras: [statusCamera]).cameras[0].detail == "Connecting")
+            }
+            statusCamera.connectionState = .connected
+            precondition(CarPlayCameraState(cameras: [statusCamera]).cameras[0].detail == "Recording")
+            for recordingState in [CameraRecordingState.ready, .stopped, .starting, .unknown, .unavailable] {
+                statusCamera.recordingState = recordingState
+                precondition(CarPlayCameraState(cameras: [statusCamera]).cameras[0].detail == "Connected")
+            }
+        }
+
+        var batteryCamera = makeCamera(name: "Battery")
+        batteryCamera.telemetry = CameraTelemetry(batteryPercent: 83, batteryBars: 3)
+        precondition(CarPlayCameraState(cameras: [batteryCamera]).cameras[0].detail == "Connected · 83%")
+        batteryCamera.recordingState = .recording
+        batteryCamera.telemetry?.isExternalPowerConnected = true
+        precondition(CarPlayCameraState(cameras: [batteryCamera]).cameras[0].detail == "Recording · 83% · External Power")
+        batteryCamera.telemetry?.batteryPercent = nil
+        precondition(CarPlayCameraState(cameras: [batteryCamera]).cameras[0].detail == "Recording · Battery 3/4 · External Power")
+        batteryCamera.connectionState = .disconnected
+        precondition(CarPlayCameraState(cameras: [batteryCamera]).cameras[0].detail == "Not Connected",
+                     "Disconnected cameras must not show cached battery readings")
+        batteryCamera.connectionState = .connected
+        batteryCamera.telemetry = CameraTelemetry(batteryPercent: -1, batteryBars: 5)
+        precondition(CarPlayCameraState(cameras: [batteryCamera]).cameras[0].detail == "Recording",
+                     "Invalid or unavailable battery readings must not invent a battery level")
+
+        var eventCamera = makeCamera(name: "Events")
+        eventCamera.telemetry = CameraTelemetry(batteryPercent: 83)
+        let connectedEvents = CarPlayCameraState.eventSnapshot(cameras: [eventCamera, rear])
+        let displayedBattery = CarPlayCameraState(cameras: [eventCamera, rear])
+        eventCamera.telemetry = CameraTelemetry(
+            batteryPercent: 82, isExternalPowerConnected: true, recordingElapsedSeconds: 10
+        )
+        eventCamera.rssi = -80
+        precondition(CarPlayCameraState.eventSnapshot(cameras: [rear, eventCamera]) == connectedEvents,
+                     "Power, elapsed time, RSSI, and list ordering must not trigger event redraws")
+        precondition(CarPlayCameraState(cameras: [eventCamera, rear]) != displayedBattery,
+                     "The periodic refresh must still pick up new power readings")
+        for connectionState in [CameraConnectionState.connecting, .reconnecting, .disconnected, .failed("Lost connection")] {
+            eventCamera.connectionState = connectionState
+            precondition(CarPlayCameraState.eventSnapshot(cameras: [eventCamera, rear]) != connectedEvents,
+                         "Connection changes must update immediately without a timer tick")
+        }
+        eventCamera.connectionState = .connected
+        precondition(CarPlayCameraState.eventSnapshot(cameras: [eventCamera, rear]) == connectedEvents)
+        eventCamera.recordingState = .starting
+        precondition(CarPlayCameraState.eventSnapshot(cameras: [eventCamera, rear]) != connectedEvents,
+                     "Starting must disable the control immediately, including starts from iPhone")
+        eventCamera.recordingState = .stopped
+        eventCamera.isSelected = false
+        precondition(CarPlayCameraState.eventSnapshot(cameras: [eventCamera, rear]) != connectedEvents,
+                     "Selection changes must stay in sync with iPhone immediately")
+        eventCamera.isSelected = true
+        eventCamera.currentMode = .photo
+        precondition(CarPlayCameraState.eventSnapshot(cameras: [eventCamera, rear]) != connectedEvents,
+                     "Recording readiness must update when the camera reports its mode")
+        precondition(CarPlayCameraState.eventSnapshot(cameras: [rear]) != connectedEvents,
+                     "Removing a paired camera must update the list immediately")
 
         front.isSelected = false
         let deselected = CarPlayCameraState(cameras: [front, rear])
         precondition(!deselected.canStart && !deselected.canStop)
         precondition(!deselected.canPerformRecordingAction)
-        precondition(deselected.startDetail == "Select connected cameras below")
+        precondition(deselected.startDetail == "No cameras selected")
         front.isSelected = true
         rear.isSelected = true
         precondition(CarPlayCameraState(cameras: [front, rear]).startCameraIDs == [front.id, rear.id])
@@ -51,7 +123,7 @@ enum CarPlayCameraStateRegression {
         precondition(!mixed.canStart && mixed.stopCameraIDs == [rear.id])
         precondition(mixed.recordingAction == .stop && mixed.canPerformRecordingAction,
                      "A mixed idle/recording selection must offer Stop, never Start")
-        precondition(mixed.recordingActionTitle == "Stop Recording")
+        precondition(mixed.recordingActionTitle == "Stop")
         precondition(mixed.recordingActionDetail == "Stop 1 selected camera")
         rear.isSelected = false
         precondition(CarPlayCameraState(cameras: [front, rear]).canStart)
@@ -63,7 +135,9 @@ enum CarPlayCameraStateRegression {
         rear.isSelected = true
         let stopping = CarPlayCameraState(cameras: [front, rear])
         precondition(!stopping.canStart && stopping.stopCameraIDs == [front.id, rear.id], "Stop must cancel in-flight starts too")
-        precondition(stopping.recordingAction == .stop && stopping.canPerformRecordingAction)
+        precondition(stopping.recordingAction == .stop && !stopping.canPerformRecordingAction)
+        precondition(stopping.isStarting && stopping.recordingActionTitle == "Starting...",
+                     "A mixed recording/starting group must wait for starts to settle, like iOS")
         front.connectionState = .reconnecting
         let reconnecting = CarPlayCameraState(cameras: [front])
         precondition(!reconnecting.canStart && reconnecting.canStop, "Keep the existing queued Stop path available during reconnect")
@@ -96,8 +170,16 @@ enum CarPlayCameraStateRegression {
         front = makeCamera(name: "Front")
         front.recordingState = .starting
         let starting = CarPlayCameraState(cameras: [front])
-        precondition(starting.recordingAction == .stop && starting.canPerformRecordingAction,
-                     "Start must immediately become Stop so the driver can cancel")
+        precondition(starting.recordingAction == .stop && !starting.canPerformRecordingAction,
+                     "Disable the button while a selected camera is starting, like iOS")
+        precondition(starting.isStarting && starting.recordingActionTitle == "Starting...")
+        front.isSelected = false
+        precondition(!CarPlayCameraState(cameras: [front]).isStarting,
+                     "A deselected camera must not leave the recording button busy")
+        front.isSelected = true
+        front.recordingState = .recording
+        let recording = CarPlayCameraState(cameras: [front])
+        precondition(!recording.isStarting && recording.recordingActionTitle == "Stop" && recording.canPerformRecordingAction)
         front.recordingState = .stopped
         let stopped = CarPlayCameraState(cameras: [front])
         precondition(stopped.recordingAction == .start && stopped.canPerformRecordingAction,

@@ -19,16 +19,16 @@ struct CarPlayCameraState: Equatable {
     let startCameraIDs: [UUID]
     let stopCameraIDs: [UUID]
     let startDetail: String
+    let isStarting: Bool
 
     var canStart: Bool { !startCameraIDs.isEmpty }
     var canStop: Bool { !stopCameraIDs.isEmpty }
 
-    // A mixed selection must offer Stop until all selected recordings are idle.
+    // Never offer Record while selected recordings are active or starting.
     var recordingAction: RecordingAction { canStop ? .stop : .start }
-    var canPerformRecordingAction: Bool { canStart || canStop }
-    var recordingActionTitle: String { canStop ? "Stop Recording" : "Start Recording" }
-    var recordingActionDetail: String { canStop ? stopDetail : startDetail }
-    var recordingActionImageName: String { canStop ? "stop.circle" : "record.circle" }
+    var canPerformRecordingAction: Bool { !isStarting && (canStart || canStop) }
+    var recordingActionTitle: String { isStarting ? "Starting..." : (canStop ? "Stop" : "Record") }
+    var recordingActionDetail: String { isStarting ? "Starting selected cameras" : (canStop ? stopDetail : startDetail) }
 
     var stopDetail: String {
         stopCameraIDs.isEmpty
@@ -37,18 +37,32 @@ struct CarPlayCameraState: Equatable {
     }
 
     init(cameras: [DiscoveredCamera]) {
+        self.init(cameras: cameras, includesPowerDetails: true)
+    }
+
+    /// Discrete UI changes update immediately. Power readings and list reordering
+    /// from signal updates must not turn telemetry packets into frequent redraws.
+    static func eventSnapshot(cameras: [DiscoveredCamera]) -> Self {
+        Self(
+            cameras: cameras.sorted { $0.id.uuidString < $1.id.uuidString },
+            includesPowerDetails: false
+        )
+    }
+
+    private init(cameras: [DiscoveredCamera], includesPowerDetails: Bool) {
         let paired = cameras.filter(\.isPaired)
         self.cameras = paired.map { camera in
             Camera(
                 id: camera.id,
                 name: camera.displayName,
-                detail: Self.detail(for: camera),
+                detail: Self.detail(for: camera, includesPowerDetails: includesPowerDetails),
                 isSelected: camera.isSelected,
                 canToggleSelection: camera.canSelectForBatch || camera.isSelected
             )
         }
 
         let selected = paired.filter(\.isSelected)
+        isStarting = selected.contains { $0.canSelectForBatch && $0.recordingState == .starting }
         // Never call the phone's photo-aware group shutter from CarPlay. Requiring
         // confirmed Video mode also protects cameras whose remote uses a toggle.
         let ready = selected.filter {
@@ -67,7 +81,7 @@ struct CarPlayCameraState: Equatable {
         if paired.isEmpty {
             startDetail = "Pair cameras before your drive"
         } else if selected.isEmpty {
-            startDetail = "Select connected cameras below"
+            startDetail = "No cameras selected"
         } else if selected.contains(where: { !$0.canSelectForBatch }) {
             startDetail = "Waiting for selected cameras to connect"
         } else if selected.contains(where: { $0.recordingState == .starting }) {
@@ -83,22 +97,28 @@ struct CarPlayCameraState: Equatable {
         }
     }
 
-    private static func detail(for camera: DiscoveredCamera) -> String {
-        let selection = camera.isSelected ? "Selected" : "Not selected"
-        let status: String
-        if !camera.isConnected {
-            status = camera.displayConnectionLabel
-        } else if camera.isInPhotoMode {
-            status = "Photo mode"
-        } else {
-            switch camera.recordingState {
-            case .recording: status = "Recording"
-            case .starting: status = "Starting"
-            case .unknown, .unavailable: status = "Recording status unknown"
-            case .ready, .stopped:
-                status = camera.currentMode == .video ? "Ready" : "Video mode required"
+    private static func detail(for camera: DiscoveredCamera, includesPowerDetails: Bool) -> String {
+        guard camera.isSupportedByApp else { return "Unsupported" }
+        switch camera.connectionState {
+        case .connected:
+            var details = [camera.recordingState == .recording ? "Recording" : "Connected"]
+            if includesPowerDetails, let telemetry = camera.telemetry {
+                if let percent = telemetry.batteryPercent, (0...100).contains(percent) {
+                    details.append("\(percent)%")
+                } else if let bars = telemetry.batteryBars, (0...4).contains(bars) {
+                    details.append("Battery \(bars)/4")
+                }
+                if telemetry.isExternalPowerConnected == true {
+                    details.append("External Power")
+                }
             }
+            return details.joined(separator: " · ")
+        case .connecting, .reconnecting:
+            return "Connecting"
+        case .discovered, .disconnected, .failed:
+            return "Not Connected"
+        case .unsupported:
+            return "Unsupported"
         }
-        return "\(selection) · \(status)"
     }
 }

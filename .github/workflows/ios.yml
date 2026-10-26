@@ -54,6 +54,9 @@ jobs:
             -o "$RUNNER_TEMP/carplay-camera-regression"
           "$RUNNER_TEMP/carplay-camera-regression"
 
+      - name: Check CarPlay controller observation
+        run: sh ci_scripts/check_carplay_controller.sh
+
       - name: Build
         run: |
           xcodebuild \

@@ -15,6 +15,8 @@ xcodebuild \
   build
 ```
 
+CarPlay is enabled by default for the published app's iPhone target. If your development team does not have the Driving Task entitlement, add `MULTICAM_CARPLAY_ENABLED=NO` to signed development builds. Unsigned simulator builds can retain the default. Run `sh ci_scripts/check_carplay_controller.sh` for the host-side controller timing and lifecycle regression check.
+
 ## Hardware Reports
 
 Camera behavior varies by model, firmware, and power state. Good reports include:
