@@ -5,6 +5,7 @@ enum CarPlayCameraStateRegression {
     static func main() {
         let empty = CarPlayCameraState(cameras: [])
         precondition(!empty.canStart && !empty.canStop && empty.cameras.isEmpty)
+        precondition(empty.recordingAction == .start && !empty.canPerformRecordingAction)
         precondition(empty.startDetail == "Pair cameras before your drive")
 
         var front = makeCamera(name: "Front")
@@ -16,11 +17,14 @@ enum CarPlayCameraStateRegression {
         precondition(ready.cameras.map(\.id) == [front.id, rear.id], "Only paired cameras belong in CarPlay")
         precondition(ready.startCameraIDs == [front.id], "Start must honor selection")
         precondition(!ready.canStop)
+        precondition(ready.recordingAction == .start && ready.canPerformRecordingAction)
+        precondition(ready.recordingActionTitle == "Start Recording")
         precondition(ready.cameras.allSatisfy(\.canToggleSelection))
 
         front.isSelected = false
         let deselected = CarPlayCameraState(cameras: [front, rear])
         precondition(!deselected.canStart && !deselected.canStop)
+        precondition(!deselected.canPerformRecordingAction)
         precondition(deselected.startDetail == "Select connected cameras below")
         front.isSelected = true
         rear.isSelected = true
@@ -32,6 +36,7 @@ enum CarPlayCameraStateRegression {
             precondition(!state.canStart, "Start must never capture photos or silently change modes")
             precondition(state.startCameraIDs.isEmpty, "Do not partially start a selected group")
             precondition(!state.canStop)
+            precondition(!state.canPerformRecordingAction)
         }
         rear.currentMode = nil
         precondition(!CarPlayCameraState(cameras: [rear]).canStart, "An unknown camera mode must not trigger a shutter toggle")
@@ -44,17 +49,25 @@ enum CarPlayCameraStateRegression {
         rear.recordingState = .recording
         let mixed = CarPlayCameraState(cameras: [front, rear])
         precondition(!mixed.canStart && mixed.stopCameraIDs == [rear.id])
+        precondition(mixed.recordingAction == .stop && mixed.canPerformRecordingAction,
+                     "A mixed idle/recording selection must offer Stop, never Start")
+        precondition(mixed.recordingActionTitle == "Stop Recording")
+        precondition(mixed.recordingActionDetail == "Stop 1 selected camera")
         rear.isSelected = false
         precondition(CarPlayCameraState(cameras: [front, rear]).canStart)
+        precondition(CarPlayCameraState(cameras: [front, rear]).recordingAction == .start,
+                     "The single button must follow the current selection")
         precondition(!CarPlayCameraState(cameras: [front, rear]).canStop, "Stop must not target deselected recordings")
 
         front.recordingState = .starting
         rear.isSelected = true
         let stopping = CarPlayCameraState(cameras: [front, rear])
         precondition(!stopping.canStart && stopping.stopCameraIDs == [front.id, rear.id], "Stop must cancel in-flight starts too")
+        precondition(stopping.recordingAction == .stop && stopping.canPerformRecordingAction)
         front.connectionState = .reconnecting
         let reconnecting = CarPlayCameraState(cameras: [front])
         precondition(!reconnecting.canStart && reconnecting.canStop, "Keep the existing queued Stop path available during reconnect")
+        precondition(reconnecting.recordingAction == .stop)
         precondition(reconnecting.cameras[0].canToggleSelection, "An offline selected camera can still be deselected")
         front.isSelected = false
         precondition(!CarPlayCameraState(cameras: [front]).cameras[0].canToggleSelection)
@@ -79,6 +92,16 @@ enum CarPlayCameraStateRegression {
         precondition(CarPlayCameraState(cameras: [insta360]).canStop, "A confirmed recording can still be stopped")
         insta360.currentMode = .photo
         precondition(!CarPlayCameraState(cameras: [insta360]).canStop, "CarPlay must not operate a photo shutter")
+
+        front = makeCamera(name: "Front")
+        front.recordingState = .starting
+        let starting = CarPlayCameraState(cameras: [front])
+        precondition(starting.recordingAction == .stop && starting.canPerformRecordingAction,
+                     "Start must immediately become Stop so the driver can cancel")
+        front.recordingState = .stopped
+        let stopped = CarPlayCameraState(cameras: [front])
+        precondition(stopped.recordingAction == .start && stopped.canPerformRecordingAction,
+                     "Stop must return to Start after recording finishes")
 
         print("CarPlay camera selection and recording regression checks passed.")
     }

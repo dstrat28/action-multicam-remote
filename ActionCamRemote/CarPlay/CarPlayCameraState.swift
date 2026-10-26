@@ -2,6 +2,11 @@ import Foundation
 
 /// A value snapshot keeps CarPlay presentation and command eligibility in agreement.
 struct CarPlayCameraState: Equatable {
+    enum RecordingAction {
+        case start
+        case stop
+    }
+
     struct Camera: Equatable {
         let id: UUID
         let name: String
@@ -17,6 +22,13 @@ struct CarPlayCameraState: Equatable {
 
     var canStart: Bool { !startCameraIDs.isEmpty }
     var canStop: Bool { !stopCameraIDs.isEmpty }
+
+    // A mixed selection must offer Stop until all selected recordings are idle.
+    var recordingAction: RecordingAction { canStop ? .stop : .start }
+    var canPerformRecordingAction: Bool { canStart || canStop }
+    var recordingActionTitle: String { canStop ? "Stop Recording" : "Start Recording" }
+    var recordingActionDetail: String { canStop ? stopDetail : startDetail }
+    var recordingActionImageName: String { canStop ? "stop.circle" : "record.circle" }
 
     var stopDetail: String {
         stopCameraIDs.isEmpty

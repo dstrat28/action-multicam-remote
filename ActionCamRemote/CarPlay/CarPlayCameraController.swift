@@ -68,34 +68,26 @@ final class CarPlayCameraController {
         guard state != lastState else { return }
         lastState = state
 
-        let start = CPListItem(
-            text: "Start Recording",
-            detailText: state.startDetail,
-            image: UIImage(systemName: "record.circle")
+        let recording = CPListItem(
+            text: state.recordingActionTitle,
+            detailText: state.recordingActionDetail,
+            image: UIImage(systemName: state.recordingActionImageName)
         )
-        start.isEnabled = state.canStart
-        start.handler = { [weak self] _, completion in
+        recording.isEnabled = state.canPerformRecordingAction
+        recording.handler = { [weak self] _, completion in
             defer { completion() }
             guard let self, self.isConnected else { return }
-            _ = self.store.startCarPlayRecording()
+            // Keep the action the driver saw. Each store method revalidates the
+            // current cameras, so stale Start never becomes an unexpected Stop.
+            switch state.recordingAction {
+            case .start: _ = self.store.startCarPlayRecording()
+            case .stop: _ = self.store.stopCarPlayRecording()
+            }
             self.refresh()
         }
 
-        let stop = CPListItem(
-            text: "Stop Recording",
-            detailText: state.stopDetail,
-            image: UIImage(systemName: "stop.circle")
-        )
-        stop.isEnabled = state.canStop
-        stop.handler = { [weak self] _, completion in
-            defer { completion() }
-            guard let self, self.isConnected else { return }
-            _ = self.store.stopCarPlayRecording()
-            self.refresh()
-        }
-
-        // Reserve room for both actions and respect the vehicle's list limit.
-        let visibleCameras = state.cameras.prefix(max(0, CPListTemplate.maximumItemCount - 2))
+        // Reserve room for the recording action and respect the vehicle's list limit.
+        let visibleCameras = state.cameras.prefix(max(0, CPListTemplate.maximumItemCount - 1))
         let items = visibleCameras.map { camera in
             let item = CPListItem(
                 text: camera.name,
@@ -122,7 +114,7 @@ final class CarPlayCameraController {
             subtitle = nil
         }
         template.updateSections([
-            CPListSection(items: [start, stop], header: "Recording", sectionIndexTitle: nil),
+            CPListSection(items: [recording], header: "Recording", sectionIndexTitle: nil),
             CPListSection(
                 items: items,
                 header: "Paired Cameras",
