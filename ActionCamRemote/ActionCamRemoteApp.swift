@@ -4,14 +4,9 @@ import SwiftUI
 struct ActionCamRemoteApp: App {
     @Environment(\.scenePhase) private var scenePhase
     @State private var store: CameraStore
-    private let watchConnectivity: WatchConnectivityController
 
     init() {
-        let store = CameraStore()
-        _store = State(initialValue: store)
-        watchConnectivity = WatchConnectivityController(store: store)
-        MulticamSystemCommandRouter.shared.register(store: store)
-        MulticamAppShortcuts.updateAppShortcutParameters()
+        _store = State(initialValue: MulticamAppServices.shared.store)
     }
 
     var body: some Scene {
