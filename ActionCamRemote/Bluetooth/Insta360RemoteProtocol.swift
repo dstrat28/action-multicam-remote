@@ -259,15 +259,31 @@ enum Insta360RemoteProtocol {
     }
 
     static func recordingTimeLabel(from data: Data) -> String? {
-        guard data.count >= 18 else { return nil }
+        let text: Data
+        let isDisplayFrame = data.starts(with: [0xFE, 0xEF, 0xFE])
+        if isDisplayFrame {
+            // CE81 display frame: FE EF FE 10 <flag> <payload length>,
+            // then four display-control bytes and the elapsed-time text.
+            guard data.count >= 10, data[data.startIndex + 3] == 0x10 else { return nil }
+            let payloadLength = Int(data[data.startIndex + 5])
+            guard payloadLength > 4, data.count >= 6 + payloadLength else { return nil }
+            text = Data(data.dropFirst(10).prefix(payloadLength - 4))
+        } else {
+            guard data.count >= 18 else { return nil }
+            text = data
+        }
         // Keep whole printable tokens so malformed times cannot be accepted
         // by matching a valid-looking substring inside another value.
-        let tokens = data.split { byte in
+        let tokens = text.split { byte in
             !(0x21 ... 0x7E).contains(byte)
         }
         for token in tokens {
-            guard token.allSatisfy({ $0 == 0x3A || (0x30 ... 0x39).contains($0) }) else { continue }
-            let components = token.split(separator: 0x3A, omittingEmptySubsequences: false)
+            // GPS Remote timers can carry a leading '.' display marker.
+            // Only strip it inside a complete display frame, never from
+            // arbitrary binary traffic or from the middle of another token.
+            let timer = isDisplayFrame && token.first == 0x2E ? token.dropFirst() : token
+            guard timer.allSatisfy({ $0 == 0x3A || (0x30 ... 0x39).contains($0) }) else { continue }
+            let components = timer.split(separator: 0x3A, omittingEmptySubsequences: false)
             guard components.count == 2 || components.count == 3,
                   components.allSatisfy({ !$0.isEmpty }),
                   components.dropFirst().allSatisfy({ component in
@@ -277,7 +293,7 @@ enum Insta360RemoteProtocol {
                   }) else {
                 continue
             }
-            return String(decoding: token, as: UTF8.self)
+            return String(decoding: timer, as: UTF8.self)
         }
         return nil
     }

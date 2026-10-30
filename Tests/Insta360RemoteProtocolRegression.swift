@@ -177,7 +177,9 @@ enum Insta360RemoteProtocolRegression {
         precondition(Insta360RemoteProtocol.recordingTimeLabel(from: timerPacket) == "00:01:23")
         precondition(!Insta360RemoteProtocol.isRecordingTimerPacket(Data(repeating: 0, count: 20)))
         checkTimerValidation()
+        checkDisplayTimerFrames()
         checkRecordingStatus()
+        checkSuccessiveRecordingSessions()
         checkQueuedCommands()
 
         let now = Date(timeIntervalSinceReferenceDate: 1_000)
@@ -249,6 +251,57 @@ enum Insta360RemoteProtocolRegression {
         binaryPacket[10] = 0x3A
         precondition(!Insta360RemoteProtocol.isRecordingTimerPacket(binaryPacket))
         precondition(!Insta360RemoteProtocol.isRecordingTimerPacket(Data("00:01:23".utf8)))
+    }
+
+    private static func displayPacket(_ text: String) -> Data {
+        Data([0xFE, 0xEF, 0xFE, 0x10, 0x80, UInt8(4 + text.utf8.count),
+              0x01, 0x0E, 0x46, 0x01]) + Data(text.utf8)
+    }
+
+    private static func checkDisplayTimerFrames() {
+        // X4 camera -> GPS Remote capture; the period is a display marker.
+        // https://github.com/TheAngryRaven/DovesDataLogger/blob/0077141ea3a43de68e1d9dc2e761e6674d9e31b3/tests/insta360_protocol_test.cpp
+        let captured = Data([
+            0xFE, 0xEF, 0xFE, 0x10, 0x80, 0x0D,
+            0x01, 0x0E, 0x46, 0x01,
+            0x2E, 0x30, 0x30, 0x3A, 0x30, 0x30, 0x3A, 0x30, 0x35,
+        ])
+        precondition(Insta360RemoteProtocol.recordingTimeLabel(from: captured) == "00:00:05")
+        precondition(Insta360RemoteProtocol.isRecordingTimerPacket(captured))
+        for time in [".0:05", ".00:00:05", "00:00:05"] {
+            let expected = time.hasPrefix(".") ? String(time.dropFirst()) : time
+            precondition(Insta360RemoteProtocol.recordingTimeLabel(from: displayPacket(time)) == expected)
+        }
+        for invalid in [".12:60", ".1:60:00", "..00:00:05", "junk.00:00:05", ".00:00:05junk", "4K|30|UW", " 13h09m"] {
+            precondition(!Insta360RemoteProtocol.isRecordingTimerPacket(displayPacket(invalid)), invalid)
+        }
+        for length in 0 ..< captured.count {
+            precondition(!Insta360RemoteProtocol.isRecordingTimerPacket(Data(captured.prefix(length))))
+        }
+        var wrongType = captured
+        wrongType[3] = 0x07
+        precondition(!Insta360RemoteProtocol.isRecordingTimerPacket(wrongType))
+        precondition(!Insta360RemoteProtocol.isRecordingTimerPacket(
+            displayPacket("4K|30|UW") + Data([0]) + Data("00:00:05".utf8)
+        ), "A timer outside the declared display payload must not confirm recording")
+    }
+
+    private static func checkSuccessiveRecordingSessions() {
+        let now = Date(timeIntervalSinceReferenceDate: 2_500)
+        var status = Insta360RemoteRecordingStatus()
+        for session in 0 ..< 2 {
+            let start = now.addingTimeInterval(Double(session) * 20)
+            precondition(status.rejectionReason(for: .startRecording) == nil)
+            status.shutterSent(at: start)
+            precondition(Insta360RemoteProtocol.isRecordingTimerPacket(displayPacket(".00:00:05")))
+            status.observeTimer(at: start.addingTimeInterval(1))
+            precondition(status.state == .recording)
+            precondition(status.rejectionReason(for: .startRecording) != nil)
+            precondition(status.rejectionReason(for: .stopRecording) == nil)
+            status.shutterSent(at: start.addingTimeInterval(2))
+            precondition(status.expire(at: start.addingTimeInterval(8)))
+            precondition(status.state == .unknown, "Silence must not claim recording stopped")
+        }
     }
 
     private static func checkRecordingStatus() {
