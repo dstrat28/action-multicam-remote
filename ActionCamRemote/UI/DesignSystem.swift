@@ -150,6 +150,7 @@ struct ACRPrimaryActionButton: View {
     var minimumContentWidth: CGFloat? = nil
     var fillsWidth = false
     var scalesWithLargerControls = true
+    var height: CGFloat? = nil
     var feedback: SensoryFeedback = .impact(weight: .medium)
     var action: () -> Void
     @State private var feedbackTrigger = 0
@@ -198,6 +199,8 @@ struct ACRPrimaryActionButton: View {
                 radius: size == .large ? 6 : 3,
                 y: size == .large ? 2 : 1
             )
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled || isLoading)
@@ -214,7 +217,7 @@ struct ACRPrimaryActionButton: View {
     }
 
     private var controlHeight: CGFloat {
-        usesLargerControls ? (size == .large ? 76 : 64) : size.height
+        height ?? (usesLargerControls ? (size == .large ? 76 : 64) : size.height)
     }
 
     private var showsFilledTreatment: Bool {

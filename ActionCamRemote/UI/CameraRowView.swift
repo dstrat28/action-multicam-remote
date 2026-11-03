@@ -1252,6 +1252,7 @@ private struct CameraTelemetryDetailSection: View {
 
 private struct CameraRecordButton: View {
     @Environment(CameraStore.self) private var store
+    @AppStorage(ACRPreferences.largerControls) private var largerControls = false
     var camera: DiscoveredCamera
 
     var body: some View {
@@ -1267,6 +1268,7 @@ private struct CameraRecordButton: View {
                 ? .filled
                 : .outlined,
             scalesWithLargerControls: false,
+            height: largerControls ? 44 : 36,
             action: performRecordAction
         )
     }
