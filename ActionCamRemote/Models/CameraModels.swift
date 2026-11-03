@@ -2,6 +2,10 @@ import Foundation
 
 enum FeatureAvailability {
     static let djiPhoneGPS = true
+    // Keep the prototype unavailable until the approved vendor frameworks and
+    // a working Bluetooth adapter are integrated. Importability alone is not
+    // proof that SDK control is ready.
+    static let insta360SDK = false
 }
 
 enum CameraBrand: String, CaseIterable, Identifiable, Codable {

@@ -5,6 +5,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(CameraStore.self) private var store
     @AppStorage(ACRPreferences.largerControls) private var largerControls = false
+    @AppStorage(ACRPreferences.insta360SDKEnabled) private var insta360SDKEnabled = false
     @State private var supportPresentation: SupportPresentation?
     @State private var isPreparingSupport = false
     @State private var supportError: String?
@@ -20,6 +21,23 @@ struct SettingsView: View {
                     Label("Larger Controls", systemImage: "hand.tap")
                         .foregroundStyle(Color.acrInk)
                 }
+                .listRowBackground(Color.acrSurface)
+                Toggle(isOn: $insta360SDKEnabled) {
+                    HStack(spacing: 12) {
+                        Image(systemName: "camera")
+                            .frame(width: 20)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text("Insta360 SDK")
+                            if !FeatureAvailability.insta360SDK {
+                                Text("Experimental · Requires SDK build.")
+                                    .font(.caption)
+                                    .foregroundStyle(Color.acrMutedText)
+                            }
+                        }
+                    }
+                    .foregroundStyle(Color.acrInk)
+                }
+                .disabled(!FeatureAvailability.insta360SDK)
                 .listRowBackground(Color.acrSurface)
                 NavigationLink {
                     DiagnosticsView()
