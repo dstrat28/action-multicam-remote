@@ -243,40 +243,32 @@ struct CameraRowView: View {
             if camera.availableCaptureModes.count > 1 {
                 captureModeLabel(showsChevron: true)
                     .overlay {
-                        Menu {
-                            if selectableGoProPresets.isEmpty {
-                                captureModeButtons
-                            } else {
-                                ForEach(camera.availableCaptureModes) { mode in
-                                    let presets = selectableGoProPresets.filter { $0.mode == mode }
-                                    if !presets.isEmpty {
-                                        Section(mode.displayName(for: camera.model)) {
-                                            ForEach(presets) { preset in
-                                                Button {
-                                                    guard preset.id != camera.activeGoProPresetID else { return }
-                                                    setPendingCaptureMode(nil)
-                                                    store.loadGoProPreset(preset, for: camera)
-                                                } label: {
-                                                    if preset.id == camera.activeGoProPresetID {
-                                                        Label(preset.name, systemImage: "checkmark")
-                                                    } else {
-                                                        Text(preset.name)
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
+                        CameraCaptureModeMenu(
+                            configuration: .init(
+                                cameraID: camera.id,
+                                displayName: camera.displayName,
+                                model: camera.model,
+                                modes: camera.availableCaptureModes,
+                                presets: selectableGoProPresets,
+                                activePresetID: camera.activeGoProPresetID,
+                                selectedMode: displayedCaptureMode,
+                                isEnabled: camera.canSwitchCaptureMode
+                            ),
+                            onSelectMode: { mode in
+                                guard let current = store.cameras.first(where: { $0.id == camera.id }),
+                                      current.canSwitchCaptureMode,
+                                      mode != (pendingCaptureMode ?? current.currentMode) else { return }
+                                setPendingCaptureMode(mode)
+                                store.switchMode(mode, for: current)
+                            },
+                            onSelectPreset: { preset in
+                                guard let current = store.cameras.first(where: { $0.id == camera.id }),
+                                      preset.id != current.activeGoProPresetID else { return }
+                                setPendingCaptureMode(nil)
+                                store.loadGoProPreset(preset, for: current)
                             }
-                        } label: {
-                            Text("Capture mode for \(camera.displayName)")
-                                .foregroundStyle(.clear)
-                                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                                .contentShape(Capsule())
-                                .accessibilityLabel("Capture mode for \(camera.displayName)")
-                                .accessibilityHint("Changes the capture mode or camera preset")
-                        }
-                        .buttonStyle(.plain)
+                        )
+                        .equatable()
                     }
                     .disabled(!camera.canSwitchCaptureMode)
             } else if let currentMode = camera.currentMode {
@@ -296,22 +288,6 @@ struct CameraRowView: View {
         guard pendingCaptureMode == nil else { return nil }
         return selectableGoProPresets.first {
             $0.id == camera.activeGoProPresetID && $0.mode == camera.currentMode
-        }
-    }
-
-    private var captureModeButtons: some View {
-        ForEach(camera.availableCaptureModes) { mode in
-            Button {
-                guard mode != displayedCaptureMode else { return }
-                setPendingCaptureMode(mode)
-                store.switchMode(mode, for: camera)
-            } label: {
-                if mode == displayedCaptureMode {
-                    Label(mode.displayName(for: camera.model), systemImage: "checkmark")
-                } else {
-                    Text(mode.displayName(for: camera.model))
-                }
-            }
         }
     }
 
@@ -640,6 +616,75 @@ struct CameraRowView: View {
         store.isCameraConnectInProgress(camera)
     }
 
+}
+
+// Keep the native menu unchanged when its row receives telemetry or discovery updates.
+// Actions resolve the latest camera in the store rather than using this menu's snapshot.
+private struct CameraCaptureModeMenu: View, Equatable {
+    struct Configuration: Equatable {
+        let cameraID: UUID
+        let displayName: String
+        let model: CameraModel
+        let modes: [CaptureMode]
+        let presets: [GoProPreset]
+        let activePresetID: UInt32?
+        let selectedMode: CaptureMode?
+        let isEnabled: Bool
+    }
+
+    let configuration: Configuration
+    let onSelectMode: (CaptureMode) -> Void
+    let onSelectPreset: (GoProPreset) -> Void
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.configuration == rhs.configuration
+    }
+
+    var body: some View {
+        Menu {
+            if configuration.presets.isEmpty {
+                ForEach(configuration.modes) { mode in
+                    Button {
+                        onSelectMode(mode)
+                    } label: {
+                        if mode == configuration.selectedMode {
+                            Label(mode.displayName(for: configuration.model), systemImage: "checkmark")
+                        } else {
+                            Text(mode.displayName(for: configuration.model))
+                        }
+                    }
+                }
+            } else {
+                ForEach(configuration.modes) { mode in
+                    let presets = configuration.presets.filter { $0.mode == mode }
+                    if !presets.isEmpty {
+                        Section(mode.displayName(for: configuration.model)) {
+                            ForEach(presets) { preset in
+                                Button {
+                                    onSelectPreset(preset)
+                                } label: {
+                                    if preset.id == configuration.activePresetID {
+                                        Label(preset.name, systemImage: "checkmark")
+                                    } else {
+                                        Text(preset.name)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        } label: {
+            Text("Capture mode for \(configuration.displayName)")
+                .foregroundStyle(.clear)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Capsule())
+                .accessibilityLabel("Capture mode for \(configuration.displayName)")
+                .accessibilityHint("Changes the capture mode or camera preset")
+        }
+        .buttonStyle(.plain)
+        .disabled(!configuration.isEnabled)
+    }
 }
 
 struct CameraProductThumbnail: View {
