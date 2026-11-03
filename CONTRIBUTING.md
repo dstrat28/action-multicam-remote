@@ -4,7 +4,14 @@ Thanks for helping make Multicam better.
 
 ## Development
 
-Use Xcode 15 or newer and build the `ActionCamRemote` scheme. Simulator builds are useful for UI work, but hardware features require a physical iPhone or iPad because iOS Simulator cannot connect to real Bluetooth cameras.
+Requirements:
+
+- Xcode 26 or newer, including the iOS and watchOS SDKs.
+- iOS 17 or newer deployment target.
+- watchOS 10 or newer for the included Apple Watch app.
+- A physical iPhone or iPad for Bluetooth camera testing.
+
+The UI uses [Liquid Glass APIs from the Xcode 26 SDKs](https://developer.apple.com/videos/play/wwdc2025/323/) with runtime fallbacks for older supported iOS versions. Build the `ActionCamRemote` scheme. iOS Simulator can run the UI but cannot connect to real cameras.
 
 ```sh
 xcodebuild \
@@ -16,6 +23,18 @@ xcodebuild \
 ```
 
 For signed device builds, use your own Apple development team and unique bundle identifiers for all three targets. Update the Watch app's `WKCompanionAppBundleIdentifier` to match the iPhone app. You do not need access to the publisher's team.
+
+After configuring signing and identifiers in Xcode, a physical-device build without CarPlay can use:
+
+```sh
+xcodebuild \
+  -project ActionCamRemote.xcodeproj \
+  -scheme ActionCamRemote \
+  -destination 'platform=iOS,name=Your Device Name' \
+  DEVELOPMENT_TEAM=YOURTEAMID \
+  MULTICAM_CARPLAY_ENABLED=NO \
+  build
+```
 
 CarPlay is enabled by default for the published app's iPhone target. Set `MULTICAM_CARPLAY_ENABLED=NO` in the iPhone target's Build Settings or command-line build unless your own team and App ID have the Driving Task entitlement. Unsigned simulator builds can retain the default. See [CarPlay development](docs/carplay.md) for entitlement setup and testing; `sh ci_scripts/check_carplay_controller.sh` runs the host-side controller check without an entitlement or simulator.
 
@@ -41,8 +60,19 @@ Review diagnostics before posting publicly. They may contain Bluetooth identifie
 
 ## Protocol Work
 
-GoPro changes should follow the public Open GoPro BLE API. DJI Action/360 control uses DJI's R SDK handshake and status protocol, with model-scoped DUML commands where behavior differs between cameras.
+GoPro changes should follow the public Open GoPro BLE API. DJI Action/360 control uses DJI's R SDK handshake and status protocol, with model-scoped DUML commands where behavior differs between cameras. Experimental Insta360 support emulates the Bluetooth GPS Remote protocol. See [camera support and protocol notes](docs/camera-support.md) for limitations.
 
 Keep model-specific behavior isolated, preserve the shared connection flow, and include regression coverage for packet encoding or state parsing changes. Mark a camera as hardware-tested only after verifying it on a physical device.
 
-For signed device builds, select your own Apple development team in Xcode and use bundle identifiers registered to that team. The repository's bundle identifiers belong to the published app and do not grant access to its signing credentials.
+The repository's bundle identifiers belong to the published app and do not grant access to its signing credentials.
+
+## Project Layout
+
+- `ActionCamRemote/Models`: shared camera, command, capability, and result types.
+- `ActionCamRemote/Bluetooth`: CoreBluetooth scanner plus brand-specific BLE clients.
+- `ActionCamRemote/LiveActivity`: shared ActivityKit state, controller, and App Intents.
+- `ActionCamRemote/Services`: app-level store/coordinator.
+- `ActionCamRemote/CarPlay`: paired-camera selection and video recording controls.
+- `ActionCamRemote/UI`: SwiftUI app surfaces.
+- `MulticamLiveActivity`: Lock Screen and Dynamic Island Live Activity extension.
+- `MulticamWatchApp`: Apple Watch remote UI and WatchConnectivity session model.
