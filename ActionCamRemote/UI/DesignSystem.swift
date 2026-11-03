@@ -151,6 +151,7 @@ struct ACRPrimaryActionButton: View {
     var fillsWidth = false
     var scalesWithLargerControls = true
     var height: CGFloat? = nil
+    var cornerRadius: CGFloat = ACRDesign.buttonCornerRadius
     var feedback: SensoryFeedback = .impact(weight: .medium)
     var action: () -> Void
     @State private var feedbackTrigger = 0
@@ -186,10 +187,10 @@ struct ACRPrimaryActionButton: View {
             .padding(.horizontal, showsTitle ? size.horizontalPadding : 0)
             .background(
                 buttonFill,
-                in: RoundedRectangle(cornerRadius: ACRDesign.buttonCornerRadius, style: .continuous)
+                in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
             )
             .overlay {
-                RoundedRectangle(cornerRadius: ACRDesign.buttonCornerRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .stroke(buttonStroke, lineWidth: strokeWidth)
             }
             .shadow(

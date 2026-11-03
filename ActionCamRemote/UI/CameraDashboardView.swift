@@ -156,8 +156,7 @@ private struct MulticamRecordBar: View {
             }
         }
         .frame(minHeight: 56, alignment: .center)
-        .padding(.leading, 18)
-        .padding(.trailing, 10)
+        .padding(.horizontal, 10)
         .padding(.vertical, 10)
         .acrFloatingControlBar()
         .frame(maxWidth: .infinity)

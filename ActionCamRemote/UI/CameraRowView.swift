@@ -1269,6 +1269,7 @@ private struct CameraRecordButton: View {
                 : .outlined,
             scalesWithLargerControls: false,
             height: largerControls ? 44 : 36,
+            cornerRadius: 10,
             action: performRecordAction
         )
     }
