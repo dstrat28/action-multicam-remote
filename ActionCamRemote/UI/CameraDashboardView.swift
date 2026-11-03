@@ -142,11 +142,11 @@ private struct MulticamRecordBar: View {
         Group {
             if largerControls {
                 VStack(spacing: 12) {
+                    selectionLabel
+                        .frame(maxWidth: .infinity, alignment: .center)
                     HStack(spacing: 12) {
                         recordingControls
                     }
-                    selectionLabel
-                        .frame(maxWidth: .infinity, alignment: .center)
                 }
             } else {
                 HStack(alignment: .center, spacing: 8) {
