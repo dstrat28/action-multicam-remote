@@ -15,7 +15,9 @@ xcodebuild \
   build
 ```
 
-CarPlay is enabled by default for the published app's iPhone target. If your development team does not have the Driving Task entitlement, add `MULTICAM_CARPLAY_ENABLED=NO` to signed development builds. Unsigned simulator builds can retain the default. Run `sh ci_scripts/check_carplay_controller.sh` for the host-side controller timing and lifecycle regression check.
+For signed device builds, use your own Apple development team and unique bundle identifiers for all three targets. Update the Watch app's `WKCompanionAppBundleIdentifier` to match the iPhone app. You do not need access to the publisher's team.
+
+CarPlay is enabled by default for the published app's iPhone target. Set `MULTICAM_CARPLAY_ENABLED=NO` in the iPhone target's Build Settings or command-line build unless your own team and App ID have the Driving Task entitlement. Unsigned simulator builds can retain the default. See [CarPlay development](docs/carplay.md) for entitlement setup and testing; `sh ci_scripts/check_carplay_controller.sh` runs the host-side controller check without an entitlement or simulator.
 
 ## Hardware Reports
 
