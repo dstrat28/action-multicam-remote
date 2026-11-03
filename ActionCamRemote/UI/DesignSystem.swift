@@ -95,7 +95,12 @@ enum ACRDesign {
     static let insetCornerRadius: CGFloat = 12
 }
 
+enum ACRPreferences {
+    static let largerControls = "largerControls"
+}
+
 struct ACRPrimaryActionButton: View {
+    @AppStorage(ACRPreferences.largerControls) private var largerControls = false
     enum Appearance: Equatable {
         case filled
         case outlined
@@ -143,6 +148,7 @@ struct ACRPrimaryActionButton: View {
     var appearance: Appearance = .filled
     var showsTitle: Bool = true
     var minimumContentWidth: CGFloat? = nil
+    var fillsWidth = false
     var feedback: SensoryFeedback = .impact(weight: .medium)
     var action: () -> Void
     @State private var feedbackTrigger = 0
@@ -152,7 +158,7 @@ struct ACRPrimaryActionButton: View {
             action()
             feedbackTrigger += 1
         } label: {
-            HStack(spacing: 6) {
+            HStack(spacing: largerControls ? 10 : 6) {
                 if isLoading {
                     ProgressView()
                         .tint(contentColor)
@@ -167,11 +173,14 @@ struct ACRPrimaryActionButton: View {
                         .minimumScaleFactor(0.82)
                 }
             }
-            .font(size.font)
+            .font(largerControls ? .title3.weight(.semibold) : size.font)
             .fontDesign(.rounded)
             .foregroundStyle(contentColor)
-            .frame(minWidth: showsTitle ? (minimumContentWidth ?? size.minimumWidth) : nil)
-            .frame(width: showsTitle ? nil : size.height, height: size.height)
+            .frame(
+                minWidth: showsTitle ? (minimumContentWidth ?? size.minimumWidth) : nil,
+                maxWidth: fillsWidth && showsTitle ? .infinity : nil
+            )
+            .frame(width: showsTitle ? nil : controlHeight, height: controlHeight)
             .padding(.horizontal, showsTitle ? size.horizontalPadding : 0)
             .background(
                 buttonFill,
@@ -197,6 +206,10 @@ struct ACRPrimaryActionButton: View {
 
     private var isActive: Bool {
         isEnabled || isLoading
+    }
+
+    private var controlHeight: CGFloat {
+        largerControls ? (size == .large ? 76 : 64) : size.height
     }
 
     private var showsFilledTreatment: Bool {

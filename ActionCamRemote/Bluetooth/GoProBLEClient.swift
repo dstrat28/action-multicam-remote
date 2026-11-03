@@ -53,6 +53,8 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
     private var isProtocolReady = false
     private var reportedCaptureMode: CaptureMode?
     private var requestedCaptureMode: CaptureMode?
+    private var availablePresets: [GoProPreset]?
+    private var presetRequestDate: Date?
     private var hasRequestedHardwareInfo = false
     private var hasSentPairingComplete = false
     private var hasSentThirdPartyClientInfo = false
@@ -138,6 +140,8 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
         isProtocolReady = false
         reportedCaptureMode = nil
         requestedCaptureMode = nil
+        availablePresets = nil
+        presetRequestDate = nil
         hasRequestedHardwareInfo = false
         hasSentPairingComplete = false
         hasSentThirdPartyClientInfo = false
@@ -218,6 +222,19 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
             let result = writeCommand(.pressModeButton, label: command)
             scheduleStatusRefresh()
             return result
+        case let .loadGoProPreset(id, _):
+            guard isProtocolReady, !isCameraBusy else {
+                return result(for: command, status: .skipped, message: "Wait for the GoPro to finish its current operation before choosing a preset.")
+            }
+            guard let preset = availablePresets?.first(where: { $0.id == id }) else {
+                requestPresets()
+                return result(for: command, status: .skipped, message: "This preset is no longer available. Refreshing the GoPro preset list.")
+            }
+            let result = writeCommand(.loadPreset(preset.id), label: command)
+            if result.status == .sent { requestedCaptureMode = preset.mode }
+            scheduleStatusRefresh()
+            scheduleSettingRefresh()
+            return result
         case let .applySetting(setting):
             guard let settingsCharacteristic else {
                 return result(for: command, status: .skipped, message: "Settings characteristic is not ready yet.")
@@ -238,7 +255,7 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
         switch command {
         case .startRecording, .capturePhoto, .setMode, .cycleMode, .applySetting:
             true
-        case .stopRecording, .addHighlight, .toggleRecording, .keepAlive:
+        case .stopRecording, .addHighlight, .toggleRecording, .loadGoProPreset, .keepAlive:
             false
         }
     }
@@ -372,6 +389,7 @@ private extension GoProBLEClient {
         case pressModeButton
         case tagHilight
         case loadPresetGroup(UInt16)
+        case loadPreset(UInt32)
 
         var payload: Data {
             switch self {
@@ -394,6 +412,8 @@ private extension GoProBLEClient {
                     id: 0x3E,
                     parameterData: [GoProPacket.uint16(presetGroupID)]
                 )
+            case let .loadPreset(id):
+                GoProPresetProtocol.loadPayload(id: id)
             }
         }
     }
@@ -416,6 +436,8 @@ private extension GoProBLEClient {
         static let usbConnectedStatusID: UInt8 = 0x73
         static let flatModeStatusID: UInt8 = 0x59
         static let presetGroupStatusID: UInt8 = 0x60
+        static let presetStatusID: UInt8 = 0x61
+        static let presetModifiedStatusID: UInt8 = 0x62
         static let sdCardCapacityStatusID: UInt8 = 0x75
 
         static let videoResolutionSettingID: UInt8 = 0x02
@@ -443,6 +465,8 @@ private extension GoProBLEClient {
             usbConnectedStatusID,
             flatModeStatusID,
             presetGroupStatusID,
+            presetStatusID,
+            presetModifiedStatusID,
             sdCardCapacityStatusID
         ]
 
@@ -512,6 +536,19 @@ private extension GoProBLEClient {
             logMessage: "\(cameraName): GoPro request hardware info \(payload.hexString)"
         )
         hasRequestedHardwareInfo = true
+    }
+
+    func requestPresets() {
+        guard isProtocolReady, !isCameraBusy,
+              let queryCharacteristic, queryResponseCharacteristic?.isNotifying == true,
+              presetRequestDate.map({ Date().timeIntervalSince($0) >= 3 }) ?? true else { return }
+        let payload = GoProPresetProtocol.requestPayload
+        presetRequestDate = Date()
+        enqueueWrite(
+            GoProPacket.packetize(payload), to: queryCharacteristic,
+            logMessage: "\(cameraName): GoPro discover presets and subscribe to preset changes.",
+            coalesce: true
+        )
     }
 
     func sendThirdPartyClientInfoIfPossible() {
@@ -804,6 +841,23 @@ private extension GoProBLEClient {
     }
 
     func handleQueryResponse(_ payload: Data) {
+        if payload.starts(with: [0xF5, 0xF2]) {
+            presetRequestDate = nil
+            guard let presets = GoProPresetProtocol.presets(from: payload) else {
+                onLog("\(cameraName): ignored an incomplete or invalid GoPro preset list.")
+                return
+            }
+            availablePresets = presets
+            onCameraStatus(cameraID, CameraStatusUpdate(goProPresets: presets))
+            onLog("\(cameraName): discovered \(presets.count) GoPro presets.")
+            return
+        }
+        if GoProPresetProtocol.isNotification(payload) {
+            // Notifications may describe only changed groups. Fetch a complete
+            // list so deleting or reordering a preset cannot leave stale IDs.
+            requestPresets()
+            return
+        }
         guard payload.count >= 2, let responseID = payload.first else { return }
         guard responseID == GoProQuery.getStatusValues
             || responseID == GoProQuery.registerStatusUpdates
@@ -853,6 +907,13 @@ private extension GoProBLEClient {
 
             markProtocolReadyIfNeeded()
 
+            if let id = values[GoProQuery.presetStatusID]?.unsignedInteger {
+                update.activeGoProPresetID = id
+            }
+            if availablePresets == nil || (values[GoProQuery.presetModifiedStatusID]?.unsignedInteger ?? 0) != 0 {
+                requestPresets()
+            }
+
             if let flatMode = values[GoProQuery.flatModeStatusID],
                let mode = CaptureMode(goProFlatModeData: flatMode) {
                 update.currentMode = mode
@@ -869,6 +930,7 @@ private extension GoProBLEClient {
                 }
                 if didChangeMode {
                     requestSettingValues(shouldLog: false)
+                    requestPresets()
                 }
             }
 
@@ -894,7 +956,8 @@ private extension GoProBLEClient {
             }
         }
 
-        if update.recordingState != nil || update.currentMode != nil || update.telemetry != nil {
+        if update.recordingState != nil || update.currentMode != nil || update.telemetry != nil
+            || update.activeGoProPresetID != nil {
             onCameraStatus(cameraID, update)
         } else if responseID == GoProQuery.getStatusValues
             || responseID == GoProQuery.registerStatusUpdates
@@ -1192,7 +1255,7 @@ enum GoProPacket {
     }
 }
 
-private struct GoProPacketReassembler {
+struct GoProPacketReassembler {
     private var pendingMessage = Data()
     private var expectedLength: Int?
     private var expectedContinuationCounter: UInt8 = 0
