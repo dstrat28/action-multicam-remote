@@ -165,7 +165,9 @@ struct ACRPrimaryActionButton: View {
                 if isLoading {
                     ProgressView()
                         .tint(contentColor)
-                        .controlSize(.small)
+                        .controlSize(.regular)
+                        .scaleEffect(size == .large ? 1.25 : 1)
+                        .frame(width: size == .large ? 24 : 20, height: size == .large ? 24 : 20)
                 } else {
                     Image(systemName: systemImage)
                 }

@@ -141,12 +141,8 @@ private struct MulticamRecordBar: View {
     var body: some View {
         Group {
             if largerControls {
-                VStack(spacing: 12) {
-                    selectionLabel
-                        .frame(maxWidth: .infinity, alignment: .center)
-                    HStack(spacing: 12) {
-                        recordingControls
-                    }
+                HStack(spacing: 12) {
+                    recordingControls
                 }
             } else {
                 HStack(alignment: .center, spacing: 8) {
@@ -203,7 +199,7 @@ private struct MulticamRecordBar: View {
             systemImage: systemImage,
             tint: .acrRecord,
             isEnabled: isEnabled,
-            isLoading: isStarting || isPhotoCaptureInProgress,
+            isLoading: store.isStoppingMulticamRecording || isStarting || isPhotoCaptureInProgress,
             size: .large,
             minimumContentWidth: store.canStopMulticamRecording ? 124 : nil,
             fillsWidth: largerControls,
@@ -212,6 +208,9 @@ private struct MulticamRecordBar: View {
     }
 
     private var title: String {
+        if store.isStoppingMulticamRecording {
+            return "Stopping…"
+        }
         if isPhotoCaptureInProgress {
             return "Capturing"
         }
@@ -232,7 +231,7 @@ private struct MulticamRecordBar: View {
     }
 
     private var isEnabled: Bool {
-        store.canStopMulticamRecording || store.canStartMulticamRecording
+        store.isStoppingMulticamRecording || store.canStopMulticamRecording || store.canStartMulticamRecording
     }
 
     private var isStarting: Bool {

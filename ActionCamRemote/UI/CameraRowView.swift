@@ -1260,11 +1260,11 @@ private struct CameraRecordButton: View {
             title: title,
             systemImage: systemImage,
             tint: .acrRecord,
-            isEnabled: camera.primaryRecordCommand != nil,
-            isLoading: isConnectInProgress
+            isEnabled: store.isCameraStopping(camera) || camera.primaryRecordCommand != nil,
+            isLoading: store.isCameraStopping(camera) || isConnectInProgress
                 || camera.recordingState == .starting
                 || (camera.isInPhotoMode && camera.recordingState == .recording),
-            appearance: camera.recordingState == .recording && !camera.isInPhotoMode
+            appearance: store.isCameraStopping(camera) || (camera.recordingState == .recording && !camera.isInPhotoMode)
                 ? .filled
                 : .outlined,
             scalesWithLargerControls: false,
@@ -1275,6 +1275,9 @@ private struct CameraRecordButton: View {
     }
 
     private var title: String {
+        if store.isCameraStopping(camera) {
+            return "Stopping…"
+        }
         if isConnectInProgress {
             return "Connecting"
         }

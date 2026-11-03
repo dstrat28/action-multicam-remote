@@ -1645,6 +1645,50 @@ struct CameraStatusUpdate: Equatable {
     var activeGoProPresetID: UInt32? = nil
 }
 
+/// UI progress for Stop requests, separate from the camera's reported state.
+struct CameraStopProgress {
+    private struct Entry {
+        var resultID: UUID?
+        var expiresAt: TimeInterval
+    }
+    private var entries: [UUID: Entry] = [:]
+    var isEmpty: Bool { entries.isEmpty }
+
+    func contains(_ cameraID: UUID) -> Bool { entries[cameraID] != nil }
+
+    mutating func begin(_ cameraID: UUID, at now: TimeInterval, timeout: TimeInterval) {
+        guard entries[cameraID] == nil else { return }
+        entries[cameraID] = Entry(expiresAt: now + timeout)
+    }
+
+    mutating func attach(_ result: CameraCommandResult) {
+        guard result.command == .stopRecording, let entry = entries[result.cameraID] else { return }
+        // Rejecting a duplicate Stop must not replace the Stop already in flight.
+        guard result.status == .sent || result.status == .queued || entry.resultID == nil else { return }
+        entries[result.cameraID]?.resultID = result.id
+    }
+
+    @discardableResult
+    mutating func finish(_ cameraID: UUID, matching resultID: UUID? = nil) -> Bool {
+        guard let entry = entries[cameraID] else { return false }
+        if let resultID, entry.resultID != resultID { return false }
+        entries.removeValue(forKey: cameraID)
+        return true
+    }
+
+    @discardableResult
+    mutating func observe(_ cameraID: UUID, state: CameraRecordingState, canClearActiveRecording: Bool) -> Bool {
+        guard canClearActiveRecording, state == .stopped || state == .ready else { return false }
+        return finish(cameraID)
+    }
+
+    mutating func expire(at now: TimeInterval) -> [UUID] {
+        let expired = entries.filter { now >= $0.value.expiresAt }.map(\.key)
+        for id in expired { entries.removeValue(forKey: id) }
+        return expired
+    }
+}
+
 enum CameraRecordingStartPolicy {
     static func isLatestCaptureResult(_ result: CameraCommandResult, among results: [CameraCommandResult]) -> Bool {
         results.first {

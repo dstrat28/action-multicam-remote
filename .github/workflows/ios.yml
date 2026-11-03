@@ -71,6 +71,15 @@ jobs:
       - name: Check GoPro transport lifecycle
         run: sh ci_scripts/check_gopro_transport.sh
 
+      - name: Check recording Stop progress
+        run: |
+          xcrun swiftc -parse-as-library \
+            ActionCamRemote/Models/CameraModels.swift \
+            ActionCamRemote/Bluetooth/Insta360RemoteProtocol.swift \
+            Tests/CameraStopProgressRegression.swift \
+            -o "$RUNNER_TEMP/stop-progress-regression"
+          "$RUNNER_TEMP/stop-progress-regression"
+
       - name: Check saved command history and support attachment
         run: |
           xcrun swiftc -parse-as-library \
