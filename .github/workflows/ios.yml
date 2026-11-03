@@ -55,6 +55,9 @@ jobs:
             -o "$RUNNER_TEMP/insta360-x5-regression"
           "$RUNNER_TEMP/insta360-x5-regression"
 
+      - name: Check Insta360 heartbeat during UI tracking
+        run: sh ci_scripts/check_insta360_transport.sh
+
       - name: Check DJI command deadlines
         run: |
           xcrun swiftc -parse-as-library \

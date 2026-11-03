@@ -26,7 +26,7 @@ verified using subsequent status reads. Start requires a recent confirmed
 stopped state. Stop can replace an unsent Start; a transmitted Start is never
 automatically repeated. Unknown or stale state remains unknown.
 
-X5 uses a separate length-prefixed network frame, a `syNceNdinS` sync message at setup, and a two-second heartbeat. The X6 UCD2 envelope is never sent to X5. Optional X5 sync echoes do not acknowledge capture commands.
+X5 uses a separate length-prefixed network frame, a `syNceNdinS` sync message at setup, and a two-second heartbeat. The X6 UCD2 envelope is never sent to X5. Optional X5 sync echoes do not acknowledge capture commands. The transport timer runs in common run-loop modes so heartbeats and deadlines continue while the user scrolls or interacts with menus.
 
 Status is polled once per second when the previous request has finished.
 Battery/storage are refreshed every 30 seconds and expire after 75 seconds;

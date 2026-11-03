@@ -529,7 +529,7 @@ private struct PairingCameraRow: View {
     }
 
     private var showsInsta360PairingGuide: Bool {
-        camera.brand == .insta360
+        camera.usesInsta360GPSRemote
             && camera.isSupportedByApp
             && camera.connectionState != .connected
     }
@@ -539,10 +539,9 @@ private struct PairingCameraRow: View {
     }
 
     private var showsInitialPairingGuide: Bool {
-        camera.isSupportedByApp
-            && !camera.isPaired
-            && camera.connectionState != .connected
-            && (camera.brand == .gopro || camera.brand == .dji)
+        guard camera.isSupportedByApp, camera.connectionState != .connected else { return false }
+        if camera.behavior.kind == .insta360Direct { return true }
+        return !camera.isPaired && (camera.brand == .gopro || camera.brand == .dji)
     }
 
     private var initialPairingGuide: some View {
@@ -563,6 +562,9 @@ private struct PairingCameraRow: View {
     }
 
     private var initialPairingTitle: String {
+        if camera.behavior.kind == .insta360Direct {
+            return isConnecting ? "Connecting to your Insta360" : "Prepare your Insta360"
+        }
         if camera.brand == .gopro {
             return isConnecting ? "Complete Bluetooth pairing" : "Put your GoPro in pairing mode"
         }
@@ -570,6 +572,13 @@ private struct PairingCameraRow: View {
     }
 
     private var initialPairingInstructions: String {
+        if camera.behavior.kind == .insta360Direct {
+            if isConnecting {
+                return "Keep the camera awake with Bluetooth enabled and normal Video mode selected while Multicam connects."
+            }
+            let action = camera.isPaired ? "Connect" : "Pair"
+            return "Turn on your camera, enable Bluetooth, and select normal Video mode. Then tap \(action) here."
+        }
         if camera.brand == .gopro {
             if isConnecting {
                 return "If a Bluetooth pairing request appears, tap Pair."

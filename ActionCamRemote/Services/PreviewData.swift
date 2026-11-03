@@ -19,6 +19,14 @@ extension CameraStore {
             brand = .dji
             model = .djiOsmoNano
             name = "Osmo Nano"
+        } else if arguments.contains("--demo-insta360-x6") {
+            brand = .insta360
+            model = .insta360X6
+            name = "Insta360 X6"
+        } else if arguments.contains("--demo-insta360-x5") {
+            brand = .insta360
+            model = .insta360X5
+            name = "Insta360 X5"
         } else {
             brand = .insta360
             model = .insta360Go3
@@ -37,7 +45,8 @@ extension CameraStore {
             isPaired: isConnected,
             isSelected: isConnected,
             lastSeen: Date(),
-            isPairingAdvertisement: brand == .gopro ? !arguments.contains("--demo-gopro-not-pairing") : nil
+            isPairingAdvertisement: brand == .gopro ? !arguments.contains("--demo-gopro-not-pairing") : nil,
+            insta360UsesGPSRemoteFallback: model == .insta360X5 && arguments.contains("--demo-insta360-gps-fallback")
         )]
     }
 #endif

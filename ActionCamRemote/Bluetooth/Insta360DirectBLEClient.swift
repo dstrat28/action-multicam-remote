@@ -176,7 +176,7 @@ final class Insta360DirectBLEClient: NSObject, BLECameraDeviceClient {
         onStatus(cameraID, .connected, "Insta360 \(self.profile.name) direct Bluetooth ready. Use normal Video mode on the camera.")
         session.begin(at: ProcessInfo.processInfo.systemUptime)
         setupBeganAt = ProcessInfo.processInfo.systemUptime
-        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
             guard let self else { return }
             let now = ProcessInfo.processInfo.systemUptime
             if self.session.mayUseGPSRemoteFallback, now - (self.setupBeganAt ?? now) >= 10 {
@@ -185,6 +185,8 @@ final class Insta360DirectBLEClient: NSObject, BLECameraDeviceClient {
             }
             self.session.tick(at: now)
         }
+        self.timer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     func peripheral(_ peripheral: CBPeripheral, didWriteValueFor characteristic: CBCharacteristic, error: Error?) {

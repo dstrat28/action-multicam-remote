@@ -14,6 +14,7 @@ public struct CBCharacteristicProperties: OptionSet {
     public static let write = Self(rawValue: 1)
     public static let notify = Self(rawValue: 2)
     public static let indicate = Self(rawValue: 4)
+    public static let writeWithoutResponse = Self(rawValue: 8)
 }
 
 public enum CBCharacteristicWriteType { case withResponse, withoutResponse }
@@ -40,6 +41,7 @@ public final class CBPeripheral {
     public var state = CBPeripheralState.connected
     public var services: [CBService]?
     public var maximumLength = 20
+    public var canSendWriteWithoutResponse = true
     public private(set) var writes: [Write] = []
     public init() {}
     public func discoverServices(_ services: [CBUUID]?) {}
