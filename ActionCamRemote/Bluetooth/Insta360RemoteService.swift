@@ -1036,6 +1036,7 @@ private extension Insta360RemoteService {
         var status = recordingStatusByCameraID[cameraID] ?? Insta360RemoteRecordingStatus()
         let changed = status.observeTimer(at: Date())
         recordingStatusByCameraID[cameraID] = status
+        guard !status.awaitingStopFeedback else { return }
         onEvent?(.cameraStatus(cameraID, CameraStatusUpdate(recordingState: .recording)))
         if changed {
             let name = cameraNamesByID[cameraID] ?? "Insta360 camera"
@@ -1045,13 +1046,15 @@ private extension Insta360RemoteService {
 
     func startStatusTimerIfNeeded() {
         guard statusTimer == nil else { return }
-        statusTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in
             let now = Date()
             self?.expireRecordingTimers(now: now)
             // Expire unsent toggles even if CoreBluetooth stays busy. Retry
             // transmission only after peripheralManagerIsReady is delivered.
             self?.discardInvalidPendingCommands(now: now)
         }
+        statusTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
     }
 
     func expireRecordingTimers(now: Date = Date()) {
@@ -1060,7 +1063,7 @@ private extension Insta360RemoteService {
             recordingStatusByCameraID[cameraID] = status
             onEvent?(.cameraStatus(cameraID, CameraStatusUpdate(recordingState: .unknown)))
             let name = cameraNamesByID[cameraID] ?? "Insta360 camera"
-            onEvent?(.log("\(name): recording timer packets stopped arriving; recording status is unknown."))
+            onEvent?(.log("\(name): recording feedback expired; recording status is unknown."))
         }
     }
 

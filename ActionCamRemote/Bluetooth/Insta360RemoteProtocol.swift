@@ -39,13 +39,20 @@ struct Insta360RemoteRecordingStatus {
     private(set) var revision = 0
     private(set) var lastTimerAt: Date?
     private var awaitingFeedbackSince: Date?
-    private var awaitingStopFeedback = false
+    private(set) var awaitingStopFeedback = false
 
     func rejectionReason(for command: CameraCommand) -> String? {
         if awaitingFeedbackSince != nil {
             switch command {
             case .startRecording, .stopRecording, .capturePhoto, .toggleRecording:
                 return "Waiting for camera feedback from the previous Insta360 shutter press. No second toggle was sent."
+            default: break
+            }
+        }
+        if state == .unknown, lastTimerAt != nil {
+            switch command {
+            case .startRecording, .capturePhoto, .toggleRecording:
+                return "The camera may still be recording; wait for updated camera feedback before another shutter press."
             default: break
             }
         }
@@ -86,10 +93,18 @@ struct Insta360RemoteRecordingStatus {
               now.timeIntervalSince(lastObservation) > Insta360RemoteProtocol.recordingStatusTimeout else {
             return false
         }
-        self.lastTimerAt = nil
+        // The Stop gate and timer freshness have separate deadlines. Retain
+        // recent evidence to block Start/photo/toggle, without allowing another
+        // Stop until a new timer arrives after this gate ends.
+        let hasRecentStopTimer = awaitingStopFeedback && lastTimerAt.map {
+            let age = now.timeIntervalSince($0)
+            return age >= 0 && age <= Insta360RemoteProtocol.recordingStatusTimeout
+        } == true
+        if !hasRecentStopTimer { self.lastTimerAt = nil }
         awaitingFeedbackSince = nil
         awaitingStopFeedback = false
-        // Silence can mean stopped recording, lost traffic, or a suspended app.
+        // Expiry cannot distinguish stopped recording from lost traffic or a
+        // suspended app; pre-expiry timers cannot settle the Stop request.
         // The GPS Remote protocol does not give us an authoritative stop event.
         state = .unknown
         revision += 1

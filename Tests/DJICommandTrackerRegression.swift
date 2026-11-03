@@ -52,6 +52,70 @@ enum DJICommandTrackerRegression {
                      "A late Start acknowledgement must not restore Starting after a newer Stop")
         _ = tracker.removeAll()
         precondition(!tracker.isLatestCapture(sequence: 201))
-        print("DJI command lifecycle checks passed: delivery deadlines, sequence/type matching, rejection, Stop priority, and disconnect cleanup.")
+        checkStopFailureRecovery()
+        print("DJI command lifecycle checks passed: deadlines, response correlation, Stop recovery, supersession, and disconnect cleanup.")
+    }
+
+    private static func checkStopFailureRecovery() {
+        let id = UUID()
+        func result(_ command: CameraCommand, status: CameraCommandStatus = .sent) -> CameraCommandResult {
+            CameraCommandResult(cameraID: id, cameraName: "DJI test", command: command,
+                status: status, message: "Requested", timestamp: Date())
+        }
+        func action(_ failure: CameraCommandResult, brand: CameraBrand = .dji,
+                    results: [CameraCommandResult]? = nil, pendingStart: Bool = false,
+                    disconnected: Bool = false) -> CameraCommandFailureAction {
+            CameraCommandFailurePolicy.action(for: failure, brand: brand, among: results ?? [failure],
+                hasPendingExplicitStart: pendingStart, userDisconnected: disconnected)
+        }
+
+        for wasSent in [false, true] {
+            var tracker = DJICommandTracker()
+            let stop = result(.stopRecording)
+            tracker.register(sequence: 1, commandID: 3, result: stop, at: 0)
+            if wasSent { tracker.didSend(sequence: 1, at: 0) }
+            let expired = tracker.expire(at: wasSent ? 3 : 5)
+            precondition(expired.count == 1)
+            let failure = tracker.completed(expired[0], status: .failed, message: "Timed out")
+            precondition(failure.id == stop.id && failure.command == .stopRecording)
+            precondition(action(failure) == .reconnectToStop,
+                "Queued and delivered Stop timeouts must preserve Stop for reconnect")
+            precondition(!tracker.canSend(sequence: 1, at: 10), "Transport must not replay the expired write")
+        }
+
+        var tracker = DJICommandTracker()
+        tracker.register(sequence: 2, commandID: 3, result: result(.stopRecording), at: 0)
+        tracker.didSend(sequence: 2, at: 0)
+        let rejected = tracker.acknowledge(sequence: 2, commandID: 3, returnCode: 1, at: 1)!
+        precondition(action(rejected) == .reconnectToStop)
+        tracker.register(sequence: 3, commandID: 3, result: result(.stopRecording), at: 0)
+        let abandoned = tracker.removeAll()[0]
+        precondition(action(tracker.completed(abandoned, status: .failed, message: "Disconnected")) == .reconnectToStop)
+
+        let failure = result(.stopRecording, status: .failed)
+        for newerCommand in [CameraCommand.startRecording, .capturePhoto, .toggleRecording, .stopRecording] {
+            precondition(action(failure, results: [result(newerCommand), failure]) == .ignore,
+                "A late Stop failure cannot replace a newer capture intent")
+        }
+        precondition(action(failure, pendingStart: true) == .ignore,
+            "An explicit Start preparing Video mode supersedes Stop before its result exists")
+        precondition(action(failure, disconnected: true) == .ignore,
+            "A disconnect callback must not undo the user's Disconnect request")
+        var otherCamera = result(.startRecording)
+        otherCamera.cameraID = UUID()
+        precondition(action(failure, results: [otherCamera, failure]) == .reconnectToStop)
+        precondition(action(failure, results: []) == .ignore)
+
+        for brand in [CameraBrand.gopro, .insta360, .unknown] {
+            precondition(action(failure, brand: brand) == .report, "Only DJI explicit Stop is eligible for recovery")
+        }
+        for command in [CameraCommand.startRecording, .capturePhoto, .toggleRecording, .setMode(.video)] {
+            precondition(action(result(command, status: .failed)) != .reconnectToStop,
+                "Uncertain Start/photo/toggle/mode commands must never replay")
+        }
+        for status in [CameraCommandStatus.sent, .queued, .skipped, .unsupported] {
+            precondition(action(result(.stopRecording, status: status)) != .reconnectToStop,
+                "Accepted or cancelled Stop results must not start recovery")
+        }
     }
 }
