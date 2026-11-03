@@ -445,8 +445,6 @@ private struct PairingCameraRow: View {
     @State private var proposedName = ""
     var camera: DiscoveredCamera
     private let actionContentHeight: CGFloat = 20
-    private let connectionActionContentWidth: CGFloat = 82
-    private let pairRemovalActionContentWidth: CGFloat = 62
     private let cameraInfoLeadingInset: CGFloat = 50
 
     var body: some View {
@@ -479,13 +477,13 @@ private struct PairingCameraRow: View {
                     Button {
                         store.connect(camera)
                     } label: {
-                        actionLabel("Pair", width: pairRemovalActionContentWidth)
+                        actionLabel(isConnecting ? "Connecting…" : "Pair")
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(Color.acrAvailable)
                     .controlSize(.small)
                     .fixedSize()
-                    .disabled(camera.connectionState == .connecting || camera.needsGoProPairingMode)
+                    .disabled(isConnecting || camera.needsGoProPairingMode)
                 }
             }
 
@@ -649,22 +647,15 @@ private struct PairingCameraRow: View {
     @ViewBuilder
     private var pairedCameraActions: some View {
         HStack(spacing: 6) {
-            if canDisconnect {
-                Button {
-                    store.disconnect(camera)
-                } label: {
-                    actionLabel("Disconnect", width: connectionActionContentWidth)
-                }
-                .buttonStyle(.bordered)
-                .tint(.red)
-            } else if camera.canConnectFromCurrentState {
+            if isConnecting || camera.canConnectFromCurrentState {
                 Button {
                     store.connectAvailableCamera(camera)
                 } label: {
-                    actionLabel("Connect", width: connectionActionContentWidth)
+                    actionLabel(isConnecting ? "Connecting…" : "Connect")
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Color.acrAvailable)
+                .disabled(isConnecting)
             }
 
             Menu {
@@ -677,6 +668,17 @@ private struct PairingCameraRow: View {
                         .foregroundStyle(Color.acrInk)
                 }
                 .tint(Color.acrInk)
+
+                if canDisconnect {
+                    Button {
+                        store.disconnect(camera)
+                    } label: {
+                        Label("Disconnect Camera", systemImage: "xmark.circle")
+                            .symbolRenderingMode(.monochrome)
+                            .foregroundStyle(Color.acrInk)
+                    }
+                    .tint(Color.acrInk)
+                }
 
                 Button(role: .destructive) {
                     store.remove(camera)
@@ -703,14 +705,10 @@ private struct PairingCameraRow: View {
         .fixedSize()
     }
 
-    private func actionLabel(
-        _ title: String,
-        width: CGFloat
-    ) -> some View {
+    private func actionLabel(_ title: String) -> some View {
         Text(title)
             .lineLimit(1)
-            .minimumScaleFactor(0.8)
-            .frame(width: width, height: actionContentHeight)
+            .frame(height: actionContentHeight)
     }
 
     private var pairingDetail: String? {

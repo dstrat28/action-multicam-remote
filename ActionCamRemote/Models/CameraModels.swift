@@ -359,7 +359,7 @@ enum CameraConnectionState: Equatable, Codable {
         case .discovered:
             "Available"
         case .connecting:
-            "Connecting"
+            "Connecting…"
         case .connected:
             "Connected"
         case .disconnected:
