@@ -19,6 +19,8 @@ final class CameraStore {
         }
     }
     var commandResults: [CameraCommandResult] = []
+    private(set) var commandHistory: [CameraCommandResult] = []
+    private(set) var commandHistoryStorageError: String?
     var eventLog: [String] = []
     var logStorageError: String?
     var isScanning = false
@@ -30,6 +32,9 @@ final class CameraStore {
 
     @ObservationIgnored private let scanner: BLECameraScanner
     @ObservationIgnored private let logArchive: DiagnosticLogArchive
+    @ObservationIgnored private let commandArchive: CommandResultArchive
+    @ObservationIgnored private var commandHistoryGeneration: UInt64 = 0
+    @ObservationIgnored private var commandHistoryRevision: UInt64 = 0
     @ObservationIgnored private var insta360Remote: Insta360RemoteService?
     @ObservationIgnored private let phoneGPSProvider = PhoneGPSProvider()
     @ObservationIgnored private let recordingLiveActivityController = RecordingLiveActivityController()
@@ -106,6 +111,9 @@ final class CameraStore {
         self.scanner = scanner
         let resolvedDemoMode = demoMode ?? ProcessInfo.processInfo.shouldUseCameraDemoMode
         logArchive = DiagnosticLogArchive(directory: resolvedDemoMode ? nil : DiagnosticLogArchive.defaultDirectory)
+        commandArchive = CommandResultArchive(directory: resolvedDemoMode ? nil : DiagnosticLogArchive.defaultDirectory)
+        commandHistory = commandArchive.initialSnapshot.results
+        commandHistoryStorageError = commandArchive.initialSnapshot.storageError
         eventLog = logArchive.initialSnapshot.entries.suffix(1_000).reversed().map(\.formattedLine)
         logStorageError = logArchive.initialSnapshot.storageError
         isDemoMode = resolvedDemoMode
@@ -275,6 +283,7 @@ final class CameraStore {
         let taskID = UIApplication.shared.beginBackgroundTask(withName: "Save diagnostic logs")
         Task {
             _ = await logArchive.snapshot()
+            _ = await commandArchive.snapshot()
             if taskID != .invalid {
                 UIApplication.shared.endBackgroundTask(taskID)
             }
@@ -282,24 +291,31 @@ final class CameraStore {
     }
 
     func exportDiagnostics() async throws -> URL {
-        try await logArchive.export(context: diagnosticsSummary)
+        let commands = await commandArchive.snapshot()
+        return try await logArchive.export(context: diagnosticsContext + "\n\n" + commands.reportSection)
     }
 
-    private var diagnosticsSummary: String {
-        var sections: [String] = [diagnosticsContext]
-
-        if !commandResults.isEmpty {
-            sections.append(
-                (
-                    ["Command Results"]
-                        + commandResults.prefix(20).map { result in
-                            "\(result.timestamp.ISO8601Format(.init(includingFractionalSeconds: true))) \(result.cameraName) \(result.command.label) [\(result.status.rawValue)]: \(result.message)"
-                        }
-                ).joined(separator: "\n")
-            )
+    func resetCommandHistory() {
+        commandHistoryGeneration += 1
+        let generation = commandHistoryGeneration
+        commandHistory.removeAll()
+        commandArchive.clear { [weak self] snapshot in
+            Task { @MainActor in self?.applyCommandHistory(snapshot, generation: generation) }
         }
+    }
 
-        return sections.joined(separator: "\n\n")
+    private func recordCommandHistory(_ result: CameraCommandResult) {
+        let generation = commandHistoryGeneration
+        commandArchive.record(result) { [weak self] snapshot in
+            Task { @MainActor in self?.applyCommandHistory(snapshot, generation: generation) }
+        }
+    }
+
+    private func applyCommandHistory(_ snapshot: CommandResultSnapshot, generation: UInt64) {
+        guard generation == commandHistoryGeneration, snapshot.revision >= commandHistoryRevision else { return }
+        commandHistoryRevision = snapshot.revision
+        commandHistory = snapshot.results
+        commandHistoryStorageError = snapshot.storageError
     }
 
     private var diagnosticsContext: String {
@@ -1002,6 +1018,17 @@ final class CameraStore {
 
         send(.keepAlive, to: [camera])
     }
+
+    func loadGoProPreset(_ preset: GoProPreset, for camera: DiscoveredCamera) {
+        guard let current = cameras.first(where: { $0.id == camera.id }),
+              current.brand == .gopro, current.canSwitchCaptureMode,
+              current.goProPresets?.contains(preset) == true, preset.mode != nil else { return }
+        cancelStartRecording(for: current.id)
+        cancelVideoModeSwitch(for: current.id)
+        appendLog("\(current.name): loading GoPro preset \(preset.name).")
+        setCameraDiagnostic("Switching to \(preset.name) preset.", for: current)
+        send(.loadGoProPreset(id: preset.id, name: preset.name), to: [current])
+    }
 }
 
 private extension CameraStore {
@@ -1059,6 +1086,7 @@ private extension CameraStore {
             } else {
                 commandResults.insert(result, at: 0)
             }
+            recordCommandHistory(result)
             // A discarded older toggle must not reset a newer user action.
             if commandResults.first(where: { $0.cameraID == result.cameraID })?.id == result.id,
                let camera = cameras.first(where: { $0.id == result.cameraID }) {
@@ -2631,22 +2659,22 @@ private extension CameraStore {
             if camera.brand == .insta360 {
                 let result = insta360RemoteService().send(command, to: camera.id, cameraName: camera.name)
                 commandResults.insert(result, at: 0)
+                recordCommandHistory(result)
                 handleCommandResult(result, for: camera)
                 continue
             }
 
             guard let client = clients[camera.id] else {
-                commandResults.insert(
-                    CameraCommandResult(
-                        cameraID: camera.id,
-                        cameraName: camera.name,
-                        command: command,
-                        status: .skipped,
-                        message: "Connect this camera before sending commands.",
-                        timestamp: Date()
-                    ),
-                    at: 0
+                let result = CameraCommandResult(
+                    cameraID: camera.id,
+                    cameraName: camera.name,
+                    command: command,
+                    status: .skipped,
+                    message: "Connect this camera before sending commands.",
+                    timestamp: Date()
                 )
+                commandResults.insert(result, at: 0)
+                recordCommandHistory(result)
                 if command == .startRecording {
                     queueStartRecording(for: camera, reason: "No active BLE client.")
                     scheduleReconnect(
@@ -2665,6 +2693,7 @@ private extension CameraStore {
 
             let result = client.send(command)
             commandResults.insert(result, at: 0)
+            recordCommandHistory(result)
             handleCommandResult(result, for: camera)
         }
     }
@@ -2673,6 +2702,7 @@ private extension CameraStore {
         if let index = commandResults.firstIndex(where: { $0.id == result.id }) {
             commandResults[index] = result
         }
+        recordCommandHistory(result)
         guard result.status != .sent, result.status != .queued,
               CameraRecordingStartPolicy.isLatestCaptureResult(result, among: commandResults),
               let camera = cameras.first(where: { $0.id == result.cameraID }) else { return }
@@ -2702,9 +2732,11 @@ private extension CameraStore {
             return
         }
 
-        if wasSent, case .setMode = result.command,
-           let index = cameras.firstIndex(where: { $0.id == camera.id }) {
-            cameras[index].telemetry?.clearCaptureSettings()
+        if wasSent, let index = cameras.firstIndex(where: { $0.id == camera.id }) {
+            switch result.command {
+            case .setMode, .loadGoProPreset: cameras[index].telemetry?.clearCaptureSettings()
+            default: break
+            }
         }
 
         if !wasSent, result.command == .capturePhoto {
@@ -2754,7 +2786,7 @@ private extension CameraStore {
             reconnectTasksByCameraID[camera.id]?.cancel()
             reconnectTasksByCameraID[camera.id] = nil
             updateCameraStatus(camera.id, update: CameraStatusUpdate(recordingState: .stopped))
-        case .setMode:
+        case .setMode, .loadGoProPreset:
             break
         case .addHighlight, .toggleRecording, .cycleMode, .applySetting, .keepAlive:
             break
@@ -2774,7 +2806,7 @@ private extension CameraStore {
                 isSupportedDJIDemoCommand = camera.supportsHighlight
             case let .setMode(mode):
                 isSupportedDJIDemoCommand = camera.availableCaptureModes.contains(mode)
-            case .toggleRecording, .cycleMode, .applySetting, .keepAlive:
+            case .toggleRecording, .loadGoProPreset, .cycleMode, .applySetting, .keepAlive:
                 isSupportedDJIDemoCommand = false
             }
 
@@ -2786,21 +2818,17 @@ private extension CameraStore {
                 message = "Simulated \(command.label.lowercased()) in demo mode."
             }
 
-            commandResults.insert(
-                {
-                    let result = CameraCommandResult(
-                        cameraID: camera.id,
-                        cameraName: camera.name,
-                        command: command,
-                        status: status,
-                        message: message,
-                        timestamp: Date()
-                    )
-                    updateDemoState(from: result)
-                    return result
-                }(),
-                at: 0
+            let result = CameraCommandResult(
+                cameraID: camera.id,
+                cameraName: camera.name,
+                command: command,
+                status: status,
+                message: message,
+                timestamp: Date()
             )
+            updateDemoState(from: result)
+            commandResults.insert(result, at: 0)
+            recordCommandHistory(result)
         }
 
         appendLog("Demo command: \(command.label) sent to \(cameras.count) cameras.")
@@ -2821,6 +2849,12 @@ private extension CameraStore {
         case .toggleRecording:
             cameras[index].recordingState = cameras[index].recordingState == .recording ? .stopped : .recording
         case let .setMode(mode):
+            cameras[index].currentMode = mode
+            cameras[index].telemetry = Self.demoTelemetry(for: cameras[index], mode: mode)
+        case let .loadGoProPreset(id, _):
+            guard let preset = cameras[index].goProPresets?.first(where: { $0.id == id }),
+                  let mode = preset.mode else { return }
+            cameras[index].activeGoProPresetID = id
             cameras[index].currentMode = mode
             cameras[index].telemetry = Self.demoTelemetry(for: cameras[index], mode: mode)
         case .cycleMode:
@@ -2936,6 +2970,13 @@ private extension CameraStore {
 
         if let currentMode = update.currentMode {
             cameras[index].currentMode = currentMode
+        }
+
+        if let presets = update.goProPresets {
+            cameras[index].goProPresets = presets
+        }
+        if let id = update.activeGoProPresetID {
+            cameras[index].activeGoProPresetID = id
         }
 
         if let currentMode = update.currentMode, currentMode != previousCaptureMode {
@@ -3087,6 +3128,10 @@ private extension CameraStore {
         }
         let appliedState = appliedConnectionState(for: cameras[index], requestedState: requestedState)
         cameras[index].connectionState = appliedState
+        if appliedState != .connected {
+            cameras[index].goProPresets = nil
+            cameras[index].activeGoProPresetID = nil
+        }
 
         switch appliedState {
         case .connected:
@@ -3369,6 +3414,8 @@ private extension CameraStore {
                 camera.lastConnectableSeen = nil
                 camera.advertisementAwake = nil
                 camera.telemetry = nil
+                camera.goProPresets = nil
+                camera.activeGoProPresetID = nil
                 return camera
             }
             appendLog("Loaded \(cameras.count) remembered cameras.")
@@ -3420,6 +3467,8 @@ private extension CameraStore {
             copy.lastConnectableSeen = nil
             copy.advertisementAwake = nil
             copy.telemetry = nil
+            copy.goProPresets = nil
+            copy.activeGoProPresetID = nil
             return copy
         }
 

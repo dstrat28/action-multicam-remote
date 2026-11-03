@@ -2,6 +2,7 @@ import SwiftUI
 
 struct CameraRowView: View {
     @Environment(CameraStore.self) private var store
+    @AppStorage(ACRPreferences.largerControls) private var largerControls = false
     @State private var pendingCaptureMode: CaptureMode?
     @State private var captureSettingsTimestampBeforeModeChange: Date?
     var camera: DiscoveredCamera
@@ -22,25 +23,34 @@ struct CameraRowView: View {
                 onShowDetails()
             }
             .padding(.horizontal, 16)
-            .padding(.top, isReadyConnected ? 10 : 9)
-            .padding(.bottom, isReadyConnected ? 10 : 13)
+            .padding(.top, 8)
+            .padding(.bottom, 12)
 
             if showsCaptureBar {
                 Divider()
                     .overlay(Color.acrLine.opacity(0.58))
                     .padding(.horizontal, 16)
 
-                HStack(spacing: 10) {
-                    captureModeAndSettings
-
-                    Spacer(minLength: 4)
-
-                    if camera.isPaired, camera.supportsBatchRecord {
-                        CameraRecordButton(camera: camera)
+                Group {
+                    if largerControls {
+                        VStack(alignment: .leading, spacing: 12) {
+                            captureModeAndSettings
+                            if camera.isPaired, camera.supportsBatchRecord {
+                                CameraRecordButton(camera: camera, fillsWidth: true)
+                            }
+                        }
+                    } else {
+                        HStack(spacing: 10) {
+                            captureModeAndSettings
+                            Spacer(minLength: 4)
+                            if camera.isPaired, camera.supportsBatchRecord {
+                                CameraRecordButton(camera: camera)
+                            }
+                        }
                     }
                 }
                 .padding(.horizontal, 16)
-                .padding(.vertical, 8)
+                .padding(.vertical, 12)
             }
         }
         .frame(
@@ -104,9 +114,13 @@ struct CameraRowView: View {
             store.toggleSelection(for: camera)
         } label: {
             Image(systemName: camera.isSelected ? "checkmark.circle.fill" : "circle")
-                .font(.title2)
+                .font(largerControls ? .largeTitle : .title2)
                 .foregroundStyle(selectionColor)
-                .frame(width: 44, height: 44, alignment: .trailing)
+                .frame(
+                    width: largerControls ? 60 : 44,
+                    height: largerControls ? 60 : 44,
+                    alignment: largerControls ? .center : .trailing
+                )
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -191,7 +205,6 @@ struct CameraRowView: View {
                     .frame(width: 18, height: 30)
             }
         }
-        .padding(.leading, 6)
     }
 
     private var connectionIndicatorColor: Color {
@@ -231,16 +244,27 @@ struct CameraRowView: View {
                 captureModeLabel(showsChevron: true)
                     .overlay {
                         Menu {
-                            ForEach(camera.availableCaptureModes) { mode in
-                                Button {
-                                    guard mode != displayedCaptureMode else { return }
-                                    setPendingCaptureMode(mode)
-                                    store.switchMode(mode, for: camera)
-                                } label: {
-                                    if mode == displayedCaptureMode {
-                                        Label(mode.displayName(for: camera.model), systemImage: "checkmark")
-                                    } else {
-                                        Text(mode.displayName(for: camera.model))
+                            if selectableGoProPresets.isEmpty {
+                                captureModeButtons
+                            } else {
+                                ForEach(camera.availableCaptureModes) { mode in
+                                    let presets = selectableGoProPresets.filter { $0.mode == mode }
+                                    if !presets.isEmpty {
+                                        Section(mode.displayName(for: camera.model)) {
+                                            ForEach(presets) { preset in
+                                                Button {
+                                                    guard preset.id != camera.activeGoProPresetID else { return }
+                                                    setPendingCaptureMode(nil)
+                                                    store.loadGoProPreset(preset, for: camera)
+                                                } label: {
+                                                    if preset.id == camera.activeGoProPresetID {
+                                                        Label(preset.name, systemImage: "checkmark")
+                                                    } else {
+                                                        Text(preset.name)
+                                                    }
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -250,7 +274,7 @@ struct CameraRowView: View {
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                                 .contentShape(Capsule())
                                 .accessibilityLabel("Capture mode for \(camera.displayName)")
-                                .accessibilityHint("Changes the capture mode")
+                                .accessibilityHint("Changes the capture mode or camera preset")
                         }
                         .buttonStyle(.plain)
                     }
@@ -261,6 +285,34 @@ struct CameraRowView: View {
         }
         .frame(width: captureControlWidth, alignment: .leading)
         .layoutPriority(1)
+    }
+
+    private var selectableGoProPresets: [GoProPreset] {
+        guard camera.brand == .gopro else { return [] }
+        return (camera.goProPresets ?? []).filter { $0.mode != nil }
+    }
+
+    private var activeGoProPreset: GoProPreset? {
+        guard pendingCaptureMode == nil else { return nil }
+        return selectableGoProPresets.first {
+            $0.id == camera.activeGoProPresetID && $0.mode == camera.currentMode
+        }
+    }
+
+    private var captureModeButtons: some View {
+        ForEach(camera.availableCaptureModes) { mode in
+            Button {
+                guard mode != displayedCaptureMode else { return }
+                setPendingCaptureMode(mode)
+                store.switchMode(mode, for: camera)
+            } label: {
+                if mode == displayedCaptureMode {
+                    Label(mode.displayName(for: camera.model), systemImage: "checkmark")
+                } else {
+                    Text(mode.displayName(for: camera.model))
+                }
+            }
+        }
     }
 
     private func captureModeLabel(
@@ -274,7 +326,7 @@ struct CameraRowView: View {
                 .foregroundStyle(Color.acrAvailable)
                 .accessibilityHidden(showsChevron)
 
-            Text(resolvedMode?.displayName(for: camera.model) ?? "Choose Mode")
+            Text(activeGoProPreset?.name ?? resolvedMode?.displayName(for: camera.model) ?? "Choose Mode")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(Color.acrInk)
                 .lineLimit(1)
@@ -290,7 +342,7 @@ struct CameraRowView: View {
             }
         }
         .padding(.horizontal, showsChevron ? 10 : 0)
-        .frame(height: 30)
+        .frame(height: largerControls ? 48 : 30)
         .fixedSize(horizontal: true, vertical: false)
         .background {
             if showsChevron {
@@ -1168,6 +1220,7 @@ private struct CameraTelemetryDetailSection: View {
 private struct CameraRecordButton: View {
     @Environment(CameraStore.self) private var store
     var camera: DiscoveredCamera
+    var fillsWidth = false
 
     var body: some View {
         ACRPrimaryActionButton(
@@ -1181,6 +1234,7 @@ private struct CameraRecordButton: View {
             appearance: camera.recordingState == .recording && !camera.isInPhotoMode
                 ? .filled
                 : .outlined,
+            fillsWidth: fillsWidth,
             action: performRecordAction
         )
     }
@@ -1207,7 +1261,7 @@ private struct CameraRecordButton: View {
             store.startRecording(camera)
         case .stopRecording:
             store.stopRecording(camera)
-        case .addHighlight, .toggleRecording, .setMode, .cycleMode, .applySetting, .keepAlive, nil:
+        case .addHighlight, .toggleRecording, .setMode, .loadGoProPreset, .cycleMode, .applySetting, .keepAlive, nil:
             break
         }
     }

@@ -32,6 +32,10 @@ struct GoProCommandQueue<Write> {
             if Self.canStartCapture(deferredCommand) { deferredCommand = nil }
             entries.removeAll { Self.canStartCapture($0.command) }
             startRequestedAt = nil
+        } else if case .loadGoProPreset = command {
+            if Self.isReplacedByPreset(deferredCommand) { deferredCommand = nil }
+            entries.removeAll { Self.isReplacedByPreset($0.command) }
+            startRequestedAt = nil
         }
     }
 
@@ -101,6 +105,13 @@ struct GoProCommandQueue<Write> {
     private static func canStartCapture(_ command: CameraCommand?) -> Bool {
         switch command {
         case .startRecording, .capturePhoto, .toggleRecording: true
+        default: false
+        }
+    }
+
+    private static func isReplacedByPreset(_ command: CameraCommand?) -> Bool {
+        switch command {
+        case .startRecording, .capturePhoto, .toggleRecording, .setMode, .cycleMode, .loadGoProPreset: true
         default: false
         }
     }
