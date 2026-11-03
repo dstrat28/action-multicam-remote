@@ -667,48 +667,27 @@ private struct PairingCameraRow: View {
                 .disabled(isConnecting)
             }
 
-            Menu {
-                Button {
-                    proposedName = camera.displayName
+            CameraManagementMenu(
+                configuration: .init(
+                    cameraID: camera.id,
+                    displayName: camera.displayName,
+                    canDisconnect: canDisconnect
+                ),
+                onRename: {
+                    guard let current = store.cameras.first(where: { $0.id == camera.id }) else { return }
+                    proposedName = current.displayName
                     isRenaming = true
-                } label: {
-                    Label("Rename Camera", systemImage: "pencil")
-                        .symbolRenderingMode(.monochrome)
-                        .foregroundStyle(Color.acrInk)
+                },
+                onDisconnect: {
+                    guard let current = store.cameras.first(where: { $0.id == camera.id }) else { return }
+                    store.disconnect(current)
+                },
+                onUnpair: {
+                    guard let current = store.cameras.first(where: { $0.id == camera.id }) else { return }
+                    store.remove(current)
                 }
-                .tint(Color.acrInk)
-
-                if canDisconnect {
-                    Button {
-                        store.disconnect(camera)
-                    } label: {
-                        Label("Disconnect Camera", systemImage: "xmark.circle")
-                            .symbolRenderingMode(.monochrome)
-                            .foregroundStyle(Color.acrInk)
-                    }
-                    .tint(Color.acrInk)
-                }
-
-                Button(role: .destructive) {
-                    store.remove(camera)
-                } label: {
-                    Label("Unpair Camera", systemImage: "trash")
-                        .symbolRenderingMode(.monochrome)
-                        .foregroundStyle(.red)
-                }
-                .tint(.red)
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.subheadline.weight(.semibold))
-                    .symbolRenderingMode(.monochrome)
-                    .foregroundStyle(Color.acrMutedText)
-                    .frame(width: 16, height: actionContentHeight)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .fixedSize()
-            .accessibilityLabel("More options for \(camera.displayName)")
+            )
+            .equatable()
         }
         .controlSize(.small)
         .fixedSize()
@@ -723,6 +702,63 @@ private struct PairingCameraRow: View {
     private var pairingDetail: String? {
         guard camera.unsupportedReason == nil else { return nil }
         return camera.connectionState.detail
+    }
+}
+
+// Keep the native menu stable while discovery and telemetry refresh its row.
+// Actions resolve the current camera in the store when the user selects them.
+private struct CameraManagementMenu: View, Equatable {
+    struct Configuration: Equatable {
+        let cameraID: UUID
+        let displayName: String
+        let canDisconnect: Bool
+    }
+
+    let configuration: Configuration
+    let onRename: () -> Void
+    let onDisconnect: () -> Void
+    let onUnpair: () -> Void
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.configuration == rhs.configuration
+    }
+
+    var body: some View {
+        Menu {
+            Button(action: onRename) {
+                Label("Rename Camera", systemImage: "pencil")
+                    .symbolRenderingMode(.monochrome)
+                    .foregroundStyle(Color.acrInk)
+            }
+            .tint(Color.acrInk)
+
+            if configuration.canDisconnect {
+                Button(action: onDisconnect) {
+                    Label("Disconnect Camera", systemImage: "xmark.circle")
+                        .symbolRenderingMode(.monochrome)
+                        .foregroundStyle(Color.acrInk)
+                }
+                .tint(Color.acrInk)
+            }
+
+            Button(role: .destructive, action: onUnpair) {
+                Label("Unpair Camera", systemImage: "trash")
+                    .symbolRenderingMode(.monochrome)
+                    .foregroundStyle(.red)
+            }
+            .tint(.red)
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.subheadline.weight(.semibold))
+                .symbolRenderingMode(.monochrome)
+                .foregroundStyle(Color.acrMutedText)
+                .frame(width: 16, height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .fixedSize()
+        .accessibilityLabel("More options for \(configuration.displayName)")
     }
 }
 

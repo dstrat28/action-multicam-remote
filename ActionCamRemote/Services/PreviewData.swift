@@ -80,6 +80,21 @@ extension CameraStore {
             "[9:40:58 AM] DJI Action 6: discovered 4 candidate services.",
             "[9:40:54 AM] Simulator demo mode loaded sample cameras."
         ]
+#if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--demo-live-camera-updates") {
+            Task { @MainActor [weak self] in
+                for tick in 0..<240 {
+                    try? await Task.sleep(for: .milliseconds(250))
+                    guard let self, self.isDemoMode else { return }
+                    for index in self.cameras.indices {
+                        self.cameras[index].rssi = -40 - (tick % 20)
+                        self.cameras[index].lastSeen = Date()
+                        self.cameras[index].telemetry?.batteryPercent = 40 + (tick % 55)
+                    }
+                }
+            }
+        }
+#endif
     }
 
     static var preview: CameraStore {
