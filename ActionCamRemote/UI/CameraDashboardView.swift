@@ -263,19 +263,21 @@ private struct MulticamRecordBar: View {
 
 private struct CameraListView: View {
     @Environment(CameraStore.self) private var store
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @State private var columnCount = 1
     var onManage: () -> Void
     var onShowCameraDetails: (DiscoveredCamera) -> Void
 
     var body: some View {
         let cameras = dashboardCameras
+        let minimumCardWidth: CGFloat = 330
+        let columnSpacing: CGFloat = 10
 
         VStack(alignment: .leading, spacing: 8) {
             if cameras.isEmpty {
                 firstCameraPrompt
             } else {
                 LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 330), spacing: 10, alignment: .top)],
+                    columns: [GridItem(.adaptive(minimum: minimumCardWidth), spacing: columnSpacing, alignment: .top)],
                     alignment: .leading,
                     spacing: 7
                 ) {
@@ -295,6 +297,11 @@ private struct CameraListView: View {
             }
         }
         .padding(.top, 8)
+        .onGeometryChange(for: Int.self) { geometry in
+            max(1, Int((geometry.size.width + columnSpacing) / (minimumCardWidth + columnSpacing)))
+        } action: { count in
+            columnCount = count
+        }
     }
 
     private var firstCameraPrompt: some View {
@@ -357,15 +364,15 @@ private struct CameraListView: View {
         at index: Int,
         in cameras: [DiscoveredCamera]
     ) -> Bool {
-        guard horizontalSizeClass == .regular,
+        guard columnCount > 1,
               cameras.indices.contains(index),
               !store.isCameraReadyConnected(cameras[index]) else {
             return false
         }
 
-        let peerIndex = index.isMultiple(of: 2) ? index + 1 : index - 1
-        return cameras.indices.contains(peerIndex)
-            && store.isCameraReadyConnected(cameras[peerIndex])
+        let rowStart = (index / columnCount) * columnCount
+        let rowEnd = min(rowStart + columnCount, cameras.count)
+        return cameras[rowStart..<rowEnd].contains { store.isCameraReadyConnected($0) }
     }
 }
 

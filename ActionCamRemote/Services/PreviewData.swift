@@ -75,6 +75,17 @@ extension CameraStore {
             }
             return camera
         }
+#if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--demo-mixed-connections") {
+            for index in cameras.indices.dropFirst() {
+                cameras[index].connectionState = .disconnected
+                cameras[index].recordingState = .unknown
+                cameras[index].currentMode = nil
+                cameras[index].telemetry = nil
+                cameras[index].isSelected = false
+            }
+        }
+#endif
         eventLog = [
             "[9:41:02 AM] GoPro HERO13: command characteristic is ready.",
             "[9:40:58 AM] DJI Action 6: discovered 4 candidate services.",
