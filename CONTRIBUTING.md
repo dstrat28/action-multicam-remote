@@ -60,7 +60,7 @@ Review diagnostics before posting publicly. They may contain Bluetooth identifie
 
 ## Protocol Work
 
-GoPro changes should follow the public Open GoPro BLE API. DJI Action/360 control uses DJI's R SDK handshake and status protocol, with model-scoped DUML commands where behavior differs between cameras. Experimental Insta360 support emulates the Bluetooth GPS Remote protocol. See [camera support and protocol notes](docs/camera-support.md) for limitations.
+GoPro changes should follow the public Open GoPro BLE API. DJI Action/360 control uses DJI's R SDK handshake and status protocol, with model-scoped DUML commands where behavior differs between cameras. Experimental Insta360 support uses direct Bluetooth for X5/X6, with a GPS Remote fallback for X5 and GPS Remote emulation for other models. See [camera support and protocol notes](docs/camera-support.md) for limitations.
 
 Keep model-specific behavior isolated, preserve the shared connection flow, and include regression coverage for packet encoding or state parsing changes. Mark a camera as hardware-tested only after verifying it on a physical device.
 

@@ -1,5 +1,20 @@
 import Foundation
 
+/// X4 remote captures show a connection-local button counter advancing by two.
+/// Advance only after CoreBluetooth accepts the notification, not on backpressure.
+struct Insta360RemoteButtonSequence {
+    private(set) var value: UInt8 = 0
+
+    func packet(_ template: Data) -> Data {
+        guard template.count == 9, template.starts(with: [0xFC, 0xEF, 0xFE, 0x86]) else { return template }
+        var packet = template
+        packet[4] = value
+        return packet
+    }
+
+    mutating func didSend() { value &+= 2 }
+}
+
 enum Insta360RemoteAssignmentMatch: String, Equatable {
     case cameraSerialIdentifier = "camera serial identifier"
     case exactPeerIdentifier = "exact peer identifier"
@@ -24,8 +39,16 @@ struct Insta360RemoteRecordingStatus {
     private(set) var revision = 0
     private(set) var lastTimerAt: Date?
     private var awaitingFeedbackSince: Date?
+    private var awaitingStopFeedback = false
 
     func rejectionReason(for command: CameraCommand) -> String? {
+        if awaitingFeedbackSince != nil {
+            switch command {
+            case .startRecording, .stopRecording, .capturePhoto, .toggleRecording:
+                return "Waiting for camera feedback from the previous Insta360 shutter press. No second toggle was sent."
+            default: break
+            }
+        }
         switch command {
         case .startRecording where state == .recording:
             return "The Insta360 camera is already recording; no shutter toggle was sent."
@@ -39,6 +62,7 @@ struct Insta360RemoteRecordingStatus {
     }
 
     mutating func shutterSent(at now: Date) {
+        awaitingStopFeedback = state == .recording
         awaitingFeedbackSince = now
         revision += 1
     }
@@ -46,6 +70,9 @@ struct Insta360RemoteRecordingStatus {
     @discardableResult
     mutating func observeTimer(at now: Date) -> Bool {
         lastTimerAt = now
+        // A timer can confirm Start, but a trailing timer cannot confirm Stop.
+        // Keep Stop blocked until the feedback window expires.
+        guard !awaitingStopFeedback else { return false }
         awaitingFeedbackSince = nil
         guard state != .recording else { return false }
         state = .recording
@@ -61,6 +88,7 @@ struct Insta360RemoteRecordingStatus {
         }
         self.lastTimerAt = nil
         awaitingFeedbackSince = nil
+        awaitingStopFeedback = false
         // Silence can mean stopped recording, lost traffic, or a suspended app.
         // The GPS Remote protocol does not give us an authoritative stop event.
         state = .unknown

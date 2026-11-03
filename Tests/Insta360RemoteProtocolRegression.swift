@@ -3,6 +3,19 @@ import Foundation
 @main
 enum Insta360RemoteProtocolRegression {
     static func main() {
+        var buttons = Insta360RemoteButtonSequence()
+        var otherCamera = Insta360RemoteButtonSequence()
+        precondition(buttons.packet(Insta360RemoteProtocol.shutterCommand)[4] == 0)
+        // A notification refused by CoreBluetooth must retain its counter.
+        precondition(buttons.packet(Insta360RemoteProtocol.shutterCommand)[4] == 0)
+        buttons.didSend()
+        precondition(buttons.packet(Insta360RemoteProtocol.cycleModeCommand)[4] == 2)
+        precondition(otherCamera.packet(Insta360RemoteProtocol.shutterCommand)[4] == 0)
+        for _ in 0..<127 { buttons.didSend() }
+        precondition(buttons.value == 0)
+        otherCamera.didSend()
+        otherCamera = Insta360RemoteButtonSequence()
+        precondition(otherCamera.value == 0, "A new connection resets the button sequence")
         let expectedModels: [(String, CameraModel)] = [
             ("Ace Pro 2 ABC123", .insta360AcePro2),
             ("ACE PRO X9Y8Z7", .insta360AcePro),
@@ -82,7 +95,7 @@ enum Insta360RemoteProtocolRegression {
         precondition(!Insta360CameraNameClassifier.isCredibleCameraName("GO 3S Speaker ABC123"))
         precondition(Insta360CameraNameClassifier.model(for: "GoPro HERO13 ABC123") == .unknown)
         precondition(
-            !DiscoveredCamera.isSupportedModel(
+            DiscoveredCamera.isSupportedModel(
                 brand: .insta360,
                 model: .insta360X6,
                 name: "X6 Z9Y8X7"
@@ -93,7 +106,7 @@ enum Insta360RemoteProtocolRegression {
                 brand: .insta360,
                 model: .insta360X6,
                 name: "X6 Z9Y8X7"
-            ) == "Insta360 X6 uses a Bluetooth remote protocol that Multicam does not support."
+            ) == nil
         )
 
         let firstCameraID = UUID(uuidString: "11111111-1111-1111-1111-111111111111")!
@@ -330,6 +343,8 @@ enum Insta360RemoteProtocolRegression {
 
         var unconfirmedStart = Insta360RemoteRecordingStatus()
         unconfirmedStart.shutterSent(at: now)
+        precondition(unconfirmedStart.rejectionReason(for: .startRecording) != nil,
+                     "A repeated Start before feedback must not toggle recording back off")
         precondition(!unconfirmedStart.expire(at: now.addingTimeInterval(5)))
         precondition(unconfirmedStart.expire(at: now.addingTimeInterval(6)))
         precondition(unconfirmedStart.state == .unknown, "A sent shutter is not a recording confirmation")
@@ -338,10 +353,20 @@ enum Insta360RemoteProtocolRegression {
         pendingStop.observeTimer(at: now)
         let beforeStop = pendingStop.revision
         pendingStop.shutterSent(at: now.addingTimeInterval(4))
+        precondition(pendingStop.rejectionReason(for: .stopRecording) != nil,
+                     "A repeated Stop must not restart the camera")
+        precondition(!pendingStop.observeTimer(at: now.addingTimeInterval(5)))
+        precondition(pendingStop.rejectionReason(for: .stopRecording) != nil,
+                     "A trailing timer cannot establish that the Stop toggle was not delivered")
+        precondition(pendingStop.rejectionReason(for: .toggleRecording) != nil)
         precondition(pendingStop.revision > beforeStop)
         precondition(!pendingStop.expire(at: now.addingTimeInterval(6)))
         precondition(pendingStop.expire(at: now.addingTimeInterval(10)))
         precondition(pendingStop.state == .unknown)
+        precondition(pendingStop.rejectionReason(for: .stopRecording) != nil)
+        precondition(pendingStop.observeTimer(at: now.addingTimeInterval(11)))
+        precondition(pendingStop.rejectionReason(for: .stopRecording) == nil,
+                     "A fresh recording timer after the feedback window permits an explicit retry")
     }
 
     private static func checkQueuedCommands() {

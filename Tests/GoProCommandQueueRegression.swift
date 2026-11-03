@@ -3,6 +3,17 @@ import Foundation
 @main
 enum GoProCommandQueueRegression {
     static func main() {
+        var waiter = GoProReplyWaiter(expectation: GoProResponseExpectation(channel: .query, payload: Data([0x13])))
+        waiter.didWrite()
+        precondition(!waiter.isComplete)
+        waiter.receive(Data([0x93, 0]), channel: .query)
+        waiter.receive(Data([0x13, 0]), channel: .settings)
+        precondition(!waiter.isComplete)
+        waiter.receive(Data([0x13, 0]), channel: .query)
+        precondition(waiter.isComplete)
+        let presets = GoProResponseExpectation(channel: .query, payload: Data([0xF5, 0x72]))
+        precondition(!presets.matches(Data([0xF5, 0xF3]), channel: .query))
+        precondition(presets.matches(Data([0xF5, 0xF2]), channel: .query))
         for command in [CameraCommand.startRecording, .capturePhoto, .toggleRecording] {
             var queue = GoProCommandQueue<String>()
             queue.deferUntilIdle(command)

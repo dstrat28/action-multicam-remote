@@ -35,9 +35,9 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
     private var hasReportedLegacyDumlReady = false
     private var hasReportedRSDKReady = false
     private var hasSentRSDKStatusSubscription = false
-    private var rSDKHandshakePairingRetryCount = 0
-    private var rSDKHandshakePairingRetryTimer: Timer?
     private var pendingRSDKWrites: [PendingRSDKWrite] = []
+    private var commandTracker = DJICommandTracker()
+    private var commandDeadlineTimer: Timer?
     private var pendingNanoWrites: [PendingNanoWrite] = []
     private var isNanoWriteScheduled = false
     private var lastNanoWriteDate = Date.distantPast
@@ -79,7 +79,6 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
     private var lastRSDKStatusPayload: Data?
     private var lastDumlCameraStatePayload: Data?
 #endif
-    private let maxRSDKHandshakePairingRetries = 15
     private let nanoWriteGap: TimeInterval = 0.12
     private var lastVideoRecordTime: UInt32?
     private var lastAction6StatusDiagnosticLabel: String?
@@ -90,6 +89,9 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
     private let onProtocolActivity: (UUID) -> Void
     private let onNanoPairingStatus: (UUID, DJINanoProtocol.PairingStatus) -> Void
     private let onLog: (String) -> Void
+    private let isInitialPairing: Bool
+    private let onCommandCompleted: (CameraCommandResult) -> Void
+    private let onPairingRejected: (UUID) -> Void
     private let hasConfirmedAwakeNanoAdvertisement: Bool
 
     init(
@@ -102,7 +104,10 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
         onProtocolActivity: @escaping (UUID) -> Void,
         onNanoPairingStatus: @escaping (UUID, DJINanoProtocol.PairingStatus) -> Void,
         hasConfirmedAwakeNanoAdvertisement: Bool,
-        onLog: @escaping (String) -> Void
+        onLog: @escaping (String) -> Void,
+        isInitialPairing: Bool = false,
+        onCommandCompleted: @escaping (CameraCommandResult) -> Void = { _ in },
+        onPairingRejected: @escaping (UUID) -> Void = { _ in }
     ) {
         self.cameraID = cameraID
         self.cameraName = cameraName
@@ -115,11 +120,14 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
         self.onNanoPairingStatus = onNanoPairingStatus
         self.hasConfirmedAwakeNanoAdvertisement = hasConfirmedAwakeNanoAdvertisement
         self.onLog = onLog
+        self.isInitialPairing = isInitialPairing
+        self.onCommandCompleted = onCommandCompleted
+        self.onPairingRejected = onPairingRejected
         super.init()
     }
 
     deinit {
-        rSDKHandshakePairingRetryTimer?.invalidate()
+        commandDeadlineTimer?.invalidate()
         nanoKeepAliveTimer?.invalidate()
         rSDKModeStatusSettleTimer?.invalidate()
         statusProbeTimer?.invalidate()
@@ -137,6 +145,12 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
     }
 
     func didDisconnect(error: Error?) {
+        commandDeadlineTimer?.invalidate()
+        commandDeadlineTimer = nil
+        for entry in commandTracker.removeAll() {
+            onCommandCompleted(commandTracker.completed(entry, status: .failed,
+                message: "DJI disconnected before the camera acknowledged the command."))
+        }
         writeCandidates.removeAll()
         rSDKWriteCharacteristic = nil
         rSDKNotifyCharacteristic = nil
@@ -147,9 +161,6 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
         hasReportedLegacyDumlReady = false
         hasReportedRSDKReady = false
         hasSentRSDKStatusSubscription = false
-        rSDKHandshakePairingRetryCount = 0
-        rSDKHandshakePairingRetryTimer?.invalidate()
-        rSDKHandshakePairingRetryTimer = nil
         pendingRSDKWrites.removeAll()
         pendingNanoWrites.removeAll()
         isNanoWriteScheduled = false
@@ -813,8 +824,47 @@ private extension DJIExperimentalBLEClient {
 
     func sendRSDKConnectionRequest(to peripheral: CBPeripheral) {
         let seq = nextRSDKSequence()
-        let packet = DJIRSDKPacket.connectionRequest(sequenceNumber: seq)
+        let packet = DJIRSDKPacket.connectionRequest(sequenceNumber: seq, requiresConfirmation: isInitialPairing)
         writeRSDK(packet, to: peripheral, label: "protocol connect request")
+    }
+
+    func trackRSDKCommand(sequence: UInt16, commandID: UInt8, result: CameraCommandResult) {
+        expireRSDKCommands()
+        commandTracker.register(sequence: sequence, commandID: commandID, result: result,
+            at: ProcessInfo.processInfo.systemUptime)
+        guard commandDeadlineTimer == nil else { return }
+        commandDeadlineTimer = commonModeTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+            self?.expireRSDKCommands()
+        }
+    }
+
+    func trackedRSDKSequence(_ packet: Data) -> UInt16? {
+        guard packet.count >= 18, packet[12] == 0x1D, [0x03, 0x04].contains(packet[13]) else { return nil }
+        return UInt16(packet[8]) | UInt16(packet[9]) << 8
+    }
+
+    func expireRSDKCommands() {
+        for entry in commandTracker.expire(at: ProcessInfo.processInfo.systemUptime) {
+            pendingRSDKRecordActionsBySequence.removeValue(forKey: entry.sequence)
+            pendingRSDKModeUpdatesBySequence.removeValue(forKey: entry.sequence)
+            let message = entry.wasSent
+                ? "DJI did not acknowledge \(entry.result.command.label); check camera status. The command was not repeated."
+                : "DJI command expired before Bluetooth delivery; no delayed capture or mode change was sent."
+            onLog("\(cameraName): \(message)")
+            onCommandCompleted(commandTracker.completed(entry, status: .failed, message: message))
+        }
+        if commandTracker.isEmpty {
+            commandDeadlineTimer?.invalidate()
+            commandDeadlineTimer = nil
+        }
+    }
+
+    func cancelUnsentRSDKStarts() {
+        for entry in commandTracker.cancelUnsentStarts() {
+            pendingRSDKRecordActionsBySequence.removeValue(forKey: entry.sequence)
+            onCommandCompleted(commandTracker.completed(entry, status: .skipped,
+                message: "DJI Stop replaced the unsent capture command."))
+        }
     }
 
     func sendRSDKConnectionResponse(to peripheral: CBPeripheral, sequenceNumber: UInt16, cameraReserved: UInt8) {
@@ -857,14 +907,14 @@ private extension DJIExperimentalBLEClient {
 
         let seq = nextRSDKSequence()
         let packet = DJIRSDKPacket.recordControl(sequenceNumber: seq, isStarting: action.isStarting)
+        let commandResult = result(for: command, status: .sent,
+            message: "Queued DJI R SDK \(action.isStarting ? "start" : "stop") recording command.")
+        if action.isStopping { cancelUnsentRSDKStarts() }
+        trackRSDKCommand(sequence: seq, commandID: 0x03, result: commandResult)
         pendingRSDKRecordActionsBySequence[seq] = .recording(action)
         writeRSDK(packet, to: peripheral, label: "R SDK \(action.isStarting ? "start" : "stop") record")
 
-        return result(
-            for: command,
-            status: .sent,
-            message: "Sent DJI R SDK \(action.isStarting ? "start" : "stop") recording command."
-        )
+        return commandResult
     }
 
     func sendRSDKPhotoCaptureCommand(
@@ -873,10 +923,12 @@ private extension DJIExperimentalBLEClient {
     ) -> CameraCommandResult {
         let seq = nextRSDKSequence()
         let packet = DJIRSDKPacket.recordControl(sequenceNumber: seq, isStarting: true)
+        let commandResult = result(for: command, status: .sent, message: "Queued DJI R SDK photo capture command.")
+        trackRSDKCommand(sequence: seq, commandID: 0x03, result: commandResult)
         pendingRSDKRecordActionsBySequence[seq] = .photoCapture
         writeRSDK(packet, to: peripheral, label: "R SDK capture photo")
 
-        return result(for: command, status: .sent, message: "Sent DJI R SDK photo capture command.")
+        return commandResult
     }
 
     func sendRSDKHighlightCommand(
@@ -897,6 +949,8 @@ private extension DJIExperimentalBLEClient {
     ) -> CameraCommandResult {
         let seq = nextRSDKSequence()
         let packet = DJIRSDKPacket.modeSwitch(sequenceNumber: seq, mode: modeValue)
+        let commandResult = result(for: command, status: .sent, message: "Queued DJI R SDK capture mode change.")
+        trackRSDKCommand(sequence: seq, commandID: 0x04, result: commandResult)
         pendingRSDKModeUpdatesBySequence[seq] = mode
         clearPendingRSDKModeTransition()
         pendingRSDKModeTransition = mode
@@ -904,7 +958,7 @@ private extension DJIExperimentalBLEClient {
         let modeName = mode.displayName(for: cameraModel)
         writeRSDK(packet, to: peripheral, label: "R SDK switch to \(modeName)")
 
-        return result(for: command, status: .sent, message: "Sent DJI R SDK \(modeName) mode command.")
+        return commandResult
     }
 
     @discardableResult
@@ -936,6 +990,10 @@ private extension DJIExperimentalBLEClient {
             return .queued
         }
 
+        if let sequence = trackedRSDKSequence(packet) {
+            guard commandTracker.canSend(sequence: sequence, at: ProcessInfo.processInfo.systemUptime) else { return .skipped }
+            commandTracker.didSend(sequence: sequence, at: ProcessInfo.processInfo.systemUptime)
+        }
         peripheral.writeValue(packet, for: characteristic, type: writeType)
         if shouldLog {
             onLog("\(cameraName): DJI \(label) -> \(characteristic.debugLabel) (\(writeType.logLabel)) \(packet.hexString)")
@@ -951,6 +1009,10 @@ private extension DJIExperimentalBLEClient {
 
         while peripheral.canSendWriteWithoutResponse, !pendingRSDKWrites.isEmpty {
             let write = pendingRSDKWrites.removeFirst()
+            if let sequence = trackedRSDKSequence(write.packet) {
+                guard commandTracker.canSend(sequence: sequence, at: ProcessInfo.processInfo.systemUptime) else { continue }
+                commandTracker.didSend(sequence: sequence, at: ProcessInfo.processInfo.systemUptime)
+            }
             peripheral.writeValue(write.packet, for: characteristic, type: .withoutResponse)
 #if DEBUG
             if write.label == "phone GPS" {
@@ -1084,6 +1146,12 @@ private extension DJIExperimentalBLEClient {
 
     func handleRSDKFrame(_ frame: DJIRSDKIncomingFrame) {
         onProtocolActivity(cameraID)
+        expireRSDKCommands()
+        if frame.isResponse, frame.cmdSet == 0x1D, let code = frame.payload.first,
+           let result = commandTracker.acknowledge(sequence: frame.sequenceNumber, commandID: frame.cmdID, returnCode: code,
+               at: ProcessInfo.processInfo.systemUptime) {
+            onCommandCompleted(result)
+        }
 
         switch (frame.cmdSet, frame.cmdID, frame.isResponse) {
         case (0x00, 0x19, true):
@@ -1118,9 +1186,9 @@ private extension DJIExperimentalBLEClient {
                     completeRSDKHandshake(to: peripheral, source: "camera verification")
                 }
             } else if request.verifyMode == 0x02, request.verifyData == 1 {
-                if let peripheral {
-                    scheduleRSDKHandshakePairingRetry(to: peripheral)
-                }
+                onPairingRejected(cameraID)
+                onStatus(cameraID, .failed("Connection declined on the DJI camera. Tap Pair to try again."),
+                    "DJI rejected the connection; automatic pairing retries are paused.")
             } else {
                 onLog(
                     "\(cameraName): DJI R SDK camera verification rejected: mode 0x\(request.verifyMode.hexByte), data 0x\(request.verifyData.hexWord)."
@@ -1143,14 +1211,12 @@ private extension DJIExperimentalBLEClient {
             let resultLabel = resultCode == 0x00 ? "success" : "error \(resultCode.map { "0x\($0.hexByte)" } ?? "missing code")"
             onLog("\(cameraName): DJI R SDK record ACK \(resultLabel).")
             if let action = pendingRSDKRecordActionsBySequence.removeValue(forKey: frame.sequenceNumber),
-               resultCode == 0x00 {
+               resultCode == 0x00, commandTracker.isLatestCapture(sequence: frame.sequenceNumber) {
                 switch action {
                 case let .recording(recordAction):
                     if recordAction.isStarting {
                         protectAgainstStaleStoppedStatusAfterStart()
                         onCameraStatus(cameraID, CameraStatusUpdate(recordingState: .starting))
-                    } else {
-                        onCameraStatus(cameraID, CameraStatusUpdate(recordingState: .stopped))
                     }
                 case .photoCapture:
                     onCameraStatus(cameraID, CameraStatusUpdate(recordingState: .starting))
@@ -1196,9 +1262,6 @@ private extension DJIExperimentalBLEClient {
             completedNow = true
             statusProbeTimer?.invalidate()
             statusProbeTimer = nil
-            rSDKHandshakePairingRetryTimer?.invalidate()
-            rSDKHandshakePairingRetryTimer = nil
-            rSDKHandshakePairingRetryCount = 0
             onLog("\(cameraName): DJI R SDK protocol handshake complete via \(source).")
         }
 
@@ -1208,37 +1271,6 @@ private extension DJIExperimentalBLEClient {
 
         if completedNow {
             onStatus(cameraID, .connecting, "DJI R SDK handshake complete; waiting for camera status.")
-        }
-    }
-
-    func scheduleRSDKHandshakePairingRetry(to peripheral: CBPeripheral) {
-        guard rSDKHandshakePairingRetryCount < maxRSDKHandshakePairingRetries else {
-            onLog("\(cameraName): DJI R SDK BLE pairing did not finish after \(maxRSDKHandshakePairingRetries) protocol retries.")
-            onStatus(cameraID, .failed("DJI BLE pairing did not finish. Accept the system pairing prompt, then tap Pair again."), nil)
-            return
-        }
-
-        rSDKHandshakePairingRetryCount += 1
-        rSDKHandshakePairingRetryTimer?.invalidate()
-        onLog(
-            "\(cameraName): DJI R SDK BLE pairing is pending; retrying protocol handshake \(rSDKHandshakePairingRetryCount)/\(maxRSDKHandshakePairingRetries)."
-        )
-        onStatus(
-            cameraID,
-            .connecting,
-            "DJI BLE pairing is pending; retrying protocol handshake \(rSDKHandshakePairingRetryCount)/\(maxRSDKHandshakePairingRetries)."
-        )
-
-        rSDKHandshakePairingRetryTimer = commonModeTimer(withTimeInterval: 2.0, repeats: false) { [weak self, weak peripheral] _ in
-            guard let self,
-                  let peripheral,
-                  self.peripheral === peripheral,
-                  !self.hasCompletedRSDKHandshake else {
-                return
-            }
-
-            self.hasSentRSDKConnectionRequest = false
-            self.bootstrapRSDKIfReady(to: peripheral)
         }
     }
 
@@ -1982,7 +2014,7 @@ private extension DJIExperimentalBLEClient {
             telemetry.isExternalPowerConnected = state.compactExternalPowerConnected
         case .djiOsmoNano:
             telemetry.isExternalPowerConnected = state.compactNanoExternalPowerConnected
-        case .djiOsmoPocket3, .djiRSDKCamera, .genericDJI, .goProOpen, .insta360Remote, .unknown:
+        case .djiOsmoPocket3, .djiRSDKCamera, .genericDJI, .goProOpen, .insta360Remote, .insta360Direct, .unknown:
             telemetry.isExternalPowerConnected = nil
         }
 
@@ -3011,14 +3043,14 @@ private enum DJIRSDKPacket {
         return DJIRSDKChecksum.crc16(Data(data.prefix(10))) == embeddedChecksum
     }
 
-    static func connectionRequest(sequenceNumber: UInt16) -> Data {
+    static func connectionRequest(sequenceNumber: UInt16, requiresConfirmation: Bool = false) -> Data {
         var payload = Data()
         payload.appendLittleEndian(controllerDeviceID)
         payload.append(0x10)
         payload.append(contentsOf: controllerIdentifier)
         payload.appendLittleEndian(UInt32(0))
         payload.append(0x00)
-        payload.append(0x00)
+        payload.append(requiresConfirmation ? 0x01 : 0x00)
         payload.appendLittleEndian(UInt16(0))
         payload.append(contentsOf: [0x00, 0x00, 0x00, 0x00])
 
@@ -3054,7 +3086,7 @@ private enum DJIRSDKPacket {
 
         return frame(
             sequenceNumber: sequenceNumber,
-            commandType: DJIRSDKCommandType.responseOrNot,
+            commandType: DJIRSDKCommandType.waitResult,
             commandSet: 0x1D,
             commandID: 0x03,
             payload: payload
@@ -3069,7 +3101,7 @@ private enum DJIRSDKPacket {
 
         return frame(
             sequenceNumber: sequenceNumber,
-            commandType: DJIRSDKCommandType.responseOrNot,
+            commandType: DJIRSDKCommandType.waitResult,
             commandSet: 0x1D,
             commandID: 0x04,
             payload: payload

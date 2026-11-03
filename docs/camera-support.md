@@ -30,7 +30,7 @@ Support and hardware-testing status are listed separately. Camera behavior may v
 | Insta360 GO Ultra | Experimental | No |
 | Insta360 GO 3S | Experimental | No |
 | Insta360 GO 3 | Experimental | No |
-| Insta360 X6 | No | No |
+| Insta360 X6 | Experimental | No |
 | DJI Osmo Pocket 3 | No | Yes |
 | GoPro HERO | No | No |
 | GoPro MAX | No | No |
@@ -42,11 +42,11 @@ Support and hardware-testing status are listed separately. Camera behavior may v
 ## Limitations
 
 - Camera behavior can vary by model and firmware; see the hardware-testing status above.
-- Insta360 X6 is discoverable, but it does not accept the GPS Action Remote protocol that Multicam currently emulates.
-- Insta360 support requires selecting `Insta360 GPS Remote` in the camera's Bluetooth Remote settings while Multicam remains open.
-- Insta360 wake is experimental and has not been verified on hardware. Multicam attempts a targeted iBeacon advertisement while the app is in the foreground. iOS supports this fixed beacon format, but the ESP32 remote reference includes an extra byte that this format does not reproduce; successful wake must not be assumed.
-- Insta360 recording and photo commands use the same shutter toggle in the camera's current mode. Recording state is inferred from timer packets, and an unknown state does not establish that the camera is stopped or in Video mode. Verify the camera's mode before using group recording. Bluetooth queues retain only the latest unsent command per camera for up to two seconds and discard it if the connection or observed recording state changes. Discarded commands are reported in Diagnostics and are not automatically retried.
-- Pair multiple Insta360 cameras one at a time. iOS does not expose an incoming camera's Bluetooth address, so Multicam assigns new GPS Remote subscriptions in the order connection requests were made.
+- X5/X6 direct Bluetooth control uses community hardware captures (X5: October 2026 firmware; X6: 1.1.7); Multicam has not been tested on Insta360 hardware. Set normal Video mode on the camera. Direct mode changes, photos, settings, and wake are unavailable. X5 can fall back to GPS Remote before protocol confirmation or any capture transmission. [Protocol and validation details](insta360-direct-control.md).
+- Insta360 GPS Remote support requires selecting `Insta360 GPS Remote` in the camera's Bluetooth Remote settings while Multicam remains open.
+- Insta360 GPS Remote wake is experimental and has not been verified on hardware. Multicam attempts a targeted iBeacon advertisement while the app is in the foreground. iOS supports this fixed beacon format, but the ESP32 remote reference includes an extra byte that this format does not reproduce; successful wake must not be assumed.
+- Insta360 GPS Remote recording and photo commands use the same shutter toggle in the camera's current mode. Recording state is inferred from timer packets, and an unknown state does not establish that the camera is stopped or in Video mode. Verify the camera's mode before using group recording. Bluetooth queues retain only the latest unsent command per camera for up to two seconds and discard it if the connection or observed recording state changes. Discarded commands are reported in Diagnostics and are not automatically retried.
+- Pair multiple Insta360 GPS Remote cameras one at a time. iOS does not expose an incoming camera's Bluetooth address, so Multicam assigns new GPS Remote subscriptions in the order connection requests were made.
 - Insta360 GPS Remote control does not expose camera settings, battery/storage telemetry, highlight markers, preview, or media transfer. Mode changes are not acknowledged by the remote protocol and must be verified on the camera.
 - Wake is not supported on other DJI cameras because their `WKP` manufacturer-data wake advertisement cannot be reproduced through iOS's fixed iBeacon format or ordinary Core Bluetooth advertising.
 - Highlights are recording-only. DJI cameras do not acknowledge highlight commands, so verify markers before relying on them for critical footage.
@@ -57,7 +57,7 @@ Support and hardware-testing status are listed separately. Camera behavior may v
 
 ## Protocol and feature notes
 
-GoPro support uses the public Open GoPro BLE API. DJI support uses DJI's R SDK protocol and BLE/DUML behavior. Experimental Insta360 support emulates the Bluetooth GPS Remote protocol and does not use Wi-Fi.
+GoPro support uses the public Open GoPro BLE API. DJI support uses DJI's R SDK protocol and BLE/DUML behavior. Insta360 X5/X6 use direct Bluetooth control, with GPS Remote fallback for X5; other Insta360 models use GPS Remote emulation. Neither path uses Wi-Fi or the Insta360 SDK.
 
 GoPro factory and custom presets are discovered over Bluetooth with camera-provided names and IDs. The menu follows camera-side changes. Cameras that do not provide a preset list retain the basic mode picker. Preset selection requires hardware verification on each model.
 

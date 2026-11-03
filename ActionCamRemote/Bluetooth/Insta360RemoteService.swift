@@ -46,6 +46,7 @@ final class Insta360RemoteService: NSObject {
     private var reportedActiveCameraIDs: Set<UUID> = []
     private var recordingStatusByCameraID: [UUID: Insta360RemoteRecordingStatus] = [:]
     private var sessionIDByCameraID: [UUID: UUID] = [:]
+    private var buttonSequenceByCameraID: [UUID: Insta360RemoteButtonSequence] = [:]
     private var pendingCommands = Insta360RemoteCommandQueue()
     private var statusTimer: Timer?
     private var wakeTimer: Timer?
@@ -258,8 +259,7 @@ final class Insta360RemoteService: NSObject {
             return result(cameraID: cameraID, cameraName: cameraName, command: command, status: .skipped, message: reason)
         }
 
-        let packetHex = packet.map { String(format: "%02X", $0) }.joined(separator: " ")
-        onEvent?(.log("\(cameraName): sending \(command.label) on subscribed CE82: \(packetHex)"))
+        onEvent?(.log("\(cameraName): requesting \(command.label) on subscribed CE82."))
         let result = enqueueOrSend(
             packet,
             command: command,
@@ -742,6 +742,7 @@ private extension Insta360RemoteService {
         reportedActiveCameraIDs.removeAll()
         recordingStatusByCameraID.removeAll()
         sessionIDByCameraID.removeAll()
+        buttonSequenceByCameraID.removeAll()
         for command in pendingCommands.removeAll() {
             completeQueuedCommand(command, status: .skipped, message: "The Insta360 connection ended; the queued command was discarded.")
         }
@@ -898,11 +899,13 @@ private extension Insta360RemoteService {
     func beginCommandSession(for cameraID: UUID) {
         clearCommandSession(for: cameraID)
         sessionIDByCameraID[cameraID] = UUID()
+        buttonSequenceByCameraID[cameraID] = Insta360RemoteButtonSequence()
         recordingStatusByCameraID[cameraID] = Insta360RemoteRecordingStatus()
     }
 
     func clearCommandSession(for cameraID: UUID) {
         sessionIDByCameraID.removeValue(forKey: cameraID)
+        buttonSequenceByCameraID.removeValue(forKey: cameraID)
         recordingStatusByCameraID.removeValue(forKey: cameraID)
         for command in pendingCommands.remove(for: cameraID) {
             completeQueuedCommand(command, status: .skipped, message: "The Insta360 connection changed; the queued command was discarded.")
@@ -930,7 +933,7 @@ private extension Insta360RemoteService {
             return commandResult
         }
 
-        if peripheralManager.updateValue(data, for: notifyCharacteristic, onSubscribedCentrals: [central]) {
+        if transmitButton(data, to: cameraID, characteristic: notifyCharacteristic, central: central) {
             noteCommandSent(command, to: cameraID)
             commandResult.status = .sent
             commandResult.message = message
@@ -966,17 +969,23 @@ private extension Insta360RemoteService {
                 completeQueuedCommand(update, status: .failed, message: "The Insta360 command channel is no longer available.")
                 continue
             }
-            guard peripheralManager.updateValue(
-                update.data,
-                for: notifyCharacteristic,
-                onSubscribedCentrals: [central]
-            ) else {
+            guard transmitButton(update.data, to: cameraID, characteristic: notifyCharacteristic, central: central) else {
                 return
             }
             pendingCommands.removeFirst()
             noteCommandSent(update.result.command, to: cameraID)
             completeQueuedCommand(update, status: .sent, message: "Sent the queued Insta360 remote command.")
         }
+    }
+
+    func transmitButton(_ template: Data, to cameraID: UUID, characteristic: CBMutableCharacteristic, central: CBCentral) -> Bool {
+        var sequence = buttonSequenceByCameraID[cameraID] ?? Insta360RemoteButtonSequence()
+        let packet = sequence.packet(template)
+        guard peripheralManager.updateValue(packet, for: characteristic, onSubscribedCentrals: [central]) else { return false }
+        onEvent?(.log("Insta360 button sent to \(peerLabel(central.identifier)), sequence \(sequence.value): \(hexString(packet))"))
+        sequence.didSend()
+        buttonSequenceByCameraID[cameraID] = sequence
+        return true
     }
 
     func queuedCommandRejectionReason(_ command: Insta360RemotePendingCommand, now: Date) -> String? {
