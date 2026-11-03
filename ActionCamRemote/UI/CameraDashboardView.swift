@@ -139,33 +139,25 @@ private struct MulticamRecordBar: View {
     @AppStorage(ACRPreferences.largerControls) private var largerControls = false
 
     var body: some View {
-        Group {
-            if largerControls {
-                VStack(alignment: .leading, spacing: 12) {
-                    selectionLabel
-                    HStack(spacing: 12) {
-                        recordingControls
-                    }
-                }
-            } else {
-                HStack(alignment: .center, spacing: 8) {
-                    selectionLabel
-                    Spacer(minLength: 4)
-                    recordingControls
-                }
+        HStack(alignment: .center, spacing: showsSelectionCount ? 8 : 12) {
+            if showsSelectionCount {
+                selectionLabel
+                Spacer(minLength: 4)
             }
+            recordingControls
         }
         .frame(minHeight: 56, alignment: .center)
-        .padding(.leading, 18)
+        .padding(.leading, showsSelectionCount ? 18 : 10)
         .padding(.trailing, 10)
         .padding(.vertical, 10)
         .acrFloatingControlBar()
         .frame(maxWidth: .infinity)
+        .transaction { $0.animation = nil }
     }
 
     @ViewBuilder
     private var recordingControls: some View {
-        if store.canAddHighlight {
+        if showsHighlightButton {
             highlightButton
         }
         actionButton
@@ -176,6 +168,7 @@ private struct MulticamRecordBar: View {
             title: "Highlight",
             systemImage: "bookmark.fill",
             tint: .yellow,
+            isEnabled: store.canAddHighlight && !isStarting && !store.isStoppingMulticamRecording,
             size: .large,
             appearance: .outlined,
             showsTitle: false,
@@ -202,15 +195,31 @@ private struct MulticamRecordBar: View {
             systemImage: systemImage,
             tint: .acrRecord,
             isEnabled: isEnabled,
-            isLoading: isStarting || isPhotoCaptureInProgress,
+            isLoading: store.isStoppingMulticamRecording || isStarting || isPhotoCaptureInProgress,
             size: .large,
             minimumContentWidth: store.canStopMulticamRecording ? 124 : nil,
-            fillsWidth: largerControls,
+            fillsWidth: !showsSelectionCount,
             action: performAction
         )
     }
 
+    private var showsSelectionCount: Bool {
+        !largerControls && !isStarting && !store.canStopMulticamRecording
+            && !store.isStoppingMulticamRecording && !showsHighlightButton
+    }
+
+    private var showsHighlightButton: Bool {
+        store.readyConnectedCameras.contains { camera in
+            camera.supportsHighlight && !camera.isInPhotoMode
+                && (camera.recordingState == .starting || camera.recordingState == .recording
+                    || store.isCameraStopping(camera))
+        }
+    }
+
     private var title: String {
+        if store.isStoppingMulticamRecording {
+            return "Stopping…"
+        }
         if isPhotoCaptureInProgress {
             return "Capturing"
         }
@@ -231,7 +240,7 @@ private struct MulticamRecordBar: View {
     }
 
     private var isEnabled: Bool {
-        store.canStopMulticamRecording || store.canStartMulticamRecording
+        store.isStoppingMulticamRecording || store.canStopMulticamRecording || store.canStartMulticamRecording
     }
 
     private var isStarting: Bool {
@@ -263,19 +272,21 @@ private struct MulticamRecordBar: View {
 
 private struct CameraListView: View {
     @Environment(CameraStore.self) private var store
-    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @State private var columnCount = 1
     var onManage: () -> Void
     var onShowCameraDetails: (DiscoveredCamera) -> Void
 
     var body: some View {
         let cameras = dashboardCameras
+        let minimumCardWidth: CGFloat = 330
+        let columnSpacing: CGFloat = 10
 
         VStack(alignment: .leading, spacing: 8) {
             if cameras.isEmpty {
                 firstCameraPrompt
             } else {
                 LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: 330), spacing: 10, alignment: .top)],
+                    columns: [GridItem(.adaptive(minimum: minimumCardWidth), spacing: columnSpacing, alignment: .top)],
                     alignment: .leading,
                     spacing: 7
                 ) {
@@ -295,6 +306,11 @@ private struct CameraListView: View {
             }
         }
         .padding(.top, 8)
+        .onGeometryChange(for: Int.self) { geometry in
+            max(1, Int((geometry.size.width + columnSpacing) / (minimumCardWidth + columnSpacing)))
+        } action: { count in
+            columnCount = count
+        }
     }
 
     private var firstCameraPrompt: some View {
@@ -357,15 +373,15 @@ private struct CameraListView: View {
         at index: Int,
         in cameras: [DiscoveredCamera]
     ) -> Bool {
-        guard horizontalSizeClass == .regular,
+        guard columnCount > 1,
               cameras.indices.contains(index),
               !store.isCameraReadyConnected(cameras[index]) else {
             return false
         }
 
-        let peerIndex = index.isMultiple(of: 2) ? index + 1 : index - 1
-        return cameras.indices.contains(peerIndex)
-            && store.isCameraReadyConnected(cameras[peerIndex])
+        let rowStart = (index / columnCount) * columnCount
+        let rowEnd = min(rowStart + columnCount, cameras.count)
+        return cameras[rowStart..<rowEnd].contains { store.isCameraReadyConnected($0) }
     }
 }
 
@@ -445,8 +461,6 @@ private struct PairingCameraRow: View {
     @State private var proposedName = ""
     var camera: DiscoveredCamera
     private let actionContentHeight: CGFloat = 20
-    private let connectionActionContentWidth: CGFloat = 82
-    private let pairRemovalActionContentWidth: CGFloat = 62
     private let cameraInfoLeadingInset: CGFloat = 50
 
     var body: some View {
@@ -479,13 +493,13 @@ private struct PairingCameraRow: View {
                     Button {
                         store.connect(camera)
                     } label: {
-                        actionLabel("Pair", width: pairRemovalActionContentWidth)
+                        actionLabel(isConnecting ? "Connecting…" : "Pair")
                     }
                     .buttonStyle(.borderedProminent)
                     .tint(Color.acrAvailable)
                     .controlSize(.small)
                     .fixedSize()
-                    .disabled(camera.connectionState == .connecting || camera.needsGoProPairingMode)
+                    .disabled(isConnecting || camera.needsGoProPairingMode)
                 }
             }
 
@@ -531,7 +545,7 @@ private struct PairingCameraRow: View {
     }
 
     private var showsInsta360PairingGuide: Bool {
-        camera.brand == .insta360
+        camera.usesInsta360GPSRemote
             && camera.isSupportedByApp
             && camera.connectionState != .connected
     }
@@ -541,10 +555,9 @@ private struct PairingCameraRow: View {
     }
 
     private var showsInitialPairingGuide: Bool {
-        camera.isSupportedByApp
-            && !camera.isPaired
-            && camera.connectionState != .connected
-            && (camera.brand == .gopro || camera.brand == .dji)
+        guard camera.isSupportedByApp, camera.connectionState != .connected else { return false }
+        if camera.behavior.kind == .insta360Direct { return true }
+        return !camera.isPaired && (camera.brand == .gopro || camera.brand == .dji)
     }
 
     private var initialPairingGuide: some View {
@@ -565,6 +578,9 @@ private struct PairingCameraRow: View {
     }
 
     private var initialPairingTitle: String {
+        if camera.behavior.kind == .insta360Direct {
+            return isConnecting ? "Connecting to your Insta360" : "Prepare your Insta360"
+        }
         if camera.brand == .gopro {
             return isConnecting ? "Complete Bluetooth pairing" : "Put your GoPro in pairing mode"
         }
@@ -572,6 +588,13 @@ private struct PairingCameraRow: View {
     }
 
     private var initialPairingInstructions: String {
+        if camera.behavior.kind == .insta360Direct {
+            if isConnecting {
+                return "Keep the camera awake with Bluetooth enabled and normal Video mode selected while Multicam connects."
+            }
+            let action = camera.isPaired ? "Connect" : "Pair"
+            return "Turn on your camera, enable Bluetooth, and select normal Video mode. Then tap \(action) here."
+        }
         if camera.brand == .gopro {
             if isConnecting {
                 return "If a Bluetooth pairing request appears, tap Pair."
@@ -649,73 +672,109 @@ private struct PairingCameraRow: View {
     @ViewBuilder
     private var pairedCameraActions: some View {
         HStack(spacing: 6) {
-            if canDisconnect {
-                Button {
-                    store.disconnect(camera)
-                } label: {
-                    actionLabel("Disconnect", width: connectionActionContentWidth)
-                }
-                .buttonStyle(.bordered)
-                .tint(.red)
-            } else if camera.canConnectFromCurrentState {
+            if isConnecting || camera.canConnectFromCurrentState {
                 Button {
                     store.connectAvailableCamera(camera)
                 } label: {
-                    actionLabel("Connect", width: connectionActionContentWidth)
+                    actionLabel(isConnecting ? "Connecting…" : "Connect")
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Color.acrAvailable)
+                .disabled(isConnecting)
             }
 
-            Menu {
-                Button {
-                    proposedName = camera.displayName
+            CameraManagementMenu(
+                configuration: .init(
+                    cameraID: camera.id,
+                    displayName: camera.displayName,
+                    canDisconnect: canDisconnect
+                ),
+                onRename: {
+                    guard let current = store.cameras.first(where: { $0.id == camera.id }) else { return }
+                    proposedName = current.displayName
                     isRenaming = true
-                } label: {
-                    Label("Rename Camera", systemImage: "pencil")
-                        .symbolRenderingMode(.monochrome)
-                        .foregroundStyle(Color.acrInk)
+                },
+                onDisconnect: {
+                    guard let current = store.cameras.first(where: { $0.id == camera.id }) else { return }
+                    store.disconnect(current)
+                },
+                onUnpair: {
+                    guard let current = store.cameras.first(where: { $0.id == camera.id }) else { return }
+                    store.remove(current)
                 }
-                .tint(Color.acrInk)
-
-                Button(role: .destructive) {
-                    store.remove(camera)
-                } label: {
-                    Label("Unpair Camera", systemImage: "trash")
-                        .symbolRenderingMode(.monochrome)
-                        .foregroundStyle(.red)
-                }
-                .tint(.red)
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.subheadline.weight(.semibold))
-                    .symbolRenderingMode(.monochrome)
-                    .foregroundStyle(Color.acrMutedText)
-                    .frame(width: 16, height: actionContentHeight)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-            .fixedSize()
-            .accessibilityLabel("More options for \(camera.displayName)")
+            )
+            .equatable()
         }
         .controlSize(.small)
         .fixedSize()
     }
 
-    private func actionLabel(
-        _ title: String,
-        width: CGFloat
-    ) -> some View {
+    private func actionLabel(_ title: String) -> some View {
         Text(title)
             .lineLimit(1)
-            .minimumScaleFactor(0.8)
-            .frame(width: width, height: actionContentHeight)
+            .frame(height: actionContentHeight)
     }
 
     private var pairingDetail: String? {
         guard camera.unsupportedReason == nil else { return nil }
         return camera.connectionState.detail
+    }
+}
+
+// Keep the native menu stable while discovery and telemetry refresh its row.
+// Actions resolve the current camera in the store when the user selects them.
+private struct CameraManagementMenu: View, Equatable {
+    struct Configuration: Equatable {
+        let cameraID: UUID
+        let displayName: String
+        let canDisconnect: Bool
+    }
+
+    let configuration: Configuration
+    let onRename: () -> Void
+    let onDisconnect: () -> Void
+    let onUnpair: () -> Void
+
+    static func == (lhs: Self, rhs: Self) -> Bool {
+        lhs.configuration == rhs.configuration
+    }
+
+    var body: some View {
+        Menu {
+            Button(action: onRename) {
+                Label("Rename Camera", systemImage: "pencil")
+                    .symbolRenderingMode(.monochrome)
+                    .foregroundStyle(Color.acrInk)
+            }
+            .tint(Color.acrInk)
+
+            if configuration.canDisconnect {
+                Button(action: onDisconnect) {
+                    Label("Disconnect Camera", systemImage: "xmark.circle")
+                        .symbolRenderingMode(.monochrome)
+                        .foregroundStyle(Color.acrInk)
+                }
+                .tint(Color.acrInk)
+            }
+
+            Button(role: .destructive, action: onUnpair) {
+                Label("Unpair Camera", systemImage: "trash")
+                    .symbolRenderingMode(.monochrome)
+                    .foregroundStyle(.red)
+            }
+            .tint(.red)
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.subheadline.weight(.semibold))
+                .symbolRenderingMode(.monochrome)
+                .foregroundStyle(Color.acrMutedText)
+                .frame(width: 16, height: 20)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.bordered)
+        .controlSize(.small)
+        .fixedSize()
+        .accessibilityLabel("More options for \(configuration.displayName)")
     }
 }
 
@@ -886,12 +945,12 @@ private struct RecentResultsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Command Results")
+                Text("Command Log")
                     .font(.headline)
 
                 Spacer()
 
-                Button("Reset") {
+                Button("Clear") {
                     store.resetCommandHistory()
                 }
                 .font(.caption)
@@ -900,17 +959,17 @@ private struct RecentResultsView: View {
                 .padding(.vertical, 6)
                 .contentShape(Rectangle())
                 .disabled(store.commandHistory.isEmpty && store.commandHistoryStorageError == nil)
-                .accessibilityLabel("Reset saved command history")
+                .accessibilityLabel("Clear command log")
             }
 
             if let error = store.commandHistoryStorageError {
-                Text("Command history could not be saved: \(error)")
+                Text("Command log could not be saved: \(error)")
                     .font(.caption)
                     .foregroundStyle(Color.acrWarning)
             }
 
             if store.commandHistory.isEmpty {
-                Text("No saved commands.")
+                Text("No commands logged.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -940,10 +999,6 @@ private struct RecentResultsView: View {
                     .acrInsetPanel()
                 }
             }
-
-            Text("\(store.commandHistory.count) saved · Up to \(CommandResultArchive.defaultMaximumCount) commands")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 
@@ -998,13 +1053,13 @@ private struct EventLogView: View {
             }
 
             if let error = store.logStorageError {
-                Text("Logs could not be saved: \(error)")
+                Text("Bluetooth log could not be saved: \(error)")
                     .font(.caption)
                     .foregroundStyle(Color.acrWarning)
             }
 
             if store.eventLog.isEmpty {
-                Text("Discovery and protocol messages will appear here.")
+                Text("No Bluetooth messages logged.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .padding()

@@ -149,6 +149,9 @@ struct ACRPrimaryActionButton: View {
     var showsTitle: Bool = true
     var minimumContentWidth: CGFloat? = nil
     var fillsWidth = false
+    var scalesWithLargerControls = true
+    var height: CGFloat? = nil
+    var cornerRadius: CGFloat = ACRDesign.buttonCornerRadius
     var feedback: SensoryFeedback = .impact(weight: .medium)
     var action: () -> Void
     @State private var feedbackTrigger = 0
@@ -158,11 +161,13 @@ struct ACRPrimaryActionButton: View {
             action()
             feedbackTrigger += 1
         } label: {
-            HStack(spacing: largerControls ? 10 : 6) {
+            HStack(spacing: usesLargerControls ? 10 : 6) {
                 if isLoading {
                     ProgressView()
                         .tint(contentColor)
-                        .controlSize(.small)
+                        .controlSize(.regular)
+                        .scaleEffect(size == .large ? 1 : 0.85)
+                        .frame(width: size == .large ? 20 : 17, height: size == .large ? 20 : 17)
                 } else {
                     Image(systemName: systemImage)
                 }
@@ -173,7 +178,7 @@ struct ACRPrimaryActionButton: View {
                         .minimumScaleFactor(0.82)
                 }
             }
-            .font(largerControls ? .title3.weight(.semibold) : size.font)
+            .font(usesLargerControls ? .title3.weight(.semibold) : size.font)
             .fontDesign(.rounded)
             .foregroundStyle(contentColor)
             .frame(
@@ -184,10 +189,10 @@ struct ACRPrimaryActionButton: View {
             .padding(.horizontal, showsTitle ? size.horizontalPadding : 0)
             .background(
                 buttonFill,
-                in: RoundedRectangle(cornerRadius: ACRDesign.buttonCornerRadius, style: .continuous)
+                in: RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
             )
             .overlay {
-                RoundedRectangle(cornerRadius: ACRDesign.buttonCornerRadius, style: .continuous)
+                RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                     .stroke(buttonStroke, lineWidth: strokeWidth)
             }
             .shadow(
@@ -197,6 +202,8 @@ struct ACRPrimaryActionButton: View {
                 radius: size == .large ? 6 : 3,
                 y: size == .large ? 2 : 1
             )
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .disabled(!isEnabled || isLoading)
@@ -208,8 +215,12 @@ struct ACRPrimaryActionButton: View {
         isEnabled || isLoading
     }
 
+    private var usesLargerControls: Bool {
+        scalesWithLargerControls && largerControls
+    }
+
     private var controlHeight: CGFloat {
-        largerControls ? (size == .large ? 76 : 64) : size.height
+        height ?? (usesLargerControls ? (size == .large ? 76 : 64) : size.height)
     }
 
     private var showsFilledTreatment: Bool {

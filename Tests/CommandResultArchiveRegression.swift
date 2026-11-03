@@ -86,7 +86,7 @@ enum CommandResultArchiveRegression {
         precondition(snapshot.results.count == 25 && !snapshot.reportSection.contains("Before reset"))
         let file = try await logs.export(context: "Diagnostics Context\n\n" + snapshot.reportSection, directory: directory)
         let report = try String(contentsOf: file, encoding: .utf8)
-        precondition(report.contains("Command Results (newest first)") && report.contains("Bluetooth Log (newest first)"))
+        precondition(report.contains("Command Log (newest first)") && report.contains("Bluetooth Log (newest first)"))
         precondition(report.contains("caméra 1\n") && report.contains("caméra 25"), "Export must include retained commands beyond the six displayed and old twenty-command export limit")
         precondition(report.contains("Bluetooth connection kept"), "Resetting commands must leave Bluetooth logs intact")
         let draft = try SupportEmailDraft(diagnosticsURL: file, version: "1.2.2 (43)")
@@ -100,7 +100,7 @@ enum CommandResultArchiveRegression {
 
         commands.clear { _ in }
         let cleared = await commands.snapshot()
-        precondition(cleared.results.isEmpty && cleared.reportSection.contains("No saved commands."))
+        precondition(cleared.results.isEmpty && cleared.reportSection.contains("No commands logged."))
         precondition(CommandResultArchive(directory: location).initialSnapshot.results.isEmpty)
     }
 

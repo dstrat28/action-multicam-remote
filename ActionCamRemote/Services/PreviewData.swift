@@ -19,6 +19,14 @@ extension CameraStore {
             brand = .dji
             model = .djiOsmoNano
             name = "Osmo Nano"
+        } else if arguments.contains("--demo-insta360-x6") {
+            brand = .insta360
+            model = .insta360X6
+            name = "Insta360 X6"
+        } else if arguments.contains("--demo-insta360-x5") {
+            brand = .insta360
+            model = .insta360X5
+            name = "Insta360 X5"
         } else {
             brand = .insta360
             model = .insta360Go3
@@ -37,7 +45,8 @@ extension CameraStore {
             isPaired: isConnected,
             isSelected: isConnected,
             lastSeen: Date(),
-            isPairingAdvertisement: brand == .gopro ? !arguments.contains("--demo-gopro-not-pairing") : nil
+            isPairingAdvertisement: brand == .gopro ? !arguments.contains("--demo-gopro-not-pairing") : nil,
+            insta360UsesGPSRemoteFallback: model == .insta360X5 && arguments.contains("--demo-insta360-gps-fallback")
         )]
     }
 #endif
@@ -55,21 +64,48 @@ extension CameraStore {
                         GoProPreset(id: 0, name: "Standard", groupID: 1000, mode: .video, isCustom: false),
                         GoProPreset(id: 1, name: "Helmet", groupID: 1000, mode: .video, isCustom: true),
                         GoProPreset(id: 2, name: "Track Day", groupID: 1000, mode: .video, isCustom: true),
+                        GoProPreset(id: 3, name: "Highest Quality Video", groupID: 1000, mode: .video, isCustom: false),
                         GoProPreset(id: 65_536, name: "Photo", groupID: 1001, mode: .photo, isCustom: false),
                         GoProPreset(id: 131_072, name: "TimeWarp", groupID: 1002, mode: .timelapse, isCustom: false)
                     ]
-                    camera.activeGoProPresetID = 0
+                    camera.activeGoProPresetID = ProcessInfo.processInfo.arguments.contains("--demo-long-preset") ? 3 : 0
                 }
                 camera.isPaired = true
                 camera.isSelected = true
             }
             return camera
         }
+#if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--demo-mixed-connections") {
+            for index in cameras.indices.dropFirst() {
+                cameras[index].connectionState = .disconnected
+                cameras[index].recordingState = .unknown
+                cameras[index].currentMode = nil
+                cameras[index].telemetry = nil
+                cameras[index].isSelected = false
+            }
+        }
+#endif
         eventLog = [
             "[9:41:02 AM] GoPro HERO13: command characteristic is ready.",
             "[9:40:58 AM] DJI Action 6: discovered 4 candidate services.",
             "[9:40:54 AM] Simulator demo mode loaded sample cameras."
         ]
+#if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--demo-live-camera-updates") {
+            Task { @MainActor [weak self] in
+                for tick in 0..<240 {
+                    try? await Task.sleep(for: .milliseconds(250))
+                    guard let self, self.isDemoMode else { return }
+                    for index in self.cameras.indices {
+                        self.cameras[index].rssi = -40 - (tick % 20)
+                        self.cameras[index].lastSeen = Date()
+                        self.cameras[index].telemetry?.batteryPercent = 40 + (tick % 55)
+                    }
+                }
+            }
+        }
+#endif
     }
 
     static var preview: CameraStore {

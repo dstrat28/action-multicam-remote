@@ -49,6 +49,12 @@
 		ACR000000000000000000140 /* SupportEmailDraft.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000041 /* SupportEmailDraft.swift */; };
 		ACR000000000000000000141 /* SupportMailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000042 /* SupportMailView.swift */; };
 		ACR000000000000000000142 /* GoProPresetProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000043 /* GoProPresetProtocol.swift */; };
+		ACR000000000000000000143 /* Insta360DirectProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000044 /* Insta360DirectProtocol.swift */; };
+		ACR000000000000000000144 /* Insta360DirectSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000045 /* Insta360DirectSession.swift */; };
+		ACR000000000000000000145 /* Insta360DirectBLEClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000046 /* Insta360DirectBLEClient.swift */; };
+		ACR000000000000000000146 /* THIRD_PARTY_NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000047 /* THIRD_PARTY_NOTICES.md */; };
+		ACR000000000000000000147 /* DJICommandTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000048 /* DJICommandTracker.swift */; };
+		ACR000000000000000000148 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000049 /* PrivacyInfo.xcprivacy */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -137,6 +143,12 @@
 		ACR000000000000000000041 /* SupportEmailDraft.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupportEmailDraft.swift; sourceTree = "<group>"; };
 		ACR000000000000000000042 /* SupportMailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SupportMailView.swift; sourceTree = "<group>"; };
 		ACR000000000000000000043 /* GoProPresetProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GoProPresetProtocol.swift; sourceTree = "<group>"; };
+		ACR000000000000000000044 /* Insta360DirectProtocol.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Insta360DirectProtocol.swift; sourceTree = "<group>"; };
+		ACR000000000000000000045 /* Insta360DirectSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Insta360DirectSession.swift; sourceTree = "<group>"; };
+		ACR000000000000000000046 /* Insta360DirectBLEClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Insta360DirectBLEClient.swift; sourceTree = "<group>"; };
+		ACR000000000000000000047 /* THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = THIRD_PARTY_NOTICES.md; sourceTree = SOURCE_ROOT; };
+		ACR000000000000000000048 /* DJICommandTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DJICommandTracker.swift; sourceTree = "<group>"; };
+		ACR000000000000000000049 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -168,6 +180,7 @@
 			isa = PBXGroup;
 			children = (
 				ACR000000000000000000301 /* ActionCamRemote */,
+				ACR000000000000000000047 /* THIRD_PARTY_NOTICES.md */,
 				ACR000000000000000000307 /* MulticamWatchApp */,
 				ACR000000000000000000309 /* MulticamLiveActivity */,
 				ACR000000000000000000302 /* Products */,
@@ -180,6 +193,7 @@
 				ACR000000000000000000001 /* ActionCamRemoteApp.swift */,
 				ACR000000000000000000028 /* MulticamAppIntents.swift */,
 				ACR000000000000000000012 /* Info.plist */,
+				ACR000000000000000000049 /* PrivacyInfo.xcprivacy */,
 				ACR000000000000000000014 /* Assets.xcassets */,
 				ACR000000000000000000303 /* Models */,
 				ACR000000000000000000304 /* Bluetooth */,
@@ -216,11 +230,15 @@
 				ACR000000000000000000004 /* BLECameraScanner.swift */,
 				ACR000000000000000000005 /* GoProBLEClient.swift */,
 				ACR000000000000000000006 /* DJIExperimentalBLEClient.swift */,
+				ACR000000000000000000048 /* DJICommandTracker.swift */,
 				ACR000000000000000000029 /* DJINanoProtocol.swift */,
 				ACR000000000000000000030 /* Insta360RemoteProtocol.swift */,
 				ACR000000000000000000033 /* GoProCommandQueue.swift */,
 				ACR000000000000000000043 /* GoProPresetProtocol.swift */,
 				ACR000000000000000000031 /* Insta360RemoteService.swift */,
+				ACR000000000000000000046 /* Insta360DirectBLEClient.swift */,
+				ACR000000000000000000045 /* Insta360DirectSession.swift */,
+				ACR000000000000000000044 /* Insta360DirectProtocol.swift */,
 			);
 			path = Bluetooth;
 			sourceTree = "<group>";
@@ -398,6 +416,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				ACR000000000000000000112 /* Assets.xcassets in Resources */,
+				ACR000000000000000000148 /* PrivacyInfo.xcprivacy in Resources */,
+				ACR000000000000000000146 /* THIRD_PARTY_NOTICES.md in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -429,11 +449,15 @@
 				ACR000000000000000000104 /* BLECameraScanner.swift in Sources */,
 				ACR000000000000000000105 /* GoProBLEClient.swift in Sources */,
 				ACR000000000000000000106 /* DJIExperimentalBLEClient.swift in Sources */,
+				ACR000000000000000000147 /* DJICommandTracker.swift in Sources */,
 				ACR000000000000000000129 /* DJINanoProtocol.swift in Sources */,
 				ACR000000000000000000130 /* Insta360RemoteProtocol.swift in Sources */,
 				ACR000000000000000000133 /* GoProCommandQueue.swift in Sources */,
 				ACR000000000000000000142 /* GoProPresetProtocol.swift in Sources */,
 				ACR000000000000000000131 /* Insta360RemoteService.swift in Sources */,
+				ACR000000000000000000145 /* Insta360DirectBLEClient.swift in Sources */,
+				ACR000000000000000000144 /* Insta360DirectSession.swift in Sources */,
+				ACR000000000000000000143 /* Insta360DirectProtocol.swift in Sources */,
 				ACR000000000000000000107 /* CameraStore.swift in Sources */,
 				ACR000000000000000000132 /* DiagnosticLogArchive.swift in Sources */,
 				ACR000000000000000000139 /* CommandResultArchive.swift in Sources */,
