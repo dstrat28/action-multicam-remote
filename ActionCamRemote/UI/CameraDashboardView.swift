@@ -886,12 +886,12 @@ private struct RecentResultsView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                Text("Command Results")
+                Text("Command Log")
                     .font(.headline)
 
                 Spacer()
 
-                Button("Reset") {
+                Button("Clear") {
                     store.resetCommandHistory()
                 }
                 .font(.caption)
@@ -900,17 +900,17 @@ private struct RecentResultsView: View {
                 .padding(.vertical, 6)
                 .contentShape(Rectangle())
                 .disabled(store.commandHistory.isEmpty && store.commandHistoryStorageError == nil)
-                .accessibilityLabel("Reset saved command history")
+                .accessibilityLabel("Clear command log")
             }
 
             if let error = store.commandHistoryStorageError {
-                Text("Command history could not be saved: \(error)")
+                Text("Command log could not be saved: \(error)")
                     .font(.caption)
                     .foregroundStyle(Color.acrWarning)
             }
 
             if store.commandHistory.isEmpty {
-                Text("No saved commands.")
+                Text("No commands logged.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -940,10 +940,6 @@ private struct RecentResultsView: View {
                     .acrInsetPanel()
                 }
             }
-
-            Text("\(store.commandHistory.count) saved · Up to \(CommandResultArchive.defaultMaximumCount) commands")
-                .font(.caption)
-                .foregroundStyle(.secondary)
         }
     }
 
@@ -998,13 +994,13 @@ private struct EventLogView: View {
             }
 
             if let error = store.logStorageError {
-                Text("Logs could not be saved: \(error)")
+                Text("Bluetooth log could not be saved: \(error)")
                     .font(.caption)
                     .foregroundStyle(Color.acrWarning)
             }
 
             if store.eventLog.isEmpty {
-                Text("Discovery and protocol messages will appear here.")
+                Text("No Bluetooth messages logged.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .padding()
