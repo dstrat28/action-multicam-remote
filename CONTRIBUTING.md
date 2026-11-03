@@ -50,7 +50,7 @@ Camera behavior varies by model, firmware, and power state. Good reports include
 - what happened on the physical camera;
 - a diagnostics file from Settings > Diagnostics > Share if you are comfortable sharing it.
 
-Recent diagnostic logs are saved locally across app restarts, up to 5 MB. The oldest entries are removed when the archive reaches its size limit. Share exports all retained logs as a text file, alongside current app, device, and camera details. Clear beside Bluetooth Log removes both the displayed and saved logs. Logging starts when the app runs; it cannot recover logs from before this archive was introduced.
+Recent diagnostic logs are saved locally across app restarts, up to 5 MiB. The oldest entries are removed when the archive reaches its size limit. Share exports all retained logs as a text file, alongside current app, device, and camera details. Clear beside Bluetooth Log removes both the displayed and saved logs. Logging starts when the app runs; it cannot recover logs from before this archive was introduced.
 
 Command Log saves up to 500 commands (512 KiB maximum) across app restarts, including later delivery outcomes for queued commands. Diagnostics shows the latest six results with timestamps; the exported file includes all retained results in a separate section. Clear beside Command Log clears saved commands independently of Bluetooth logs and camera controls. Simulator demos keep both histories in memory only.
 
