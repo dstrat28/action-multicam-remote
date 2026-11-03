@@ -306,7 +306,7 @@ struct CameraRowView: View {
                     .accessibilityHidden(true)
             }
         }
-        .padding(.horizontal, showsChevron ? 10 : 0)
+        .padding(.horizontal, showsChevron ? (largerControls ? 14 : 10) : 0)
         .frame(height: largerControls ? 48 : 30)
         .fixedSize(horizontal: true, vertical: false)
         .background {
