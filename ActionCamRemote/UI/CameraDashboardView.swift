@@ -139,21 +139,15 @@ private struct MulticamRecordBar: View {
     @AppStorage(ACRPreferences.largerControls) private var largerControls = false
 
     var body: some View {
-        Group {
-            if largerControls {
-                HStack(spacing: 12) {
-                    recordingControls
-                }
-            } else {
-                HStack(alignment: .center, spacing: 8) {
-                    selectionLabel
-                    Spacer(minLength: 4)
-                    recordingControls
-                }
+        HStack(alignment: .center, spacing: showsSelectionCount ? 8 : 12) {
+            if showsSelectionCount {
+                selectionLabel
+                Spacer(minLength: 4)
             }
+            recordingControls
         }
         .frame(minHeight: 56, alignment: .center)
-        .padding(.leading, largerControls ? 10 : 18)
+        .padding(.leading, showsSelectionCount ? 18 : 10)
         .padding(.trailing, 10)
         .padding(.vertical, 10)
         .acrFloatingControlBar()
@@ -202,9 +196,13 @@ private struct MulticamRecordBar: View {
             isLoading: store.isStoppingMulticamRecording || isStarting || isPhotoCaptureInProgress,
             size: .large,
             minimumContentWidth: store.canStopMulticamRecording ? 124 : nil,
-            fillsWidth: largerControls,
+            fillsWidth: !showsSelectionCount,
             action: performAction
         )
+    }
+
+    private var showsSelectionCount: Bool {
+        !largerControls && !store.canStopMulticamRecording && !store.isStoppingMulticamRecording
     }
 
     private var title: String {
