@@ -152,11 +152,12 @@ private struct MulticamRecordBar: View {
         .padding(.vertical, 10)
         .acrFloatingControlBar()
         .frame(maxWidth: .infinity)
+        .transaction { $0.animation = nil }
     }
 
     @ViewBuilder
     private var recordingControls: some View {
-        if store.canAddHighlight {
+        if showsHighlightButton {
             highlightButton
         }
         actionButton
@@ -167,6 +168,7 @@ private struct MulticamRecordBar: View {
             title: "Highlight",
             systemImage: "bookmark.fill",
             tint: .yellow,
+            isEnabled: store.canAddHighlight && !isStarting && !store.isStoppingMulticamRecording,
             size: .large,
             appearance: .outlined,
             showsTitle: false,
@@ -202,7 +204,16 @@ private struct MulticamRecordBar: View {
     }
 
     private var showsSelectionCount: Bool {
-        !largerControls && !store.canStopMulticamRecording && !store.isStoppingMulticamRecording
+        !largerControls && !isStarting && !store.canStopMulticamRecording
+            && !store.isStoppingMulticamRecording && !showsHighlightButton
+    }
+
+    private var showsHighlightButton: Bool {
+        store.readyConnectedCameras.contains { camera in
+            camera.supportsHighlight && !camera.isInPhotoMode
+                && (camera.recordingState == .starting || camera.recordingState == .recording
+                    || store.isCameraStopping(camera))
+        }
     }
 
     private var title: String {
