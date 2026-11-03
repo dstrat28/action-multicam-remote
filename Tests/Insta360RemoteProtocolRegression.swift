@@ -192,6 +192,7 @@ enum Insta360RemoteProtocolRegression {
         checkTimerValidation()
         checkDisplayTimerFrames()
         checkRecordingStatus()
+        checkStopGateKeepsFreshRecordingEvidence()
         checkSuccessiveRecordingSessions()
         checkQueuedCommands()
 
@@ -367,6 +368,48 @@ enum Insta360RemoteProtocolRegression {
         precondition(pendingStop.observeTimer(at: now.addingTimeInterval(11)))
         precondition(pendingStop.rejectionReason(for: .stopRecording) == nil,
                      "A fresh recording timer after the feedback window permits an explicit retry")
+    }
+
+    private static func checkStopGateKeepsFreshRecordingEvidence() {
+        let now = Date(timeIntervalSinceReferenceDate: 2_700)
+        var status = Insta360RemoteRecordingStatus()
+        status.observeTimer(at: now)
+        status.shutterSent(at: now.addingTimeInterval(1))
+        for second in 2 ... 6 {
+            status.observeTimer(at: now.addingTimeInterval(Double(second)))
+        }
+        precondition(status.expire(at: now.addingTimeInterval(6.1)))
+        precondition(status.state == .unknown)
+        for command in [CameraCommand.startRecording, .capturePhoto, .toggleRecording, .stopRecording] {
+            precondition(status.rejectionReason(for: command) != nil,
+                "Stop-gate expiry must not permit a shutter toggle 100ms after recording feedback")
+        }
+        precondition(status.rejectionReason(for: .cycleMode) == nil)
+        precondition(status.lastTimerAt == now.addingTimeInterval(6))
+
+        var freshTimer = status
+        precondition(freshTimer.observeTimer(at: now.addingTimeInterval(7)))
+        precondition(freshTimer.rejectionReason(for: .stopRecording) == nil)
+        precondition(freshTimer.rejectionReason(for: .toggleRecording) == nil)
+        precondition(freshTimer.rejectionReason(for: .startRecording) != nil)
+        precondition(freshTimer.rejectionReason(for: .capturePhoto) != nil)
+
+        precondition(!status.expire(at: now.addingTimeInterval(11)))
+        precondition(status.rejectionReason(for: .startRecording) != nil)
+        precondition(status.expire(at: now.addingTimeInterval(11.1)))
+        precondition(status.lastTimerAt == nil)
+        for command in [CameraCommand.startRecording, .capturePhoto, .toggleRecording] {
+            precondition(status.rejectionReason(for: command) == nil)
+        }
+        precondition(status.rejectionReason(for: .stopRecording) != nil)
+
+        var silentStop = Insta360RemoteRecordingStatus()
+        silentStop.observeTimer(at: now)
+        silentStop.shutterSent(at: now.addingTimeInterval(1))
+        precondition(silentStop.expire(at: now.addingTimeInterval(6.1)))
+        precondition(silentStop.lastTimerAt == nil)
+        precondition(silentStop.rejectionReason(for: .startRecording) == nil,
+            "Silence should not extend the existing five-second feedback window")
     }
 
     private static func checkQueuedCommands() {
