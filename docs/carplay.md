@@ -38,4 +38,3 @@ sh ci_scripts/check_carplay_controller.sh
 ```
 
 It compiles the actual CarPlay controller against minimal host-side template and store doubles. It checks immediate connection/recording updates, the periodic battery refresh, and pause/resume/disconnect lifecycle behavior without a simulator or entitlement. Native template rendering, Bluetooth behavior, and signed provisioning still require separate app/device checks.
-
