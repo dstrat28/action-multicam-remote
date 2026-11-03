@@ -42,25 +42,34 @@ CarPlay development and testing notes are in [docs/carplay.md](docs/carplay.md).
 
 ## Acknowledgements
 
-Thank you to these projects for helping make Multicam possible:
+Thank you to the projects whose documentation, implementations, and camera captures informed Multicam:
 
-- [dji-sdk/Osmo-GPS-Controller-Demo](https://github.com/dji-sdk/Osmo-GPS-Controller-Demo) for DJI's R SDK BLE, camera-control, status, and GPS reference implementation.
-- [gopro/OpenGoPro](https://github.com/gopro/OpenGoPro) for GoPro's official BLE interface specification, documentation, and demos.
-- [KonradIT/osmosis](https://github.com/KonradIT/osmosis) for DJI Osmo Nano DUML research and documentation.
-- [rhoenschrat/DJI-Remote](https://github.com/rhoenschrat/DJI-Remote) for DJI highlight-tag research.
-- [marcelpallares/insta360-m5stick-remote](https://github.com/marcelpallares/insta360-m5stick-remote) for the MIT-licensed Insta360 GPS Remote, Ace Pro 2/X5, multicamera, command, and recording-status reference implementation.
-- [pchwalek/insta360_ble_esp32](https://github.com/pchwalek/insta360_ble_esp32) for the MIT-licensed CE80/CE81/CE82 GPS Remote service and command reference implementation.
-- [AndreySemjonov/X6-Watch-Remote](https://github.com/AndreySemjonov/X6-Watch-Remote) for the MIT-licensed X6 direct Bluetooth protocol, Swift framing/status/telemetry implementation, and captured regression fixtures.
-- [diamondfsd/luna-ai-cut](https://github.com/diamondfsd/luna-ai-cut) for the MIT-licensed UCD2 framing and checksum implementation used by X6 Watch Remote.
-- [soul667/insta360-x5-toolkit](https://github.com/soul667/insta360-x5-toolkit) for documented, hardware-verified X5 direct Bluetooth framing, sync/heartbeat behavior, and capture examples.
-- [TheAngryRaven/insta360-ble-gps-spec](https://github.com/TheAngryRaven/insta360-ble-gps-spec) for X4 GPS Remote packet observations, including connection-local button sequence numbers (protocol research reference).
-- [retweakeverything/osmo-action-remote](https://github.com/retweakeverything/osmo-action-remote) for DJI pairing and command-lifecycle reference behavior.
-- [sepp89117/GoEasyPro_Android](https://github.com/sepp89117/GoEasyPro_Android) for GoPro response sequencing research (GPL-3.0 reference; no source code incorporated).
+**GoPro**
 
-Adapted code and fixtures retain their upstream licenses in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+- [OpenGoPro](https://github.com/gopro/OpenGoPro) — official BLE specification and examples.
+- [GoEasyPro](https://github.com/sepp89117/GoEasyPro_Android) — response sequencing research.
+
+**DJI**
+
+- [Osmo GPS Controller Demo](https://github.com/dji-sdk/Osmo-GPS-Controller-Demo) — official R SDK control, status, and GPS reference.
+- [osmosis](https://github.com/KonradIT/osmosis) — Osmo Nano DUML research.
+- [DJI-Remote](https://github.com/rhoenschrat/DJI-Remote) — highlight-tag research.
+- [Osmo Action Remote](https://github.com/retweakeverything/osmo-action-remote) — pairing and command lifecycle.
+
+**Insta360**
+
+- [X6 Watch Remote](https://github.com/AndreySemjonov/X6-Watch-Remote) — X6 framing, status, telemetry, and captured fixtures.
+- [luna-ai-cut](https://github.com/diamondfsd/luna-ai-cut) — UCD2 framing and checksum implementation used by X6 Watch Remote.
+- [Insta360 X5 toolkit](https://github.com/soul667/insta360-x5-toolkit) — X5 framing, sync, heartbeat, and capture examples.
+- [insta360-m5stick-remote](https://github.com/marcelpallares/insta360-m5stick-remote) — GPS Remote commands, recording status, and multicamera behavior.
+- [insta360_ble_esp32](https://github.com/pchwalek/insta360_ble_esp32) — GPS Remote service and commands.
+- [Insta360 BLE GPS spec](https://github.com/TheAngryRaven/insta360-ble-gps-spec) — X4 packet and button-sequence observations.
+- [DovesDataLogger](https://github.com/TheAngryRaven/DovesDataLogger/blob/0077141ea3a43de68e1d9dc2e761e6674d9e31b3/tests/insta360_protocol_test.cpp) — X4 display-timer packet used in regression checks.
+
+GoEasyPro and DovesDataLogger are GPL-3.0 research references; their application source code is not incorporated into Multicam. License notices for the MIT implementations and examples are retained in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md), which is bundled in the iPhone app.
 
 Multicam is an independent project and is not affiliated with, endorsed by, or sponsored by GoPro, DJI, Insta360, or their affiliates.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+Multicam's original source code is [MIT-licensed](LICENSE). Third-party notices are in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). See [PRIVACY.md](PRIVACY.md) for local storage and diagnostic sharing.
