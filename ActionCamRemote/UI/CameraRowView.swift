@@ -1267,6 +1267,7 @@ private struct CameraRecordButton: View {
             appearance: camera.recordingState == .recording && !camera.isInPhotoMode
                 ? .filled
                 : .outlined,
+            scalesWithLargerControls: false,
             action: performRecordAction
         )
     }

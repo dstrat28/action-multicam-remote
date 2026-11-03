@@ -149,6 +149,7 @@ struct ACRPrimaryActionButton: View {
     var showsTitle: Bool = true
     var minimumContentWidth: CGFloat? = nil
     var fillsWidth = false
+    var scalesWithLargerControls = true
     var feedback: SensoryFeedback = .impact(weight: .medium)
     var action: () -> Void
     @State private var feedbackTrigger = 0
@@ -158,7 +159,7 @@ struct ACRPrimaryActionButton: View {
             action()
             feedbackTrigger += 1
         } label: {
-            HStack(spacing: largerControls ? 10 : 6) {
+            HStack(spacing: usesLargerControls ? 10 : 6) {
                 if isLoading {
                     ProgressView()
                         .tint(contentColor)
@@ -173,7 +174,7 @@ struct ACRPrimaryActionButton: View {
                         .minimumScaleFactor(0.82)
                 }
             }
-            .font(largerControls ? .title3.weight(.semibold) : size.font)
+            .font(usesLargerControls ? .title3.weight(.semibold) : size.font)
             .fontDesign(.rounded)
             .foregroundStyle(contentColor)
             .frame(
@@ -208,8 +209,12 @@ struct ACRPrimaryActionButton: View {
         isEnabled || isLoading
     }
 
+    private var usesLargerControls: Bool {
+        scalesWithLargerControls && largerControls
+    }
+
     private var controlHeight: CGFloat {
-        largerControls ? (size == .large ? 76 : 64) : size.height
+        usesLargerControls ? (size == .large ? 76 : 64) : size.height
     }
 
     private var showsFilledTreatment: Bool {
