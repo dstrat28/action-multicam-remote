@@ -50,6 +50,16 @@ extension CameraStore {
                 camera.recordingState = .stopped
                 camera.currentMode = .video
                 camera.telemetry = Self.demoTelemetry(for: camera)
+                if camera.brand == .gopro {
+                    camera.goProPresets = [
+                        GoProPreset(id: 0, name: "Standard", groupID: 1000, mode: .video, isCustom: false),
+                        GoProPreset(id: 1, name: "Helmet", groupID: 1000, mode: .video, isCustom: true),
+                        GoProPreset(id: 2, name: "Track Day", groupID: 1000, mode: .video, isCustom: true),
+                        GoProPreset(id: 65_536, name: "Photo", groupID: 1001, mode: .photo, isCustom: false),
+                        GoProPreset(id: 131_072, name: "TimeWarp", groupID: 1002, mode: .timelapse, isCustom: false)
+                    ]
+                    camera.activeGoProPresetID = 0
+                }
                 camera.isPaired = true
                 camera.isSelected = true
             }

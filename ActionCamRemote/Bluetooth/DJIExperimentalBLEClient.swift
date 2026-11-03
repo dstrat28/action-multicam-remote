@@ -278,7 +278,7 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
                 return result(for: command, status: .sent, message: "Sent DJI diagnostic status probe.")
             }
             return rSDKNotReadyResult(for: command)
-        case .cycleMode, .applySetting:
+        case .cycleMode, .applySetting, .loadGoProPreset:
             return result(
                 for: command,
                 status: .unsupported,

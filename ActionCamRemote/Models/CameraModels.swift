@@ -912,6 +912,8 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     var recordingState: CameraRecordingState
     var currentMode: CaptureMode? = nil
     var telemetry: CameraTelemetry? = nil
+    var goProPresets: [GoProPreset]? = nil
+    var activeGoProPresetID: UInt32? = nil
     var isPaired: Bool
     var isSelected: Bool
     var lastSeen: Date
@@ -1614,6 +1616,14 @@ struct CameraSetting: Equatable, Codable {
     var label: String
 }
 
+struct GoProPreset: Identifiable, Equatable, Codable {
+    let id: UInt32
+    let name: String
+    let groupID: UInt32
+    let mode: CaptureMode?
+    let isCustom: Bool
+}
+
 struct CameraStatusUpdate: Equatable {
     var recordingState: CameraRecordingState? = nil
     var currentMode: CaptureMode? = nil
@@ -1624,6 +1634,8 @@ struct CameraStatusUpdate: Equatable {
     var canClearActiveRecording: Bool = true
     var replacesCaptureSettings: Bool = false
     var replacesDJIRSDKStatus: Bool = false
+    var goProPresets: [GoProPreset]? = nil
+    var activeGoProPresetID: UInt32? = nil
 }
 
 enum CameraRecordingStartPolicy {
@@ -1654,6 +1666,7 @@ enum CameraCommand: Equatable, Codable {
     case addHighlight
     case toggleRecording
     case setMode(CaptureMode)
+    case loadGoProPreset(id: UInt32, name: String)
     case cycleMode
     case applySetting(CameraSetting)
     case keepAlive
@@ -1672,6 +1685,8 @@ enum CameraCommand: Equatable, Codable {
             "Toggle Recording"
         case let .setMode(mode):
             "Set \(mode.rawValue)"
+        case let .loadGoProPreset(_, name):
+            "Load Preset: \(name)"
         case .cycleMode:
             "Cycle Mode"
         case let .applySetting(setting):

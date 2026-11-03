@@ -6,7 +6,7 @@ struct CameraDashboardView: View {
     @State private var isManagingCameras = false
     @State private var manageCameraDetent: PresentationDetent = .large
     @State private var selectedCameraDetails: CameraDetailSelection?
-    @State private var isShowingDiagnostics = false
+    @State private var isShowingSettings = false
 
     var body: some View {
         NavigationStack {
@@ -16,7 +16,9 @@ struct CameraDashboardView: View {
                 ScrollView {
                     ACRGlassEffectContainer(spacing: 10) {
                         VStack(alignment: .leading, spacing: 10) {
-                            SessionReadiness()
+                            if !store.pairedCameras.isEmpty {
+                                SessionReadiness()
+                            }
 
                             CameraListView(
                                 onManage: {
@@ -38,28 +40,15 @@ struct CameraDashboardView: View {
             }
             .navigationTitle("Multicam Remote")
             .toolbar {
-                ToolbarItemGroup(placement: .topBarTrailing) {
-                    if !ProcessInfo.processInfo.arguments.contains("--app-store-screenshots") {
-                        Button {
-                            isShowingDiagnostics = true
-                        } label: {
-                            Image(systemName: "waveform.path.ecg")
-                        }
-                        .foregroundStyle(Color.acrToolbarIcon)
-                        .accessibilityLabel("Open diagnostics")
-                        .help("Diagnostics")
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        isShowingSettings = true
+                    } label: {
+                        Image(systemName: "gearshape")
                     }
-
-                    if !store.pairedCameras.isEmpty {
-                        Button {
-                            isManagingCameras = true
-                        } label: {
-                            Image(systemName: "plus")
-                        }
-                        .foregroundStyle(Color.acrToolbarIcon)
-                        .accessibilityLabel("Manage cameras")
-                        .help("Manage cameras")
-                    }
+                    .foregroundStyle(Color.acrToolbarIcon)
+                    .accessibilityLabel("Settings")
+                    .help("Settings")
                 }
             }
             .safeAreaInset(edge: .bottom, spacing: 0) {
@@ -83,9 +72,9 @@ struct CameraDashboardView: View {
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
             }
-            .sheet(isPresented: $isShowingDiagnostics) {
+            .sheet(isPresented: $isShowingSettings) {
                 NavigationStack {
-                    DiagnosticsSheet()
+                    SettingsView()
                 }
                 .presentationDetents([.large])
                 .presentationDragIndicator(.visible)
@@ -147,17 +136,24 @@ private struct SessionReadiness: View {
 
 private struct MulticamRecordBar: View {
     @Environment(CameraStore.self) private var store
+    @AppStorage(ACRPreferences.largerControls) private var largerControls = false
 
     var body: some View {
-        HStack(alignment: .center, spacing: 8) {
-            selectionLabel
-            Spacer(minLength: 4)
-
-            if store.canAddHighlight {
-                highlightButton
+        Group {
+            if largerControls {
+                VStack(alignment: .leading, spacing: 12) {
+                    selectionLabel
+                    HStack(spacing: 12) {
+                        recordingControls
+                    }
+                }
+            } else {
+                HStack(alignment: .center, spacing: 8) {
+                    selectionLabel
+                    Spacer(minLength: 4)
+                    recordingControls
+                }
             }
-
-            actionButton
         }
         .frame(minHeight: 56, alignment: .center)
         .padding(.leading, 18)
@@ -165,6 +161,14 @@ private struct MulticamRecordBar: View {
         .padding(.vertical, 10)
         .acrFloatingControlBar()
         .frame(maxWidth: .infinity)
+    }
+
+    @ViewBuilder
+    private var recordingControls: some View {
+        if store.canAddHighlight {
+            highlightButton
+        }
+        actionButton
     }
 
     private var highlightButton: some View {
@@ -201,6 +205,7 @@ private struct MulticamRecordBar: View {
             isLoading: isStarting || isPhotoCaptureInProgress,
             size: .large,
             minimumContentWidth: store.canStopMulticamRecording ? 124 : nil,
+            fillsWidth: largerControls,
             action: performAction
         )
     }
@@ -267,43 +272,7 @@ private struct CameraListView: View {
 
         VStack(alignment: .leading, spacing: 8) {
             if cameras.isEmpty {
-                Button {
-                    onManage()
-                } label: {
-                    HStack(spacing: 14) {
-                        Image(systemName: "plus")
-                            .font(.title3.weight(.semibold))
-                            .foregroundStyle(Color.acrAvailable)
-                            .frame(width: 44, height: 44)
-                            .background(
-                                Color.acrAvailable.opacity(0.12),
-                                in: Circle()
-                            )
-
-                        Text("Add Camera")
-                            .font(.headline.weight(.semibold))
-                            .fontDesign(.rounded)
-                            .foregroundStyle(Color.acrInk)
-
-                        Spacer(minLength: 8)
-
-                        Image(systemName: "chevron.right")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(Color.acrMutedText)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 12)
-                    .frame(minHeight: 72)
-                    .contentShape(Rectangle())
-                    .acrCard(
-                        fill: Color.acrSurface,
-                        stroke: Color.acrLine.opacity(0.8),
-                        interactive: true
-                    )
-                }
-                .buttonStyle(.plain)
-                .frame(maxWidth: .infinity)
-                .accessibilityLabel("Add Camera")
+                firstCameraPrompt
             } else {
                 LazyVGrid(
                     columns: [GridItem(.adaptive(minimum: 330), spacing: 10, alignment: .top)],
@@ -326,6 +295,44 @@ private struct CameraListView: View {
             }
         }
         .padding(.top, 8)
+    }
+
+    private var firstCameraPrompt: some View {
+        VStack(spacing: 24) {
+            Image(systemName: "camera.on.rectangle")
+                .font(.system(size: 40, weight: .medium))
+                .foregroundStyle(Color.acrAvailable)
+                .frame(width: 96, height: 96)
+                .background(Color.acrAvailable.opacity(0.10), in: Circle())
+                .accessibilityHidden(true)
+
+            VStack(spacing: 10) {
+                Text("Pair your first camera")
+                    .font(.title2.weight(.bold))
+                    .fontDesign(.rounded)
+                    .foregroundStyle(Color.acrInk)
+
+                Text("Connect a GoPro, DJI, or Insta360 camera.")
+                    .font(.body)
+                    .foregroundStyle(Color.acrMutedText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .multilineTextAlignment(.center)
+
+            ACRPrimaryActionButton(
+                title: "Pair Camera",
+                systemImage: "plus",
+                tint: .acrAvailable,
+                size: .large,
+                fillsWidth: true,
+                action: onManage
+            )
+        }
+        .padding(.horizontal, 24)
+        .padding(.vertical, 32)
+        .frame(maxWidth: 560)
+        .acrCard(fill: Color.acrSurface, stroke: Color.acrLine.opacity(0.8))
+        .frame(maxWidth: .infinity)
     }
 
     private var dashboardCameras: [DiscoveredCamera] {
@@ -368,19 +375,7 @@ private struct PairingView: View {
 
     var body: some View {
         List {
-            Section {
-                if store.pairingCameras.isEmpty {
-                    ContentUnavailableView(
-                        "No Cameras Found",
-                        systemImage: "camera.badge.ellipsis",
-                        description: Text("Put a camera in pairing mode.")
-                    )
-                } else {
-                    ForEach(managedCameras) { camera in
-                        PairingCameraRow(camera: camera)
-                    }
-                }
-            }
+            CameraManagementSection()
         }
         .listStyle(.insetGrouped)
         .contentMargins(.top, 8, for: .scrollContent)
@@ -405,6 +400,28 @@ private struct PairingView: View {
             }
         }
     }
+}
+
+struct CameraManagementSection: View {
+    @Environment(CameraStore.self) private var store
+
+    var body: some View {
+        Section("Cameras") {
+            if store.pairingCameras.isEmpty {
+                ContentUnavailableView(
+                    "No Cameras Found",
+                    systemImage: "camera.badge.ellipsis",
+                    description: Text("Put a camera in pairing mode.")
+                )
+                .listRowBackground(Color.acrSurface)
+            } else {
+                ForEach(managedCameras) { camera in
+                    PairingCameraRow(camera: camera)
+                        .listRowBackground(Color.acrSurface)
+                }
+            }
+        }
+    }
 
     private var managedCameras: [DiscoveredCamera] {
         store.pairingCameras
@@ -424,6 +441,8 @@ private struct PairingView: View {
 
 private struct PairingCameraRow: View {
     @Environment(CameraStore.self) private var store
+    @State private var isRenaming = false
+    @State private var proposedName = ""
     var camera: DiscoveredCamera
     private let actionContentHeight: CGFloat = 20
     private let connectionActionContentWidth: CGFloat = 82
@@ -484,6 +503,16 @@ private struct PairingCameraRow: View {
             }
         }
         .padding(.vertical, 4)
+        .alert("Camera Nickname", isPresented: $isRenaming) {
+            TextField("Nickname", text: $proposedName)
+
+            Button("Cancel", role: .cancel) {}
+            Button("Save") {
+                store.renameCamera(camera, to: proposedName)
+            }
+        } message: {
+            Text("Leave this blank to use the device name.")
+        }
     }
 
     private var connectionStatus: some View {
@@ -636,36 +665,39 @@ private struct PairingCameraRow: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(Color.acrAvailable)
-            } else {
+            }
+
+            Menu {
+                Button {
+                    proposedName = camera.displayName
+                    isRenaming = true
+                } label: {
+                    Label("Rename Camera", systemImage: "pencil")
+                        .symbolRenderingMode(.monochrome)
+                        .foregroundStyle(Color.acrInk)
+                }
+                .tint(Color.acrInk)
+
                 Button(role: .destructive) {
                     store.remove(camera)
                 } label: {
-                    actionLabel("Unpair", width: pairRemovalActionContentWidth)
-                }
-                .buttonStyle(.bordered)
-                .tint(.red)
-            }
-
-            if canDisconnect || camera.canConnectFromCurrentState {
-                Menu {
-                    Button(role: .destructive) {
-                        store.remove(camera)
-                    } label: {
-                        Label("Unpair Camera", systemImage: "trash")
-                    }
-                } label: {
-                    Image(systemName: "ellipsis")
-                        .font(.subheadline.weight(.semibold))
+                    Label("Unpair Camera", systemImage: "trash")
                         .symbolRenderingMode(.monochrome)
-                        .foregroundStyle(Color.acrMutedText)
-                        .frame(width: 16, height: actionContentHeight)
-                        .contentShape(Rectangle())
+                        .foregroundStyle(.red)
                 }
-                .buttonStyle(.bordered)
-                .controlSize(.small)
-                .fixedSize()
-                .accessibilityLabel("More options for \(camera.displayName)")
+                .tint(.red)
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.subheadline.weight(.semibold))
+                    .symbolRenderingMode(.monochrome)
+                    .foregroundStyle(Color.acrMutedText)
+                    .frame(width: 16, height: actionContentHeight)
+                    .contentShape(Rectangle())
             }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .fixedSize()
+            .accessibilityLabel("More options for \(camera.displayName)")
         }
         .controlSize(.small)
         .fixedSize()
@@ -687,8 +719,7 @@ private struct PairingCameraRow: View {
     }
 }
 
-private struct DiagnosticsSheet: View {
-    @Environment(\.dismiss) private var dismiss
+struct DiagnosticsView: View {
     @Environment(CameraStore.self) private var store
     @State private var shareFile: DiagnosticShareFile?
     @State private var isPreparingShare = false
@@ -710,7 +741,7 @@ private struct DiagnosticsSheet: View {
         .navigationTitle("Diagnostics")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
-            ToolbarItem(placement: .topBarLeading) {
+            ToolbarItem(placement: .topBarTrailing) {
                 Button {
                     isPreparingShare = true
                     Task {
@@ -726,12 +757,6 @@ private struct DiagnosticsSheet: View {
                 }
                 .disabled(isPreparingShare)
                 .accessibilityLabel("Share saved diagnostics")
-            }
-
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("Done") {
-                    dismiss()
-                }
             }
         }
         .sheet(item: $shareFile) { file in
@@ -753,7 +778,7 @@ private struct DiagnosticShareFile: Identifiable {
     var id: URL { url }
 }
 
-private struct DiagnosticsShareSheet: UIViewControllerRepresentable {
+struct DiagnosticsShareSheet: UIViewControllerRepresentable {
     let url: URL
     let onComplete: () -> Void
 
@@ -860,18 +885,39 @@ private struct RecentResultsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Command Results")
-                .font(.headline)
+            HStack {
+                Text("Command Results")
+                    .font(.headline)
 
-            if store.commandResults.isEmpty {
-                Text("No commands sent yet.")
+                Spacer()
+
+                Button("Reset") {
+                    store.resetCommandHistory()
+                }
+                .font(.caption)
+                .buttonStyle(.plain)
+                .foregroundStyle(Color.acrToolbarIcon)
+                .padding(.vertical, 6)
+                .contentShape(Rectangle())
+                .disabled(store.commandHistory.isEmpty && store.commandHistoryStorageError == nil)
+                .accessibilityLabel("Reset saved command history")
+            }
+
+            if let error = store.commandHistoryStorageError {
+                Text("Command history could not be saved: \(error)")
+                    .font(.caption)
+                    .foregroundStyle(Color.acrWarning)
+            }
+
+            if store.commandHistory.isEmpty {
+                Text("No saved commands.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding()
                     .acrInsetPanel()
             } else {
-                ForEach(store.commandResults.prefix(6)) { result in
+                ForEach(store.commandHistory.prefix(6)) { result in
                     HStack(alignment: .top, spacing: 10) {
                         Image(systemName: icon(for: result.status))
                             .foregroundStyle(color(for: result.status))
@@ -883,6 +929,9 @@ private struct RecentResultsView: View {
                             Text("\(result.command.label): \(result.message)")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
+                            Text(result.timestamp, format: .dateTime.month(.abbreviated).day().hour().minute().second())
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
                         }
 
                         Spacer()
@@ -891,6 +940,10 @@ private struct RecentResultsView: View {
                     .acrInsetPanel()
                 }
             }
+
+            Text("\(store.commandHistory.count) saved · Up to \(CommandResultArchive.defaultMaximumCount) commands")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
     }
 

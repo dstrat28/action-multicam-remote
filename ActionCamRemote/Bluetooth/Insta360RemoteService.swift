@@ -216,7 +216,7 @@ final class Insta360RemoteService: NSObject {
         case .cycleMode:
             packet = Insta360RemoteProtocol.cycleModeCommand
             message = "Sent the Insta360 remote mode-cycle command."
-        case .setMode:
+        case .setMode, .loadGoProPreset:
             return result(
                 cameraID: cameraID,
                 cameraName: cameraName,
@@ -1006,7 +1006,7 @@ private extension Insta360RemoteService {
             var status = recordingStatusByCameraID[cameraID] ?? Insta360RemoteRecordingStatus()
             status.shutterSent(at: Date())
             recordingStatusByCameraID[cameraID] = status
-        case .addHighlight, .setMode, .cycleMode, .applySetting, .keepAlive:
+        case .addHighlight, .setMode, .loadGoProPreset, .cycleMode, .applySetting, .keepAlive:
             break
         }
     }

@@ -27,9 +27,13 @@ Camera behavior varies by model, firmware, and power state. Good reports include
 - whether the app showed Connected, Available, or Not Connected;
 - what command was sent;
 - what happened on the physical camera;
-- a diagnostics file from Diagnostics > Share if you are comfortable sharing it.
+- a diagnostics file from Settings > Diagnostics > Share if you are comfortable sharing it.
 
 Recent diagnostic logs are saved locally across app restarts, up to 5 MB. The oldest entries are removed when the archive reaches its size limit. Share exports all retained logs as a text file, alongside current app, device, and camera details. Clear beside Bluetooth Log removes both the displayed and saved logs. Logging starts when the app runs; it cannot recover logs from before this archive was introduced.
+
+Command Results saves up to 500 commands (512 KiB maximum) across app restarts, including later delivery outcomes for queued commands. Diagnostics shows the latest six results with timestamps; the exported file includes all retained results in a separate section. Reset beside Command Results clears saved commands independently of Bluetooth logs and camera controls. Simulator demos keep both histories in memory only.
+
+Settings > Send Feedback prepares an email to multicam@dstrat.io with a fresh diagnostics report attached. When Mail is unavailable, the app offers to share the same file through another app. The user reviews and sends the email.
 
 Review diagnostics before posting publicly. They may contain Bluetooth identifiers, camera names, service UUIDs, and raw command bytes.
 

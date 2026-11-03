@@ -50,9 +50,11 @@ Multicam is an independent project and is not affiliated with, endorsed by, or s
 ## What Works
 
 - Pair, remember, reconnect, and select cameras for group control.
+- Open Settings to manage cameras, enable Larger Controls, view diagnostics, or send feedback with a diagnostics attachment. Larger Controls increases recording-button and selection-target sizes and adds more spacing on the iPhone and iPad dashboard.
 - Start or stop all selected cameras, or control each one individually.
 - Switch capture modes, take photos, and view camera, battery, storage, and recording status.
 - Add synchronized highlight markers to recording GoPros and DJI Action 4/5/6 cameras.
+- Choose GoPro factory and custom presets from each camera's mode menu. Presets are discovered over Bluetooth, with camera-provided names and IDs; the menu follows camera-side changes. Cameras that do not provide a preset list retain the basic mode picker. Preset selection requires hardware verification on each model.
 - Control recording and highlights from Apple Watch or a Live Activity.
 - Send optional iPhone GPS, altitude, direction, and speed telemetry to DJI Action 4/5/6 and Osmo 360 recordings.
 - Wake paired GoPros for up to eight hours after sleep, and wake Osmo Nano over Bluetooth.

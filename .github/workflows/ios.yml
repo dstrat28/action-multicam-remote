@@ -34,6 +34,18 @@ jobs:
             -o "$RUNNER_TEMP/insta360-remote-regression"
           "$RUNNER_TEMP/insta360-remote-regression"
 
+      - name: Check saved command history and support attachment
+        run: |
+          xcrun swiftc -parse-as-library \
+            ActionCamRemote/Models/CameraModels.swift \
+            ActionCamRemote/Bluetooth/Insta360RemoteProtocol.swift \
+            ActionCamRemote/Services/DiagnosticLogArchive.swift \
+            ActionCamRemote/Services/CommandResultArchive.swift \
+            ActionCamRemote/Services/SupportEmailDraft.swift \
+            Tests/CommandResultArchiveRegression.swift \
+            -o "$RUNNER_TEMP/command-history-regression"
+          "$RUNNER_TEMP/command-history-regression"
+
       - name: Check GoPro stop ordering
         run: |
           xcrun swiftc -parse-as-library \
@@ -43,6 +55,19 @@ jobs:
             Tests/GoProCommandQueueRegression.swift \
             -o "$RUNNER_TEMP/gopro-command-queue-regression"
           "$RUNNER_TEMP/gopro-command-queue-regression"
+
+      - name: Check GoPro preset discovery and selection
+        run: |
+          xcrun swiftc -parse-as-library \
+            ActionCamRemote/Models/CameraModels.swift \
+            ActionCamRemote/Bluetooth/Insta360RemoteProtocol.swift \
+            ActionCamRemote/Bluetooth/BLECameraDeviceClient.swift \
+            ActionCamRemote/Bluetooth/GoProCommandQueue.swift \
+            ActionCamRemote/Bluetooth/GoProPresetProtocol.swift \
+            ActionCamRemote/Bluetooth/GoProBLEClient.swift \
+            Tests/GoProPresetRegression.swift \
+            -o "$RUNNER_TEMP/gopro-preset-regression"
+          "$RUNNER_TEMP/gopro-preset-regression"
 
       - name: Check CarPlay camera controls
         run: |
