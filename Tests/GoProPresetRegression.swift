@@ -23,6 +23,40 @@ enum GoProPresetRegression {
         precondition(GoProPresetProtocol.loadPayload(id: 91_234) == Data([0x40, 0x04, 0, 1, 0x64, 0x62]))
         precondition(GoProPresetProtocol.requestPayload == Data([0xF5, 0x72, 8, 1, 8, 2, 24, 1, 32, 0]))
 
+        // Night Effects produce video files but belong to the camera's Time Lapse group.
+        let nightEffects = [(29, 76, "Star Trails"), (30, 77, "Light Painting"), (31, 78, "Vehicle Lights")]
+        let nightEffectPresets = nightEffects.map { flatMode, title, _ in
+            message(2, field(1, UInt64(10_000 + flatMode)) + field(2, UInt64(flatMode))
+                + field(3, UInt64(title)))
+        }.reduce(Data(), +)
+        let timeLapseResponse = Data([0xF5, 0xF2])
+            + message(1, field(1, 1002) + nightEffectPresets)
+        let parsedNightEffects = GoProPresetProtocol.presets(from: timeLapseResponse)!
+        precondition(parsedNightEffects.map(\.name) == nightEffects.map { $0.2 })
+        precondition(parsedNightEffects.allSatisfy { $0.mode == .timelapse && $0.groupID == 1002 },
+                     "Night Effects must remain in the camera's Time Lapse group")
+
+        // A recognized camera group takes precedence over a preset's flat mode.
+        for (groupID, expectedMode) in [(1000, CaptureMode.video), (1001, .photo), (1002, .timelapse)] {
+            let groupedResponse = Data([0xF5, 0xF2]) + message(1, field(1, UInt64(groupID))
+                + message(2, field(1, 123) + field(2, 12) + field(3, 1))
+                + message(2, field(1, 124) + field(2, 999) + field(3, 18))
+                + message(2, field(1, 125) + field(3, 18)))
+            precondition(GoProPresetProtocol.presets(from: groupedResponse)?.map(\.mode)
+                         == Array(repeating: expectedMode, count: 3))
+        }
+
+        // General and unknown groups fall back to flat mode, including Night Effects.
+        for groupID: UInt64 in [2000, 3000] {
+            let flatResponse = Data([0xF5, 0xF2]) + message(1, field(1, groupID) + nightEffectPresets
+                + message(2, field(1, 200) + field(2, 12) + field(3, 1))
+                + message(2, field(1, 201) + field(2, 16) + field(3, 3))
+                + message(2, field(1, 202) + field(2, 24) + field(3, 7))
+                + message(2, field(1, 203) + field(2, 999) + field(3, 18)))
+            precondition(GoProPresetProtocol.presets(from: flatResponse)?.map(\.mode)
+                         == [.timelapse, .timelapse, .timelapse, .video, .photo, .timelapse, nil])
+        }
+
         // A camera with one general group still exposes modes per preset.
         let unknown = Data([0xF5, 0xF2]) + message(1, field(1, 2000)
             + message(2, field(1, 42) + field(2, 12) + field(3, 999)))
@@ -88,7 +122,7 @@ enum GoProPresetRegression {
         precondition(queue.removeFirst() == "latest preset" && queue.isEmpty)
         let restoredCommand = try JSONDecoder().decode(CameraCommand.self, from: JSONEncoder().encode(load))
         precondition(restoredCommand == load)
-        print("GoPro preset checks passed: dynamic IDs/names, modes, hidden presets, unknown fields, malformed data, BLE fragmentation, and safe command ordering.")
+        print("GoPro preset checks passed: dynamic IDs/names, camera groups, Night Effects, flat-mode fallback, hidden presets, unknown fields, malformed data, BLE fragmentation, and safe command ordering.")
     }
 
     private static func varint(_ value: UInt64) -> Data {

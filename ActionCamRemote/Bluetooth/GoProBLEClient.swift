@@ -914,11 +914,11 @@ private extension GoProBLEClient {
                 requestPresets()
             }
 
-            if let flatMode = values[GoProQuery.flatModeStatusID],
-               let mode = CaptureMode(goProFlatModeData: flatMode) {
-                update.currentMode = mode
-            } else if let presetGroup = values[GoProQuery.presetGroupStatusID],
+            if let presetGroup = values[GoProQuery.presetGroupStatusID],
                let mode = CaptureMode(goProPresetGroupData: presetGroup) {
+                update.currentMode = mode
+            } else if let flatMode = values[GoProQuery.flatModeStatusID],
+               let mode = CaptureMode(goProFlatModeData: flatMode) {
                 update.currentMode = mode
             }
 
@@ -1732,15 +1732,9 @@ private extension CaptureMode {
     }
 
     init?(goProFlatModeData data: Data) {
-        let candidates = data.uint32Candidates
-        if !candidates.isDisjoint(with: [12, 15, 22, 27, 29, 30, 31, 32]) {
-            self = .video
-        } else if !candidates.isDisjoint(with: [13, 20, 21, 24, 26]) {
-            self = .timelapse
-        } else if !candidates.isDisjoint(with: [16, 17, 18, 19, 25]) {
-            self = .photo
-        } else {
-            return nil
-        }
+        guard let mode = data.uint32Candidates.compactMap({
+            GoProPresetProtocol.captureMode(flatMode: UInt64($0))
+        }).first else { return nil }
+        self = mode
     }
 }
