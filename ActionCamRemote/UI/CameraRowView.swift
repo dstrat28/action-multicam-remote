@@ -31,22 +31,11 @@ struct CameraRowView: View {
                     .overlay(Color.acrLine.opacity(0.58))
                     .padding(.horizontal, 16)
 
-                Group {
-                    if largerControls {
-                        VStack(alignment: .leading, spacing: 12) {
-                            captureModeAndSettings
-                            if camera.isPaired, camera.supportsBatchRecord {
-                                CameraRecordButton(camera: camera, fillsWidth: true)
-                            }
-                        }
-                    } else {
-                        HStack(spacing: 10) {
-                            captureModeAndSettings
-                            Spacer(minLength: 4)
-                            if camera.isPaired, camera.supportsBatchRecord {
-                                CameraRecordButton(camera: camera)
-                            }
-                        }
+                HStack(spacing: 10) {
+                    captureModeAndSettings
+                    Spacer(minLength: 4)
+                    if camera.isPaired, camera.supportsBatchRecord {
+                        CameraRecordButton(camera: camera)
                     }
                 }
                 .padding(.horizontal, 16)
@@ -1265,7 +1254,6 @@ private struct CameraTelemetryDetailSection: View {
 private struct CameraRecordButton: View {
     @Environment(CameraStore.self) private var store
     var camera: DiscoveredCamera
-    var fillsWidth = false
 
     var body: some View {
         ACRPrimaryActionButton(
@@ -1279,7 +1267,6 @@ private struct CameraRecordButton: View {
             appearance: camera.recordingState == .recording && !camera.isInPhotoMode
                 ? .filled
                 : .outlined,
-            fillsWidth: fillsWidth,
             action: performRecordAction
         )
     }
