@@ -16,6 +16,11 @@ public struct CBCharacteristicProperties: OptionSet {
     public static let indicate = Self(rawValue: 4)
     public static let writeWithoutResponse = Self(rawValue: 8)
     public static let read = Self(rawValue: 16)
+    public static let broadcast = Self(rawValue: 32)
+    public static let authenticatedSignedWrites = Self(rawValue: 64)
+    public static let extendedProperties = Self(rawValue: 128)
+    public static let notifyEncryptionRequired = Self(rawValue: 256)
+    public static let indicateEncryptionRequired = Self(rawValue: 512)
 }
 
 public enum CBCharacteristicWriteType { case withResponse, withoutResponse }
@@ -121,6 +126,7 @@ public final class CBPeripheral {
     public init() {}
     public func discoverServices(_ services: [CBUUID]?) {}
     public func discoverCharacteristics(_ characteristics: [CBUUID]?, for service: CBService) {}
+    public func readValue(for characteristic: CBCharacteristic) {}
     public func setNotifyValue(_ enabled: Bool, for characteristic: CBCharacteristic) { characteristic.isNotifying = enabled }
     public func maximumWriteValueLength(for type: CBCharacteristicWriteType) -> Int { maximumLength }
     public func writeValue(_ data: Data, for characteristic: CBCharacteristic, type: CBCharacteristicWriteType) {

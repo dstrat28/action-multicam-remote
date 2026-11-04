@@ -46,6 +46,13 @@ connects again. Stop delivery or acknowledgement does not establish stopped
 recording; an R SDK status push supplies that state. Nano's separate DUML
 pairing/control protocol is unchanged.
 
+Nano's DUML Stop acknowledgement also means acceptance, not completed Stop.
+Only camera status confirms that recording stopped. An explicit Stop releases
+the prior Start's stale-stopped guard, so even a short recording can confirm
+promptly. Nano keeps its existing 15-second confirmation window, ending as soon
+as trusted stopped status arrives. If that deadline expires, the app shows
+“Stop not confirmed” and permits another explicit action.
+
 Reference: [Osmo Action Remote's verified Action 5 Pro notes](https://github.com/retweakeverything/osmo-action-remote/blob/cc3395455557677333a6acae5eb4a7e380a01eb6/docs/PROTOCOL.md).
 
 ## Insta360
@@ -64,9 +71,9 @@ is required for that next action. A fresh timer after the cooldown can establish
 Recording again and permit another Stop. No shutter action is repeated automatically.
 Expiry runs in common run-loop modes so scrolling does not suspend the deadline.
 
-The app's Stop spinner also ends after three seconds, independently of transport
-deadlines. Cameras with Stop confirmation show an advisory “Stop not confirmed”
-if it has not arrived; a late trusted stopped status clears it. GPS Remote returns
+The app's Stop spinner ends after three seconds for GPS Remote. Other cameras
+wait for stopped status, with a 15-second fallback to an advisory “Stop not
+confirmed”; a late trusted stopped status clears it. GPS Remote returns
 to the green connection display because it cannot explicitly confirm Stop, while
 its underlying recording state remains unknown. Missing confirmation adds no new
 recording lockout.

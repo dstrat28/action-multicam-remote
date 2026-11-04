@@ -1427,6 +1427,11 @@ private extension DJIExperimentalBLEClient {
         var packetCount = 0
         if action.isStarting {
             protectAgainstStaleStoppedStatusAfterStart()
+        } else if cameraBehavior.kind == .djiOsmoNano,
+                  rSDKWriteCharacteristic != nil || !writeTargets.isEmpty {
+            // An explicit Stop supersedes the Start guard. Camera status can
+            // now confirm Stop even when the preceding recording was short.
+            compactStoppedProtectionUntil = .distantPast
         }
 
         if cameraBehavior.kind == .djiOsmoNano,
@@ -1785,8 +1790,16 @@ private extension DJIExperimentalBLEClient {
         if let action = pendingRecordActionsBySequence.removeValue(forKey: packet.sequenceNumber),
            resultCode == 0x00 {
             if action.isStarting {
-                protectAgainstStaleStoppedStatusAfterStart()
+                // Nano's guard starts when Start is sent. A delayed Start ACK
+                // must not restore it after a newer explicit Stop.
+                if cameraBehavior.kind != .djiOsmoNano {
+                    protectAgainstStaleStoppedStatusAfterStart()
+                }
                 onLog("\(cameraName): DJI start command accepted; waiting for recording status confirmation.")
+                return
+            }
+            if cameraBehavior.kind == .djiOsmoNano {
+                onLog("\(cameraName): DJI Nano stop command accepted; waiting for stopped status confirmation.")
                 return
             }
             onCameraStatus(

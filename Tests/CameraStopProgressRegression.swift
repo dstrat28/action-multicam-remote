@@ -55,6 +55,9 @@ enum CameraStopProgressRegression {
             now: modeStarted.addingTimeInterval(8)) == .failed)
 
         let front = UUID(), rear = UUID()
+        precondition(CameraStopProgress.confirmationTimeout(for: gopro) == 15)
+        x3.insta360UsesSDK = true
+        precondition(CameraStopProgress.confirmationTimeout(for: x3) == 15)
         func stop(_ cameraID: UUID, status: CameraCommandStatus = .sent) -> CameraCommandResult {
             CameraCommandResult(cameraID: cameraID, cameraName: "Test camera", command: .stopRecording,
                 status: status, message: "Stop requested", timestamp: Date())
@@ -104,21 +107,27 @@ enum CameraStopProgressRegression {
         var nano = DiscoveredCamera(id: front, name: "Nano", brand: .dji, model: .djiOsmoNano,
             rssi: -40, capabilities: [.record, .mode, .status], connectionState: .connected,
             recordingState: .recording, isPaired: true, isSelected: true, lastSeen: Date())
-        progress.begin(front, at: 200, timeout: 3)
+        precondition(CameraStopProgress.confirmationTimeout(for: nano) == 15)
+        progress.begin(front, at: 200, timeout: CameraStopProgress.confirmationTimeout(for: nano))
         let missingReply = stop(front)
         progress.attach(missingReply)
         precondition(progress.showsRecordingStatus(for: nano))
         nano.recordingState = .unknown
         precondition(progress.showsRecordingStatus(for: nano), "Pending Stop must not flash Connected on unknown status")
         precondition(progress.expire(at: 202.9).isEmpty)
-        precondition(progress.expire(at: 203) == [front])
-        precondition(!progress.contains(front), "Stop spinner must end after its short UI deadline")
+        precondition(progress.expire(at: 203).isEmpty, "Nano must not offer Record merely because three seconds elapsed")
+        precondition(progress.contains(front))
+        precondition(progress.expire(at: 214.9).isEmpty)
+        precondition(progress.expire(at: 215) == [front])
+        precondition(!progress.contains(front), "A missing Nano confirmation must still have a bounded deadline")
         precondition(progress.isUnconfirmed(for: nano), "Missing confirmation must stay distinct from Stopped")
         precondition(nano.recordingState == .unknown, "UI expiry must not synthesize a camera state")
         precondition(!progress.finish(front, matching: missingReply.id), "Late command outcomes cannot erase an unconfirmed Stop")
         precondition(!progress.observe(front, state: .recording, canClearActiveRecording: true))
         precondition(!progress.observe(front, state: .stopped, canClearActiveRecording: false))
         precondition(progress.isUnconfirmed(for: nano))
+        precondition(nano.primaryRecordCommand == .startRecording,
+            "A missing confirmation cannot indefinitely block a new explicit action")
         precondition(progress.observe(front, state: .stopped, canClearActiveRecording: true), "Late trusted confirmation must clear the warning")
         precondition(!progress.isUnconfirmed(front))
 
@@ -139,13 +148,14 @@ enum CameraStopProgressRegression {
         x3.recordingState = .recording
         precondition(progress.showsRecordingStatus(for: x3), "A later recording must appear red again")
 
-        progress.begin(x3.id, at: 215, timeout: CameraStopProgress.confirmationTimeout)
+        precondition(CameraStopProgress.confirmationTimeout(for: x3) == 3)
+        progress.begin(x3.id, at: 215, timeout: CameraStopProgress.confirmationTimeout(for: x3))
         precondition(!progress.showsRecordingStatus(for: x3))
         precondition(progress.observe(x3, state: .recording, canClearActiveRecording: true),
             "Fresh GPS Remote Recording feedback must clear Stop even before the UI expiry timer runs")
         precondition(!progress.contains(x3.id))
         precondition(progress.showsRecordingStatus(for: x3))
-        progress.begin(x3.id, at: 216, timeout: CameraStopProgress.confirmationTimeout)
+        progress.begin(x3.id, at: 216, timeout: CameraStopProgress.confirmationTimeout(for: x3))
         x3.recordingState = .unknown
         precondition(progress.observe(x3, state: .unknown, canClearActiveRecording: true))
         x3.recordingState = .recording
@@ -157,6 +167,14 @@ enum CameraStopProgressRegression {
         progress.begin(front, at: 224, timeout: 3)
         precondition(!progress.isUnconfirmed(front), "An explicit Stop retry starts a fresh confirmation window")
         precondition(progress.finish(front))
+        nano.recordingState = .recording
+        progress.begin(front, at: 230, timeout: CameraStopProgress.confirmationTimeout(for: nano))
+        precondition(!progress.observe(nano, state: .recording, canClearActiveRecording: true))
+        precondition(progress.contains(front), "Continued Nano Recording status must leave Stop pending")
+        nano.recordingState = .stopped
+        precondition(progress.observe(nano, state: .stopped, canClearActiveRecording: true))
+        precondition(!progress.contains(front), "Confirmed Nano Stop must finish immediately without waiting for the deadline")
+        precondition(nano.primaryRecordCommand == .startRecording)
         print("Stop progress checks passed: confirmation, unknown state, rejected duplicates, late results, failures, independent cameras, deadlines, and cleanup.")
     }
 }

@@ -1764,7 +1764,7 @@ private extension CameraStore {
 
     func beginStopping(for camera: DiscoveredCamera) {
         stopProgress.begin(camera.id, at: ProcessInfo.processInfo.systemUptime,
-            timeout: CameraStopProgress.confirmationTimeout)
+            timeout: CameraStopProgress.confirmationTimeout(for: camera))
         guard stopProgressTimer == nil else { return }
         let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.expireStopProgress() }

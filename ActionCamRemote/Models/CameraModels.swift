@@ -1721,7 +1721,11 @@ struct CameraStatusUpdate: Equatable {
 
 /// UI progress for Stop requests, separate from the camera's reported state.
 struct CameraStopProgress {
-    static let confirmationTimeout: TimeInterval = 3
+    static func confirmationTimeout(for camera: DiscoveredCamera) -> TimeInterval {
+        // Only GPS Remote lacks Stop confirmation. Other cameras can still be
+        // finalizing after acceptance and must get time to report Stopped.
+        camera.usesInsta360GPSRemote ? 3 : 15
+    }
 
     private struct Entry {
         var resultID: UUID?
