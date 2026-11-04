@@ -169,7 +169,7 @@ struct CameraRowView: View {
 
             Text(connectionText)
                 .font(.subheadline)
-                .foregroundStyle(Color.acrMutedText)
+                .foregroundStyle(camera.recordingState == .recording ? Color.acrRecord : Color.acrMutedText)
                 .lineLimit(1)
 
             Spacer(minLength: 6)
@@ -198,6 +198,9 @@ struct CameraRowView: View {
     }
 
     private var connectionIndicatorColor: Color {
+        if camera.recordingState == .recording {
+            return .acrRecord
+        }
         if isConnectInProgress {
             return .acrWarning
         }

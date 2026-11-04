@@ -124,22 +124,35 @@ private struct SessionReadiness: View {
     }
 
     private var sessionSummary: String {
+        if recordingCameraCount > 0 {
+            return recordingCameraCount == 1
+                ? "1 camera recording"
+                : "\(recordingCameraCount) cameras recording"
+        }
         let count = store.readyConnectedCameras.count
         guard count > 0 else { return "No cameras connected" }
         return count == 1 ? "1 camera connected" : "\(count) cameras connected"
     }
 
+    private var recordingCameraCount: Int {
+        store.pairedCameras.filter { $0.recordingState == .recording }.count
+    }
+
     private var statusColor: Color {
-        store.readyConnectedCameras.isEmpty ? .secondary : .acrReady
+        if recordingCameraCount > 0 {
+            return .acrRecord
+        }
+        return store.readyConnectedCameras.isEmpty ? .secondary : .acrReady
     }
 }
 
 private struct MulticamRecordBar: View {
     @Environment(CameraStore.self) private var store
     @AppStorage(ACRPreferences.largerControls) private var largerControls = false
+    private let controlInset: CGFloat = 10
 
     var body: some View {
-        HStack(alignment: .center, spacing: showsSelectionCount ? 8 : 12) {
+        HStack(alignment: .center, spacing: showsSelectionCount ? 8 : controlInset) {
             if showsSelectionCount {
                 selectionLabel
                 Spacer(minLength: 4)
@@ -147,9 +160,9 @@ private struct MulticamRecordBar: View {
             recordingControls
         }
         .frame(minHeight: 56, alignment: .center)
-        .padding(.leading, showsSelectionCount ? 18 : 10)
-        .padding(.trailing, 10)
-        .padding(.vertical, 10)
+        .padding(.leading, showsSelectionCount ? 18 : controlInset)
+        .padding(.trailing, controlInset)
+        .padding(.vertical, controlInset)
         .acrFloatingControlBar()
         .frame(maxWidth: .infinity)
         .transaction { $0.animation = nil }
