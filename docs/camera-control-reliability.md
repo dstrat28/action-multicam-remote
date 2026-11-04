@@ -65,17 +65,19 @@ notification. A backpressured command therefore retains the correct sequence.
 Counters are separate for every camera and reset when its session is replaced.
 After a shutter press, further shutter commands wait for feedback. A trailing recording timer does not reopen Stop during that window: a second Stop toggle could restart recording. Silence returns the state to unknown rather than claiming the camera stopped.
 
-The Stop feedback cooldown lasts three seconds. Trailing timers do not extend it
+The Stop feedback cooldown lasts five seconds. Trailing timers do not extend it
 or block a new explicit Record/photo/toggle afterward; no stopped-state confirmation
 is required for that next action. A fresh timer after the cooldown can establish
 Recording again and permit another Stop. No shutter action is repeated automatically.
+Five seconds does not confirm Stop: a new shutter press can stop an ongoing
+recording if the previous Stop failed.
 Expiry runs in common run-loop modes so scrolling does not suspend the deadline.
 When Bluetooth queues Stop, the UI's cooldown starts when the queued command is
 actually transmitted. It uses the same duration as the transport; duplicate or
 superseded delivery callbacks cannot extend the wait. Recording timers while
 Stop is still queued keep Recording visible and cannot cancel its pending UI.
 
-The app's Stop spinner ends after three seconds for GPS Remote. Other cameras
+The app's Stop spinner ends after five seconds for GPS Remote. Other cameras
 wait for stopped status, with a 15-second fallback to an advisory “Stop not
 confirmed”; a late trusted stopped status clears it. GPS Remote returns
 to the green connection display because it cannot explicitly confirm Stop, while

@@ -292,7 +292,7 @@ enum Insta360RemoteProtocol {
     static let powerOffCommand = Data([0xFC, 0xEF, 0xFE, 0x86, 0x00, 0x03, 0x01, 0x00, 0x03])
 
     static let recordingStatusTimeout: TimeInterval = 5
-    static let stopFeedbackCooldown: TimeInterval = 3
+    static let stopFeedbackCooldown: TimeInterval = 5
 
     static func isRecordingTimerPacket(_ data: Data) -> Bool {
         recordingTimeLabel(from: data) != nil

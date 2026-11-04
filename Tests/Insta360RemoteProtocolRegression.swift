@@ -397,45 +397,50 @@ enum Insta360RemoteProtocolRegression {
         for second in [2.0, 3.9] {
             status.observeTimer(at: now.addingTimeInterval(second))
         }
-        precondition(!status.expire(at: now.addingTimeInterval(3.9)))
+        precondition(!status.expire(at: now.addingTimeInterval(4)),
+            "Stop must still block another shutter press after the old three-second deadline")
+        precondition(status.rejectionReason(for: .startRecording) != nil)
+        status.observeTimer(at: now.addingTimeInterval(5.9))
+        precondition(!status.expire(at: now.addingTimeInterval(5.9)))
         precondition(status.rejectionReason(for: .startRecording) != nil,
             "The short Stop cooldown must still prevent immediate duplicate presses")
-        precondition(status.expire(at: now.addingTimeInterval(4)))
+        precondition(status.expire(at: now.addingTimeInterval(6)))
         precondition(status.state == .unknown)
         for command in [CameraCommand.startRecording, .capturePhoto, .toggleRecording] {
             precondition(status.rejectionReason(for: command) == nil,
-                "Trailing Stop timers must not block a new explicit action after three seconds")
+                "Trailing Stop timers must not block a new explicit action after five seconds")
         }
         precondition(status.rejectionReason(for: .stopRecording) != nil)
         precondition(status.rejectionReason(for: .cycleMode) == nil)
         precondition(status.lastTimerAt == nil)
 
         var freshTimer = status
-        precondition(freshTimer.observeTimer(at: now.addingTimeInterval(4.1)))
+        precondition(freshTimer.observeTimer(at: now.addingTimeInterval(6.1)))
         precondition(freshTimer.rejectionReason(for: .stopRecording) == nil)
         precondition(freshTimer.rejectionReason(for: .toggleRecording) == nil)
         precondition(freshTimer.rejectionReason(for: .startRecording) != nil)
         precondition(freshTimer.rejectionReason(for: .capturePhoto) != nil)
 
-        status.shutterSent(at: now.addingTimeInterval(4.1))
+        status.shutterSent(at: now.addingTimeInterval(6.1))
         precondition(status.rejectionReason(for: .startRecording) != nil,
             "An accepted restart must still prevent an immediate duplicate Start")
-        precondition(status.observeTimer(at: now.addingTimeInterval(4.2)))
+        precondition(status.observeTimer(at: now.addingTimeInterval(6.2)))
         precondition(status.state == .recording, "New timer feedback confirms the restart")
 
         var silentStop = Insta360RemoteRecordingStatus()
         silentStop.observeTimer(at: now)
         silentStop.shutterSent(at: now.addingTimeInterval(1))
-        precondition(silentStop.expire(at: now.addingTimeInterval(4)))
+        precondition(!silentStop.expire(at: now.addingTimeInterval(4)))
+        precondition(silentStop.expire(at: now.addingTimeInterval(6)))
         precondition(silentStop.lastTimerAt == nil)
         precondition(silentStop.rejectionReason(for: .startRecording) == nil,
-            "A silent Stop must allow a new explicit Start after three seconds")
+            "A silent Stop must allow a new explicit Start after five seconds")
 
         var timerBeforeCleanup = Insta360RemoteRecordingStatus()
         timerBeforeCleanup.observeTimer(at: now)
         timerBeforeCleanup.shutterSent(at: now.addingTimeInterval(1))
-        precondition(!timerBeforeCleanup.observeTimer(at: now.addingTimeInterval(3.9)))
-        precondition(timerBeforeCleanup.observeTimer(at: now.addingTimeInterval(4)),
+        precondition(!timerBeforeCleanup.observeTimer(at: now.addingTimeInterval(5.9)))
+        precondition(timerBeforeCleanup.observeTimer(at: now.addingTimeInterval(6)),
             "Fresh feedback at the cooldown deadline must recover before periodic cleanup runs")
         precondition(!timerBeforeCleanup.awaitingStopFeedback)
         precondition(timerBeforeCleanup.state == .recording)

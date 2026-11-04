@@ -135,7 +135,7 @@ enum CameraStopProgressRegression {
         // to Connected while its underlying recording state remains unknown.
         x3.insta360UsesSDK = false
         x3.recordingState = .recording
-        progress.begin(x3.id, at: 210, timeout: 3)
+        progress.begin(x3.id, at: 210, timeout: CameraStopProgress.confirmationTimeout(for: x3))
         let remoteStop = stop(x3.id)
         progress.attach(remoteStop)
         precondition(progress.didSend(remoteStop, for: x3, at: 210))
@@ -151,7 +151,7 @@ enum CameraStopProgressRegression {
         x3.recordingState = .recording
         precondition(progress.showsRecordingStatus(for: x3), "A later recording must appear red again")
 
-        precondition(CameraStopProgress.confirmationTimeout(for: x3) == 3)
+        precondition(CameraStopProgress.confirmationTimeout(for: x3) == 5)
         progress.begin(x3.id, at: 215, timeout: CameraStopProgress.confirmationTimeout(for: x3))
         let freshRemoteStop = stop(x3.id)
         progress.attach(freshRemoteStop)
@@ -196,17 +196,20 @@ enum CameraStopProgressRegression {
         precondition(progress.didSend(queuedStop, for: x3, at: 301.5))
         precondition(!progress.showsRecordingStatus(for: x3))
         precondition(progress.expire(at: 303).isEmpty,
+            "The old three-second deadline must not expose Record")
+        precondition(progress.expire(at: 305).isEmpty,
             "The original tap deadline must not expose Record during the transport cooldown")
-        precondition(!progress.didSend(queuedStop, for: x3, at: 304),
+        precondition(!progress.didSend(queuedStop, for: x3, at: 306),
             "Duplicate delivery callbacks must not prolong the cooldown")
-        precondition(progress.expire(at: 304.49).isEmpty)
-        precondition(progress.expire(at: 304.5) == [x3.id])
+        precondition(progress.expire(at: 306.49).isEmpty)
+        precondition(progress.expire(at: 306.5) == [x3.id])
         precondition(progress.finish(x3.id))
         progress.begin(x3.id, at: 310, timeout: CameraStopProgress.confirmationTimeout(for: x3))
         progress.attach(stop(x3.id, status: .queued))
         precondition(!progress.didSend(queuedStop, for: x3, at: 311),
             "An older Stop delivery must not change a newer request's deadline")
-        precondition(progress.expire(at: 313) == [x3.id])
+        precondition(progress.expire(at: 313).isEmpty)
+        precondition(progress.expire(at: 315) == [x3.id])
         print("Stop progress checks passed: confirmation, unknown state, rejected duplicates, late results, failures, independent cameras, deadlines, and cleanup.")
     }
 }
