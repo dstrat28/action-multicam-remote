@@ -1750,8 +1750,9 @@ final class CameraClientEventSession {
     }
 }
 
-/// UI progress for Stop requests, separate from the camera's reported state.
-struct CameraStopProgress {
+/// Owns Stop intent, reconnect replay, and feedback presentation. The camera's
+/// reported recording state remains independent from this requested action.
+struct CameraStopState {
     static func confirmationTimeout(for camera: DiscoveredCamera) -> TimeInterval {
         // Only GPS Remote lacks Stop confirmation. Other cameras can still be
         // finalizing after acceptance and must get time to report Stopped.
@@ -1766,10 +1767,15 @@ struct CameraStopProgress {
     }
     private var entries: [UUID: Entry] = [:]
     private var unconfirmedCameraIDs: Set<UUID> = []
-    var isEmpty: Bool { entries.isEmpty }
+    private var replayCameraIDs: Set<UUID> = []
+    var hasPendingFeedback: Bool { !entries.isEmpty }
 
-    func contains(_ cameraID: UUID) -> Bool { entries[cameraID] != nil }
+    func isWaiting(_ cameraID: UUID) -> Bool { entries[cameraID] != nil }
     func isUnconfirmed(_ cameraID: UUID) -> Bool { unconfirmedCameraIDs.contains(cameraID) }
+    func needsReplay(_ cameraID: UUID) -> Bool { replayCameraIDs.contains(cameraID) }
+    func hasIntent(_ cameraID: UUID) -> Bool {
+        isWaiting(cameraID) || isUnconfirmed(cameraID) || needsReplay(cameraID)
+    }
 
     func isUnconfirmed(for camera: DiscoveredCamera) -> Bool {
         !camera.usesInsta360GPSRemote && isUnconfirmed(camera.id)
@@ -1782,7 +1788,7 @@ struct CameraStopProgress {
            entries[camera.id]?.hasSentResult == true || isUnconfirmed(camera.id) {
             return false
         }
-        return camera.recordingState == .recording || contains(camera.id)
+        return camera.recordingState == .recording || isWaiting(camera.id)
     }
 
     mutating func begin(_ cameraID: UUID, at now: TimeInterval, timeout: TimeInterval) {
@@ -1810,11 +1816,29 @@ struct CameraStopProgress {
     }
 
     @discardableResult
-    mutating func finish(_ cameraID: UUID, matching resultID: UUID? = nil) -> Bool {
+    mutating func finishFeedback(_ cameraID: UUID, matching resultID: UUID? = nil) -> Bool {
         if let resultID, entries[cameraID]?.resultID != resultID { return false }
         let removedPending = entries.removeValue(forKey: cameraID) != nil
         let removedUnconfirmed = unconfirmedCameraIDs.remove(cameraID) != nil
         return removedPending || removedUnconfirmed
+    }
+
+    @discardableResult
+    mutating func settle(_ cameraID: UUID) -> Bool {
+        let removedFeedback = finishFeedback(cameraID)
+        let removedReplay = cancelReplay(cameraID)
+        return removedFeedback || removedReplay
+    }
+
+    @discardableResult
+    mutating func queueReplay(_ camera: DiscoveredCamera, at now: TimeInterval) -> Bool {
+        begin(camera.id, at: now, timeout: Self.confirmationTimeout(for: camera))
+        return replayCameraIDs.insert(camera.id).inserted
+    }
+
+    @discardableResult
+    mutating func cancelReplay(_ cameraID: UUID) -> Bool {
+        replayCameraIDs.remove(cameraID) != nil
     }
 
     @discardableResult
@@ -1833,7 +1857,7 @@ struct CameraStopProgress {
                 guard entries[camera.id]?.hasSentResult != false else { return false }
                 // The transport suppresses trailing timers during its Stop
                 // cooldown, so a new Recording update is authoritative.
-                return finish(camera.id)
+                return settle(camera.id)
             }
             if state == .unknown {
                 return markUnconfirmed(camera.id)
@@ -1844,8 +1868,8 @@ struct CameraStopProgress {
 
     @discardableResult
     mutating func observe(_ cameraID: UUID, state: CameraRecordingState, canClearActiveRecording: Bool) -> Bool {
-        guard canClearActiveRecording, state == .stopped || state == .ready else { return false }
-        return finish(cameraID)
+        guard Self.isStopConfirmation(state, canClearActiveRecording: canClearActiveRecording) else { return false }
+        return settle(cameraID)
     }
 
     mutating func expire(at now: TimeInterval) -> [UUID] {
@@ -1853,31 +1877,24 @@ struct CameraStopProgress {
         for id in expired { markUnconfirmed(id) }
         return expired
     }
-}
 
-enum CameraStopReplayPolicy {
-    @discardableResult
-    static func clearIfConfirmed(
-        _ cameraID: UUID, state: CameraRecordingState,
-        canClearActiveRecording: Bool, pending: inout Set<UUID>
-    ) -> Bool {
-        guard canClearActiveRecording, state == .stopped || state == .ready else { return false }
-        return pending.remove(cameraID) != nil
+    static func isStopConfirmation(_ state: CameraRecordingState, canClearActiveRecording: Bool) -> Bool {
+        canClearActiveRecording && (state == .stopped || state == .ready)
     }
 
-    static func shouldRetainAfterConnectionLoss(
-        camera: DiscoveredCamera, progress: CameraStopProgress,
+    func shouldRetainAfterConnectionLoss(
+        camera: DiscoveredCamera,
         hasPendingExplicitStart: Bool, userDisconnected: Bool
     ) -> Bool {
         // ACK/command acceptance and a UI deadline cannot establish Stopped.
         // Only GoPro/DJI explicit Stop may be recovered automatically.
         (camera.brand == .gopro || camera.brand == .dji)
             && !hasPendingExplicitStart && !userDisconnected
-            && (progress.contains(camera.id) || progress.isUnconfirmed(camera.id))
+            && (isWaiting(camera.id) || isUnconfirmed(camera.id))
     }
 
-    static func consumeIfReady(camera: DiscoveredCamera, detail: String?, pending: inout Set<UUID>) -> Bool {
-        guard camera.isConnected, pending.contains(camera.id), let detail else { return false }
+    mutating func consumeReplayIfReady(camera: DiscoveredCamera, detail: String?) -> Bool {
+        guard camera.isConnected, needsReplay(camera.id), let detail else { return false }
         let ready: Bool
         switch camera.brand {
         case .gopro:
@@ -1894,7 +1911,7 @@ enum CameraStopReplayPolicy {
         guard ready else { return false }
         // Consume before dispatch: repeated readiness/status callbacks must not
         // replay the same Stop. An immediate transport failure can requeue it.
-        pending.remove(camera.id)
+        replayCameraIDs.remove(camera.id)
         return true
     }
 }

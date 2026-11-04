@@ -29,7 +29,7 @@ final class CameraStore {
     var cameraDiagnosticsByID: [UUID: String] = [:]
     var nanoPairingConfirmation: NanoPairingConfirmation?
     private(set) var djiPhoneGPSCameraIDs: Set<UUID> = []
-    private var stopProgress = CameraStopProgress()
+    private var stopState = CameraStopState()
     @ObservationIgnored private var stopProgressTimer: Timer?
 
     @ObservationIgnored private let scanner: BLECameraScanner
@@ -99,7 +99,6 @@ final class CameraStore {
     @ObservationIgnored private var ignoreStoppedUntilByCameraID: [UUID: Date] = [:]
     @ObservationIgnored private var ignoreRecordingUntilByCameraID: [UUID: Date] = [:]
     @ObservationIgnored private var pendingStartCameraIDs: Set<UUID> = []
-    @ObservationIgnored private var pendingStopCameraIDs: Set<UUID> = []
     @ObservationIgnored private var pendingManualPairCameraIDs: Set<UUID> = []
     @ObservationIgnored private var userDisconnectedCameraIDs: Set<UUID> = []
     @ObservationIgnored private var passiveDJIProbeCameraIDs: Set<UUID> = []
@@ -373,19 +372,19 @@ final class CameraStore {
     }
 
     var isStoppingMulticamRecording: Bool {
-        selectedCameras.contains { stopProgress.contains($0.id) }
+        selectedCameras.contains { stopState.isWaiting($0.id) }
     }
 
     func isCameraStopping(_ camera: DiscoveredCamera) -> Bool {
-        stopProgress.contains(camera.id)
+        stopState.isWaiting(camera.id)
     }
 
     func isCameraStopUnconfirmed(_ camera: DiscoveredCamera) -> Bool {
-        stopProgress.isUnconfirmed(for: camera)
+        stopState.isUnconfirmed(for: camera)
     }
 
     func showsRecordingStatus(for camera: DiscoveredCamera) -> Bool {
-        stopProgress.showsRecordingStatus(for: camera)
+        stopState.showsRecordingStatus(for: camera)
     }
 
     var canStopMulticamRecording: Bool {
@@ -753,9 +752,8 @@ final class CameraStore {
                         guard let self else { return }
                         self.invalidateClientEventSession(for: id)
                         self.userDisconnectedCameraIDs.insert(id)
-                        self.finishStopping(for: id)
+                        self.settleStopIntent(for: id)
                         self.pendingStartCameraIDs.remove(id)
-                        self.pendingStopCameraIDs.remove(id)
                         self.cancelStartRecording(for: id)
                         self.cancelWakeRetry(for: id)
                         self.scanner.disconnect(from: id)
@@ -840,10 +838,9 @@ final class CameraStore {
     }
 
     private func clearInsta360CaptureIntents(for id: UUID) {
-        finishStopping(for: id)
+        settleStopIntent(for: id)
         clearStateGuards(for: id)
         pendingStartCameraIDs.remove(id)
-        pendingStopCameraIDs.remove(id)
         cancelStartRecording(for: id)
         cancelVideoModeSwitch(for: id)
         cancelWakeRetry(for: id)
@@ -862,7 +859,7 @@ final class CameraStore {
 
     func disconnect(_ camera: DiscoveredCamera) {
         invalidateClientEventSession(for: camera.id)
-        finishStopping(for: camera.id)
+        settleStopIntent(for: camera.id)
         reconnectTasksByCameraID[camera.id]?.cancel()
         reconnectTasksByCameraID[camera.id] = nil
         pendingInsta360GPSFallbackIDs.remove(camera.id)
@@ -870,7 +867,6 @@ final class CameraStore {
         cancelConnectedStalenessTimeout(for: camera.id)
         clearStateGuards(for: camera.id)
         pendingStartCameraIDs.remove(camera.id)
-        pendingStopCameraIDs.remove(camera.id)
         userDisconnectedCameraIDs.insert(camera.id)
         appendLog("\(camera.name): user requested disconnect; automatic reconnection is paused.")
 
@@ -946,7 +942,7 @@ final class CameraStore {
 
     func remove(_ camera: DiscoveredCamera) {
         invalidateClientEventSession(for: camera.id)
-        finishStopping(for: camera.id)
+        settleStopIntent(for: camera.id)
         cancelStartRecording(for: camera.id)
         cancelPhotoCaptureReset(for: camera.id)
         cancelVideoModeSwitch(for: camera.id)
@@ -975,7 +971,6 @@ final class CameraStore {
         }
         clearStateGuards(for: camera.id)
         pendingStartCameraIDs.remove(camera.id)
-        pendingStopCameraIDs.remove(camera.id)
         pendingManualPairCameraIDs.remove(camera.id)
         sleepingDJICameraIDs.remove(camera.id)
         if camera.connectionState == .connected || camera.connectionState == .connecting {
@@ -1203,11 +1198,10 @@ private extension CameraStore {
         if cameras[index].isConnected || cameras[index].connectionState == .connecting,
            let client = clients[id] as? Insta360DirectBLEClient,
            !client.mayUseGPSRemoteFallback { return }
-        finishStopping(for: id)
+        settleStopIntent(for: id)
         cameras[index].insta360UsesGPSRemoteFallback = true
         pendingInsta360GPSFallbackIDs.insert(id)
         pendingStartCameraIDs.remove(id)
-        pendingStopCameraIDs.remove(id)
         cancelStartRecording(for: id)
         cancelConnectionTimeout(for: id)
         cancelWakeRetry(for: id)
@@ -1284,10 +1278,10 @@ private extension CameraStore {
             recordCommandHistory(result)
             let camera = cameras.first(where: { $0.id == result.cameraID })
             if let camera {
-                stopProgress.didSend(result, for: camera, at: ProcessInfo.processInfo.systemUptime)
+                stopState.didSend(result, for: camera, at: ProcessInfo.processInfo.systemUptime)
             }
             if result.command == .stopRecording, result.status != .sent, result.status != .queued {
-                finishStopping(for: result.cameraID, matching: result.id)
+                finishStopFeedback(for: result.cameraID, matching: result.id)
             }
             // A discarded older toggle must not reset a newer user action.
             if commandResults.first(where: { $0.cameraID == result.cameraID })?.id == result.id,
@@ -1463,7 +1457,7 @@ private extension CameraStore {
                 cancelConnectionTimeout(for: candidate.id)
                 cancelWakeRetry(for: candidate.id)
                 pendingStartCameraIDs.remove(candidate.id)
-                pendingStopCameraIDs.remove(candidate.id)
+                settleStopIntent(for: candidate.id)
                 clearStateGuards(for: candidate.id)
                 shouldAutoConnect = false
             } else {
@@ -1630,7 +1624,7 @@ private extension CameraStore {
 
         if camera.brand == .insta360 {
             let hasQueuedCommand = pendingStartCameraIDs.contains(camera.id)
-                || pendingStopCameraIDs.contains(camera.id)
+                || stopState.needsReplay(camera.id)
             guard camera.isPaired || hasQueuedCommand else { return false }
             if let lastAttempt = lastConnectionAttemptByID[camera.id],
                now.timeIntervalSince(lastAttempt) < autoConnectRetryCooldownInterval {
@@ -1641,7 +1635,7 @@ private extension CameraStore {
 
         if camera.brand == .dji {
             let hasQueuedCommand = pendingStartCameraIDs.contains(camera.id)
-                || pendingStopCameraIDs.contains(camera.id)
+                || stopState.needsReplay(camera.id)
                 || explicitNanoWakeCameraIDs.contains(camera.id)
                 || hadExplicitNanoWakeIntent
             guard camera.isPaired || hasQueuedCommand else {
@@ -1674,7 +1668,7 @@ private extension CameraStore {
         }
 
         if pendingStartCameraIDs.contains(camera.id)
-            || pendingStopCameraIDs.contains(camera.id)
+            || stopState.needsReplay(camera.id)
             || explicitGoProWakeCameraIDs.contains(camera.id) {
             return true
         }
@@ -1759,7 +1753,7 @@ private extension CameraStore {
     }
 
     func protectStartTransition(for camera: DiscoveredCamera) {
-        finishStopping(for: camera.id)
+        settleStopIntent(for: camera.id)
         ignoreStoppedUntilByCameraID[camera.id] = Date().addingTimeInterval(startStateGuardInterval(for: camera))
         ignoreRecordingUntilByCameraID.removeValue(forKey: camera.id)
     }
@@ -1775,8 +1769,12 @@ private extension CameraStore {
     }
 
     func beginStopping(for camera: DiscoveredCamera) {
-        stopProgress.begin(camera.id, at: ProcessInfo.processInfo.systemUptime,
-            timeout: CameraStopProgress.confirmationTimeout(for: camera))
+        stopState.begin(camera.id, at: ProcessInfo.processInfo.systemUptime,
+            timeout: CameraStopState.confirmationTimeout(for: camera))
+        startStopProgressTimerIfNeeded()
+    }
+
+    func startStopProgressTimerIfNeeded() {
         guard stopProgressTimer == nil else { return }
         let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.expireStopProgress() }
@@ -1788,23 +1786,28 @@ private extension CameraStore {
     func trackStopResult(_ result: CameraCommandResult, for camera: DiscoveredCamera) {
         guard result.command == .stopRecording else { return }
         if result.status == .sent || result.status == .queued { beginStopping(for: camera) }
-        stopProgress.attach(result)
-        stopProgress.didSend(result, for: camera, at: ProcessInfo.processInfo.systemUptime)
+        stopState.attach(result)
+        stopState.didSend(result, for: camera, at: ProcessInfo.processInfo.systemUptime)
     }
 
-    func finishStopping(for id: UUID, matching resultID: UUID? = nil) {
-        stopProgress.finish(id, matching: resultID)
+    func finishStopFeedback(for id: UUID, matching resultID: UUID? = nil) {
+        stopState.finishFeedback(id, matching: resultID)
+        stopProgressTimerIfIdle()
+    }
+
+    func settleStopIntent(for id: UUID) {
+        stopState.settle(id)
         stopProgressTimerIfIdle()
     }
 
     func stopProgressTimerIfIdle() {
-        guard stopProgress.isEmpty else { return }
+        guard !stopState.hasPendingFeedback else { return }
         stopProgressTimer?.invalidate()
         stopProgressTimer = nil
     }
 
     func expireStopProgress() {
-        for id in stopProgress.expire(at: ProcessInfo.processInfo.systemUptime) {
+        for id in stopState.expire(at: ProcessInfo.processInfo.systemUptime) {
             if let camera = cameras.first(where: { $0.id == id }), !camera.usesInsta360GPSRemote {
                 setCameraDiagnostic("Stop could not be confirmed. Check the camera before recording again.", for: camera)
             }
@@ -1840,7 +1843,7 @@ private extension CameraStore {
     func beginPassiveDJIProbeIfNeeded(for camera: DiscoveredCamera) {
         guard camera.brand == .dji,
               !pendingStartCameraIDs.contains(camera.id),
-              !pendingStopCameraIDs.contains(camera.id) else {
+              !stopState.needsReplay(camera.id) else {
             return
         }
 
@@ -1853,12 +1856,12 @@ private extension CameraStore {
 
     func shouldEnableSystemAutoReconnect(for camera: DiscoveredCamera) -> Bool {
         pendingStartCameraIDs.contains(camera.id)
-            || pendingStopCameraIDs.contains(camera.id)
+            || stopState.needsReplay(camera.id)
     }
 
     func queueStopRecording(for camera: DiscoveredCamera, reason: String) {
-        beginStopping(for: camera)
-        let inserted = pendingStopCameraIDs.insert(camera.id).inserted
+        let inserted = stopState.queueReplay(camera, at: ProcessInfo.processInfo.systemUptime)
+        startStopProgressTimerIfNeeded()
         if inserted {
             appendLog("\(camera.name): stop queued until the camera reconnects. \(reason)")
         }
@@ -2131,14 +2134,14 @@ private extension CameraStore {
 
         if camera.isKnownAction6,
            !pendingStartCameraIDs.contains(id),
-           !pendingStopCameraIDs.contains(id),
+           !stopState.needsReplay(id),
            !pendingManualPairCameraIDs.contains(id) {
             return action6PassiveConnectionTimeoutDelay
         }
 
         if camera.behavior.kind == .djiOsmoNano,
            !pendingStartCameraIDs.contains(id),
-           !pendingStopCameraIDs.contains(id),
+           !stopState.needsReplay(id),
            !pendingManualPairCameraIDs.contains(id) {
             return nanoPassiveConnectionTimeoutDelay
         }
@@ -2311,7 +2314,7 @@ private extension CameraStore {
 
         return (camera.supportsExperimentalDJISleepWake && sleepingDJICameraIDs.contains(camera.id))
             || pendingStartCameraIDs.contains(camera.id)
-            || pendingStopCameraIDs.contains(camera.id)
+            || stopState.needsReplay(camera.id)
             || modeSwitchAttemptsByCameraID[camera.id] != nil
             || camera.recordingState == .starting
     }
@@ -2335,7 +2338,7 @@ private extension CameraStore {
                 nanoPowerTransitionSettleInterval
             )
             cancelConnectedStalenessTimeout(for: id)
-            pendingStopCameraIDs.remove(id)
+            settleStopIntent(for: id)
 
             let hasExplicitWakeIntent = explicitNanoWakeCameraIDs.contains(id)
                 || pendingStartCameraIDs.contains(id)
@@ -2383,7 +2386,7 @@ private extension CameraStore {
 
         appendLog("\(camera.name): DJI status reports sleep/off; closing the control session.")
         clearPendingStartIfDJIUnavailable(for: camera)
-        pendingStopCameraIDs.remove(id)
+        settleStopIntent(for: id)
         cancelStartRecording(for: id)
         cancelVideoModeSwitch(for: id)
         cancelWakeRetry(for: id)
@@ -2560,12 +2563,12 @@ private extension CameraStore {
     }
 
     func replayPendingStopIfReady(for id: UUID, detail: String?) {
-        guard pendingStopCameraIDs.contains(id) else { return }
+        guard stopState.needsReplay(id) else { return }
         guard let latest = cameras.first(where: { $0.id == id }), latest.connectionState == .connected else { return }
-        guard CameraStopReplayPolicy.consumeIfReady(camera: latest, detail: detail, pending: &pendingStopCameraIDs) else { return }
+        guard stopState.consumeReplayIfReady(camera: latest, detail: detail) else { return }
 
         appendLog("\(latest.name): sending queued stop after reconnect.")
-        finishStopping(for: id)
+        finishStopFeedback(for: id)
         protectStopTransition(for: latest)
         send(.stopRecording, to: [latest])
     }
@@ -2609,7 +2612,6 @@ private extension CameraStore {
         var connectedCamerasForStart: [DiscoveredCamera] = []
         for camera in cameras {
             // A new explicit Start supersedes a Stop waiting for reconnect.
-            pendingStopCameraIDs.remove(camera.id)
             startRecordingTasksByCameraID[camera.id]?.cancel()
             videoModeTasksByCameraID[camera.id]?.cancel()
             modeSwitchAttemptsByCameraID[camera.id] = 0
@@ -2961,7 +2963,7 @@ private extension CameraStore {
                 )
                 commandResults.insert(result, at: 0)
                 recordCommandHistory(result)
-                if command == .stopRecording { finishStopping(for: camera.id) }
+                if command == .stopRecording { finishStopFeedback(for: camera.id) }
                 if command == .startRecording {
                     queueStartRecording(for: camera, reason: "No active BLE client.")
                     scheduleReconnect(
@@ -3006,10 +3008,9 @@ private extension CameraStore {
 
     func handleBLECommandCompletion(_ result: CameraCommandResult) {
         recordBLECommandOutcome(result)
-        let hasUnconfirmedStop = stopProgress.contains(result.cameraID) || stopProgress.isUnconfirmed(result.cameraID)
-            || pendingStopCameraIDs.contains(result.cameraID)
+        let hasUnconfirmedStop = stopState.hasIntent(result.cameraID)
         if result.command == .stopRecording, result.status != .sent, result.status != .queued {
-            finishStopping(for: result.cameraID, matching: result.id)
+            finishStopFeedback(for: result.cameraID, matching: result.id)
         }
         guard let camera = cameras.first(where: { $0.id == result.cameraID }) else { return }
         let action = CameraCommandFailurePolicy.action(
@@ -3037,11 +3038,10 @@ private extension CameraStore {
     func handleCommandResult(_ result: CameraCommandResult, for camera: DiscoveredCamera) {
         let wasSent = result.status == .sent || result.status == .queued
         if result.command == .stopRecording, !wasSent {
-            finishStopping(for: camera.id, matching: result.id)
+            finishStopFeedback(for: camera.id, matching: result.id)
         }
         if wasSent, result.command == .startRecording || result.command == .capturePhoto || result.command == .toggleRecording {
-            finishStopping(for: camera.id)
-            pendingStopCameraIDs.remove(camera.id)
+            settleStopIntent(for: camera.id)
         }
         if result.status == .sent, result.command == .stopRecording,
            camera.usesInsta360GPSRemote,
@@ -3055,7 +3055,7 @@ private extension CameraStore {
             // GPS Remote toggles and direct capture commands must not be retried
             // automatically after an uncertain result.
             pendingStartCameraIDs.remove(camera.id)
-            if camera.behavior.kind == .insta360Direct { pendingStopCameraIDs.remove(camera.id) }
+            if camera.behavior.kind == .insta360Direct { stopState.cancelReplay(camera.id) }
             cancelStartRecording(for: camera.id)
             if result.command == .capturePhoto {
                 cancelPhotoCaptureReset(for: camera.id)
@@ -3095,7 +3095,7 @@ private extension CameraStore {
         }
 
         if wasSent, camera.behavior.kind == .insta360Direct, result.command == .stopRecording {
-            pendingStopCameraIDs.remove(camera.id)
+            stopState.cancelReplay(camera.id)
         }
 
         if !wasSent, result.command == .stopRecording, camera.brand == .gopro || camera.brand == .dji {
@@ -3118,7 +3118,7 @@ private extension CameraStore {
             updateCameraStatus(camera.id, update: CameraStatusUpdate(recordingState: .starting))
         case .stopRecording:
             protectStopTransition(for: camera)
-            pendingStopCameraIDs.remove(camera.id)
+            stopState.cancelReplay(camera.id)
             pendingStartConnectionFailuresByCameraID.removeValue(forKey: camera.id)
             reconnectTasksByCameraID[camera.id]?.cancel()
             reconnectTasksByCameraID[camera.id] = nil
@@ -3176,7 +3176,7 @@ private extension CameraStore {
     func updateDemoState(from result: CameraCommandResult) {
         guard result.status == .sent || result.status == .queued else { return }
         if result.command == .startRecording || result.command == .capturePhoto || result.command == .toggleRecording {
-            finishStopping(for: result.cameraID)
+            settleStopIntent(for: result.cameraID)
         }
 #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--demo-delayed-recording"),
@@ -3218,7 +3218,7 @@ private extension CameraStore {
             cameras[index].recordingState = .stopped
         case .stopRecording:
             cameras[index].recordingState = .stopped
-            finishStopping(for: result.cameraID)
+            settleStopIntent(for: result.cameraID)
         case .toggleRecording:
             cameras[index].recordingState = cameras[index].recordingState == .recording ? .stopped : .recording
         case let .setMode(mode):
@@ -3258,7 +3258,6 @@ private extension CameraStore {
         guard let index = cameras.firstIndex(where: { $0.id == id }) else { return }
 
         if cameras[index].brand == .dji, update.powerState == .sleeping {
-            finishStopping(for: id)
             handleSleepingDJIProtocolStatus(for: id)
             return
         }
@@ -3317,14 +3316,17 @@ private extension CameraStore {
                 return
             } else {
                 cameras[index].recordingState = recordingState
-                if stopProgress.observe(cameras[index], state: recordingState,
+                if CameraStopState.isStopConfirmation(recordingState,
+                    canClearActiveRecording: update.canClearActiveRecording) {
+                    let hadReplay = stopState.needsReplay(id)
+                    settleStopIntent(for: id)
+                    if hadReplay {
+                        reconnectTasksByCameraID[id]?.cancel()
+                        reconnectTasksByCameraID[id] = nil
+                    }
+                } else if stopState.observe(cameras[index], state: recordingState,
                     canClearActiveRecording: update.canClearActiveRecording) {
                     stopProgressTimerIfIdle()
-                }
-                if CameraStopReplayPolicy.clearIfConfirmed(id, state: recordingState,
-                    canClearActiveRecording: update.canClearActiveRecording, pending: &pendingStopCameraIDs) {
-                    reconnectTasksByCameraID[id]?.cancel()
-                    reconnectTasksByCameraID[id] = nil
                 }
                 recordingDecision = "applied \(recordingState.rawValue)"
                 if recordingState == .recording,
@@ -3421,8 +3423,8 @@ private extension CameraStore {
         guard let index = cameras.firstIndex(where: { $0.id == id }) else { return }
         switch state {
         case .disconnected, .failed, .reconnecting:
-            if CameraStopReplayPolicy.shouldRetainAfterConnectionLoss(
-                camera: cameras[index], progress: stopProgress,
+            if stopState.shouldRetainAfterConnectionLoss(
+                camera: cameras[index],
                 hasPendingExplicitStart: pendingStartCameraIDs.contains(id),
                 userDisconnected: userDisconnectedCameraIDs.contains(id)
             ) {
@@ -3593,7 +3595,7 @@ private extension CameraStore {
                     for: id,
                     attemptsRemaining: pendingStartReconnectAttempts(for: cameras[index])
                 )
-            } else if pendingStopCameraIDs.contains(id) {
+            } else if stopState.needsReplay(id) {
                 cameras[index].recordingState = .unknown
                 lastConnectionAttemptByID[id] = nil
                 ensureScanning()
@@ -3618,7 +3620,7 @@ private extension CameraStore {
                 }
                 lastConnectionAttemptByID[id] = nil
                 ensureScanning()
-                if pendingStopCameraIDs.contains(id)
+                if stopState.needsReplay(id)
                     || (cameras[index].behavior.preservesActiveDJIRecordingAcrossReconnect
                         && (previousRecordingState == .recording || previousRecordingState == .starting)) {
                     scheduleReconnect(
@@ -3631,7 +3633,7 @@ private extension CameraStore {
                 cameras[index].currentMode = nil
             }
         case .disconnected, .failed:
-            finishStopping(for: id)
+            finishStopFeedback(for: id)
             if cameras[index].behavior.kind == .djiOsmoNano {
                 awakeAdvertisementByCameraID.removeValue(forKey: id)
                 awakeAdvertisementSeenAtByCameraID.removeValue(forKey: id)
@@ -3639,7 +3641,7 @@ private extension CameraStore {
 
                 let hasUserInitiatedWakeIntent = explicitNanoWakeCameraIDs.contains(id)
                     || pendingStartCameraIDs.contains(id)
-                    || pendingStopCameraIDs.contains(id)
+                    || stopState.needsReplay(id)
                 if previousState == .connected, !hasUserInitiatedWakeIntent {
                     nanoPassiveReconnectBlockedCameraIDs.insert(id)
                     appendLog(
@@ -3668,7 +3670,7 @@ private extension CameraStore {
             if cameras[index].brand == .gopro,
                previousState == .connected,
                !pendingStartCameraIDs.contains(id),
-               !pendingStopCameraIDs.contains(id) {
+               !stopState.needsReplay(id) {
                 autoConnectSuppressedUntilByCameraID[id] = Date().addingTimeInterval(
                     goProDisconnectReconnectDelay
                 )
@@ -3681,7 +3683,7 @@ private extension CameraStore {
                     for: id,
                     attemptsRemaining: pendingStartReconnectAttempts(for: cameras[index])
                 )
-            } else if pendingStopCameraIDs.contains(id) {
+            } else if stopState.needsReplay(id) {
                 cameras[index].recordingState = .unknown
                 lastConnectionAttemptByID[id] = nil
                 ensureScanning()
@@ -3701,7 +3703,7 @@ private extension CameraStore {
                 cameras[index].currentMode = nil
             }
         case .unsupported:
-            finishStopping(for: id)
+            settleStopIntent(for: id)
             cancelConnectedStalenessTimeout(for: id)
             lastProtocolActivityByCameraID.removeValue(forKey: id)
             cancelConnectionTimeout(for: id)
@@ -3752,7 +3754,7 @@ private extension CameraStore {
         switch state {
         case .failed, .disconnected:
             let hasQueuedCommand = pendingStartCameraIDs.contains(camera.id)
-                || pendingStopCameraIDs.contains(camera.id)
+                || stopState.needsReplay(camera.id)
             let shouldPreserveActiveDJIConnection = camera.brand == .dji
                 && camera.behavior.preservesActiveDJIRecordingAcrossReconnect
                 && (camera.recordingState == .recording || camera.recordingState == .starting)

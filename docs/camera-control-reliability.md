@@ -47,6 +47,9 @@ Trusted stopped status also clears a retained Stop before protocol readiness,
 so a later readiness callback cannot replay a request already settled by the camera.
 Once trusted stopped status settles Stop, a late transport failure cannot reopen
 recovery. A rejected duplicate Stop cannot supersede the request already in flight.
+Stop feedback and queued recovery have one owner, `CameraStopState`. Confirmation,
+new capture, manual Disconnect and Remove use one settlement operation; ending
+connection-specific feedback explicitly preserves a queued reconnect Stop.
 
 Every GoPro, DJI, direct Insta360 and SDK client has a connection-scoped callback
 session. Replacement, Disconnect, Remove and terminal connection status invalidate
