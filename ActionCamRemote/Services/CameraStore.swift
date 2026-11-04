@@ -29,6 +29,8 @@ final class CameraStore {
     var cameraDiagnosticsByID: [UUID: String] = [:]
     var nanoPairingConfirmation: NanoPairingConfirmation?
     private(set) var djiPhoneGPSCameraIDs: Set<UUID> = []
+    private var stopProgress = CameraStopProgress()
+    @ObservationIgnored private var stopProgressTimer: Timer?
 
     @ObservationIgnored private let scanner: BLECameraScanner
     @ObservationIgnored private let logArchive: DiagnosticLogArchive
@@ -41,6 +43,7 @@ final class CameraStore {
     @ObservationIgnored private var liveActivityStopObserver: NSObjectProtocol?
     @ObservationIgnored private var liveActivityHighlightObserver: NSObjectProtocol?
     @ObservationIgnored private var clients: [UUID: any BLECameraDeviceClient] = [:]
+    @ObservationIgnored private var pendingInsta360GPSFallbackIDs: Set<UUID> = []
     @ObservationIgnored private var demoDiscoveryIndex = 0
     @ObservationIgnored private let pairedCamerasStorageKey = "pairedCameras.v1"
     @ObservationIgnored private let djiPhoneGPSStorageKey = "djiPhoneGPSCameraIDs.v1"
@@ -162,7 +165,7 @@ final class CameraStore {
         syncKnownCamerasWithScanner()
 
         if !resolvedDemoMode {
-            let rememberedInsta360Cameras = pairedCameras.filter { $0.brand == .insta360 }
+            let rememberedInsta360Cameras = pairedCameras.filter(\.usesInsta360GPSRemote)
             if !rememberedInsta360Cameras.isEmpty {
                 let remote = insta360RemoteService()
                 for camera in rememberedInsta360Cameras {
@@ -355,6 +358,7 @@ final class CameraStore {
     }
 
     var canStartMulticamRecording: Bool {
+        guard !isStoppingMulticamRecording else { return false }
         if isPhotoMulticamSession {
             return !selectedControllableCameras.isEmpty
                 && selectedControllableCameras.allSatisfy(\.isReadyForPhotoCapture)
@@ -362,6 +366,14 @@ final class CameraStore {
 
         return !selectedControllableCameras.isEmpty
             && selectedControllableCameras.allSatisfy(\.isReadyForMulticamStart)
+    }
+
+    var isStoppingMulticamRecording: Bool {
+        selectedCameras.contains { stopProgress.contains($0.id) }
+    }
+
+    func isCameraStopping(_ camera: DiscoveredCamera) -> Bool {
+        stopProgress.contains(camera.id)
     }
 
     var canStopMulticamRecording: Bool {
@@ -582,7 +594,7 @@ final class CameraStore {
         }
 
 
-        if camera.brand == .insta360 {
+        if camera.usesInsta360GPSRemote {
             lastConnectionAttemptByID[camera.id] = Date()
             updateCamera(camera.id, state: .connecting, detail: nil)
             setCameraDiagnostic(
@@ -603,6 +615,10 @@ final class CameraStore {
 
         let lookup = scanner.peripheralLookup(for: camera.id)
         guard let peripheral = lookup.peripheral else {
+            if camera.model == .insta360X5 {
+                beginInsta360GPSFallback(for: camera.id, reason: "No cached direct-control peripheral is available.")
+                return
+            }
             refreshWakeScan(for: camera)
             let missingPeripheralMessage = missingPeripheralDiagnostic(for: camera)
             setCameraDiagnostic(missingPeripheralMessage, for: camera)
@@ -628,6 +644,7 @@ final class CameraStore {
                 cameraName: camera.name,
                 peripheral: peripheral,
                 shouldSendAppPowerOnStart: explicitGoProWakeCameraIDs.contains(camera.id),
+                isInitialPairing: !camera.isPaired,
                 onStatus: { [weak self] id, state, detail in
                     Task { @MainActor in self?.updateCamera(id, state: state, detail: detail) }
                 },
@@ -638,7 +655,10 @@ final class CameraStore {
                     Task { @MainActor in self?.appendLog(message) }
                 },
                 onCommandCompleted: { [weak self] result in
-                    Task { @MainActor in self?.handleGoProCommandCompletion(result) }
+                    Task { @MainActor in self?.handleBLECommandCompletion(result) }
+                },
+                onDisconnectRequested: { [weak self] id in
+                    Task { @MainActor in self?.scanner.disconnect(from: id) }
                 }
             )
         case .dji:
@@ -663,10 +683,52 @@ final class CameraStore {
                     && freshAwakeAdvertisement(for: camera.id, now: Date()) == true,
                 onLog: { [weak self] message in
                     Task { @MainActor in self?.appendLog(message) }
+                },
+                isInitialPairing: !camera.isPaired,
+                onCommandCompleted: { [weak self] result in
+                    Task { @MainActor in self?.handleBLECommandCompletion(result) }
+                },
+                onPairingRejected: { [weak self] id in
+                    Task { @MainActor in
+                        guard let self else { return }
+                        self.userDisconnectedCameraIDs.insert(id)
+                        self.finishStopping(for: id)
+                        self.pendingStartCameraIDs.remove(id)
+                        self.pendingStopCameraIDs.remove(id)
+                        self.cancelStartRecording(for: id)
+                        self.cancelWakeRetry(for: id)
+                        self.scanner.disconnect(from: id)
+                    }
                 }
             )
         case .insta360:
-            return
+            client = Insta360DirectBLEClient(
+                cameraID: camera.id,
+                cameraName: camera.name,
+                cameraModel: camera.model,
+                peripheral: peripheral,
+                onStatus: { [weak self] id, state, detail in
+                    Task { @MainActor in self?.updateCamera(id, state: state, detail: detail) }
+                },
+                onCameraStatus: { [weak self] id, update in
+                    Task { @MainActor in self?.updateCameraStatus(id, update: update) }
+                },
+                onProtocolActivity: { [weak self] id in
+                    Task { @MainActor in self?.noteProtocolActivity(for: id) }
+                },
+                onLog: { [weak self] message in
+                    Task { @MainActor in self?.appendLog(message) }
+                },
+                onCommandCompleted: { [weak self] result in
+                    Task { @MainActor in self?.handleBLECommandCompletion(result) }
+                },
+                onDisconnectRequested: { [weak self] id in
+                    Task { @MainActor in self?.scanner.disconnect(from: id) }
+                },
+                onSetupUnavailable: { [weak self] id, reason in
+                    Task { @MainActor in self?.beginInsta360GPSFallback(for: id, reason: reason) }
+                }
+            )
         case .unknown:
             updateCamera(camera.id, state: .unsupported("Unknown camera brand."), detail: nil)
             return
@@ -701,6 +763,8 @@ final class CameraStore {
     }
 
     func disconnect(_ camera: DiscoveredCamera) {
+        finishStopping(for: camera.id)
+        pendingInsta360GPSFallbackIDs.remove(camera.id)
         cancelConnectionTimeout(for: camera.id)
         cancelConnectedStalenessTimeout(for: camera.id)
         clearStateGuards(for: camera.id)
@@ -714,7 +778,7 @@ final class CameraStore {
             return
         }
 
-        if camera.brand == .insta360 {
+        if camera.usesInsta360GPSRemote {
             insta360Remote?.release(cameraID: camera.id)
             updateCamera(
                 camera.id,
@@ -745,7 +809,7 @@ final class CameraStore {
             return
         }
 
-        if camera.brand == .insta360 {
+        if camera.usesInsta360GPSRemote {
             lastConnectionAttemptByID[camera.id] = Date()
             updateCamera(camera.id, state: .connecting, detail: nil)
             setCameraDiagnostic(
@@ -780,6 +844,7 @@ final class CameraStore {
     }
 
     func remove(_ camera: DiscoveredCamera) {
+        finishStopping(for: camera.id)
         cancelStartRecording(for: camera.id)
         cancelPhotoCaptureReset(for: camera.id)
         cancelVideoModeSwitch(for: camera.id)
@@ -917,7 +982,7 @@ final class CameraStore {
         // The existing path cancels pending starts and queues Stop on reconnect.
         for camera in cameras.filter({ targetIDs.contains($0.id) }) {
             stopRecording(camera)
-            if camera.brand == .insta360 {
+            if camera.usesInsta360GPSRemote {
                 // GPS Remote uses a shutter toggle. Disable repeated Stop taps
                 // until fresh timer feedback confirms the recording state.
                 updateCameraStatus(camera.id, update: CameraStatusUpdate(recordingState: .unknown))
@@ -1032,6 +1097,24 @@ final class CameraStore {
 }
 
 private extension CameraStore {
+    func beginInsta360GPSFallback(for id: UUID, reason: String) {
+        guard let index = cameras.firstIndex(where: { $0.id == id }), cameras[index].model == .insta360X5,
+              !cameras[index].usesInsta360GPSRemote else { return }
+        if cameras[index].isConnected || cameras[index].connectionState == .connecting,
+           let client = clients[id] as? Insta360DirectBLEClient,
+           !client.mayUseGPSRemoteFallback { return }
+        finishStopping(for: id)
+        cameras[index].insta360UsesGPSRemoteFallback = true
+        pendingInsta360GPSFallbackIDs.insert(id)
+        pendingStartCameraIDs.remove(id)
+        pendingStopCameraIDs.remove(id)
+        cancelStartRecording(for: id)
+        cancelConnectionTimeout(for: id)
+        cancelWakeRetry(for: id)
+        appendLog("\(cameras[index].name): direct setup unavailable before capture; falling back to GPS Remote. \(reason)")
+        scanner.disconnect(from: id)
+    }
+
     func handle(_ event: BLEScannerEvent) {
         switch event {
         case let .bluetoothStateChanged(state):
@@ -1047,6 +1130,18 @@ private extension CameraStore {
         case let .discovered(candidate):
             merge(candidate)
         case let .connectionChanged(id, state):
+            if pendingInsta360GPSFallbackIDs.contains(id) {
+                switch state {
+                case .disconnected, .failed:
+                    pendingInsta360GPSFallbackIDs.remove(id)
+                    clients.removeValue(forKey: id)
+                    updateCamera(id, state: .discovered, detail: nil)
+                    if let camera = cameras.first(where: { $0.id == id }) { connect(camera) }
+                default:
+                    break
+                }
+                return
+            }
             updateCamera(id, state: state, detail: nil)
         case let .log(message):
             appendLog(message)
@@ -1087,6 +1182,9 @@ private extension CameraStore {
                 commandResults.insert(result, at: 0)
             }
             recordCommandHistory(result)
+            if result.command == .stopRecording, result.status != .sent, result.status != .queued {
+                finishStopping(for: result.cameraID, matching: result.id)
+            }
             // A discarded older toggle must not reset a newer user action.
             if commandResults.first(where: { $0.cameraID == result.cameraID })?.id == result.id,
                let camera = cameras.first(where: { $0.id == result.cameraID }) {
@@ -1548,6 +1646,7 @@ private extension CameraStore {
     }
 
     func protectStartTransition(for camera: DiscoveredCamera) {
+        finishStopping(for: camera.id)
         ignoreStoppedUntilByCameraID[camera.id] = Date().addingTimeInterval(startStateGuardInterval(for: camera))
         ignoreRecordingUntilByCameraID.removeValue(forKey: camera.id)
     }
@@ -1557,8 +1656,46 @@ private extension CameraStore {
     }
 
     func protectStopTransition(for camera: DiscoveredCamera) {
+        beginStopping(for: camera)
         ignoreRecordingUntilByCameraID[camera.id] = Date().addingTimeInterval(stopStateGuardInterval(for: camera))
         ignoreStoppedUntilByCameraID.removeValue(forKey: camera.id)
+    }
+
+    func beginStopping(for camera: DiscoveredCamera) {
+        stopProgress.begin(camera.id, at: ProcessInfo.processInfo.systemUptime,
+            timeout: camera.behavior.kind == .insta360Direct ? 30 : 15)
+        guard stopProgressTimer == nil else { return }
+        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.expireStopProgress() }
+        }
+        stopProgressTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    func trackStopResult(_ result: CameraCommandResult, for camera: DiscoveredCamera) {
+        guard result.command == .stopRecording else { return }
+        if result.status == .sent || result.status == .queued { beginStopping(for: camera) }
+        stopProgress.attach(result)
+    }
+
+    func finishStopping(for id: UUID, matching resultID: UUID? = nil) {
+        stopProgress.finish(id, matching: resultID)
+        stopProgressTimerIfIdle()
+    }
+
+    func stopProgressTimerIfIdle() {
+        guard stopProgress.isEmpty else { return }
+        stopProgressTimer?.invalidate()
+        stopProgressTimer = nil
+    }
+
+    func expireStopProgress() {
+        for id in stopProgress.expire(at: ProcessInfo.processInfo.systemUptime) {
+            if let camera = cameras.first(where: { $0.id == id }) {
+                setCameraDiagnostic("Stop could not be confirmed. Check the camera before recording again.", for: camera)
+            }
+        }
+        stopProgressTimerIfIdle()
     }
 
     func stopStateGuardInterval(for camera: DiscoveredCamera) -> TimeInterval {
@@ -1606,6 +1743,7 @@ private extension CameraStore {
     }
 
     func queueStopRecording(for camera: DiscoveredCamera, reason: String) {
+        beginStopping(for: camera)
         let inserted = pendingStopCameraIDs.insert(camera.id).inserted
         if inserted {
             appendLog("\(camera.name): stop queued until the camera reconnects. \(reason)")
@@ -1681,7 +1819,11 @@ private extension CameraStore {
                     return
                 }
 
-                if latest.brand == .insta360 {
+                if latest.model == .insta360X5, !latest.usesInsta360GPSRemote {
+                    self.beginInsta360GPSFallback(for: id, reason: "Direct BLE setup timed out.")
+                    return
+                }
+                if latest.usesInsta360GPSRemote {
                     let disposition = self.insta360Remote?.resolveConnectionTimeout(cameraID: id)
                         ?? .waitingForCamera
                     switch disposition {
@@ -1788,7 +1930,7 @@ private extension CameraStore {
                         return
                     }
 
-                    if latest.brand == .insta360 {
+                    if latest.usesInsta360GPSRemote {
                         self.appendLog(
                             "\(latest.name): still waiting for the camera's GPS Remote handshake; late connections remain enabled."
                         )
@@ -1888,6 +2030,7 @@ private extension CameraStore {
         }
 
         if camera.brand == .dji {
+            if !camera.isPaired, camera.behavior.usesDJIRSDKControl { return .seconds(90) }
             return djiProtocolConnectionTimeoutDelay
         }
 
@@ -1895,7 +2038,7 @@ private extension CameraStore {
             if explicitGoProWakeCameraIDs.contains(id) {
                 return .seconds(10)
             }
-            return goProProtocolConnectionTimeoutDelay
+            return camera.isPaired ? goProProtocolConnectionTimeoutDelay : .seconds(90)
         }
 
         if camera.brand == .insta360 {
@@ -2304,8 +2447,10 @@ private extension CameraStore {
 
     func replayPendingStopIfReady(for id: UUID, detail: String?) {
         guard pendingStopCameraIDs.contains(id) else { return }
-        guard isDJIControlReady(detail: detail) else { return }
         guard let latest = cameras.first(where: { $0.id == id }), latest.connectionState == .connected else { return }
+        let isReady = isDJIControlReady(detail: detail)
+            || (latest.behavior.kind == .insta360Direct && detail?.contains("direct Bluetooth ready") == true)
+        guard isReady else { return }
 
         appendLog("\(latest.name): sending queued stop after reconnect.")
         send(.stopRecording, to: [latest])
@@ -2322,7 +2467,9 @@ private extension CameraStore {
         case .dji:
             isReady = isDJIControlReady(detail: detail)
         case .insta360:
-            isReady = detail?.contains("Insta360 GPS Remote connected") == true
+            isReady = latest.usesInsta360GPSRemote
+                ? detail?.contains("Insta360 GPS Remote connected") == true
+                : detail?.contains("direct Bluetooth ready") == true
         case .unknown:
             isReady = false
         }
@@ -2656,8 +2803,9 @@ private extension CameraStore {
         }
 
         for camera in cameras {
-            if camera.brand == .insta360 {
+            if camera.usesInsta360GPSRemote {
                 let result = insta360RemoteService().send(command, to: camera.id, cameraName: camera.name)
+                trackStopResult(result, for: camera)
                 commandResults.insert(result, at: 0)
                 recordCommandHistory(result)
                 handleCommandResult(result, for: camera)
@@ -2675,6 +2823,7 @@ private extension CameraStore {
                 )
                 commandResults.insert(result, at: 0)
                 recordCommandHistory(result)
+                if command == .stopRecording { finishStopping(for: camera.id) }
                 if command == .startRecording {
                     queueStartRecording(for: camera, reason: "No active BLE client.")
                     scheduleReconnect(
@@ -2692,17 +2841,21 @@ private extension CameraStore {
             }
 
             let result = client.send(command)
+            trackStopResult(result, for: camera)
             commandResults.insert(result, at: 0)
             recordCommandHistory(result)
             handleCommandResult(result, for: camera)
         }
     }
 
-    func handleGoProCommandCompletion(_ result: CameraCommandResult) {
+    func handleBLECommandCompletion(_ result: CameraCommandResult) {
         if let index = commandResults.firstIndex(where: { $0.id == result.id }) {
             commandResults[index] = result
         }
         recordCommandHistory(result)
+        if result.command == .stopRecording, result.status != .sent, result.status != .queued {
+            finishStopping(for: result.cameraID, matching: result.id)
+        }
         guard result.status != .sent, result.status != .queued,
               CameraRecordingStartPolicy.isLatestCaptureResult(result, among: commandResults),
               let camera = cameras.first(where: { $0.id == result.cameraID }) else { return }
@@ -2716,11 +2869,18 @@ private extension CameraStore {
 
     func handleCommandResult(_ result: CameraCommandResult, for camera: DiscoveredCamera) {
         let wasSent = result.status == .sent || result.status == .queued
+        if result.command == .stopRecording, !wasSent {
+            finishStopping(for: camera.id, matching: result.id)
+        }
+        if wasSent, result.command == .startRecording || result.command == .capturePhoto || result.command == .toggleRecording {
+            finishStopping(for: camera.id)
+        }
 
         if !wasSent, camera.brand == .insta360 {
-            // GPS Remote shutter commands toggle state. An expired or failed
-            // command must not enter the generic reconnect-and-retry flow.
+            // GPS Remote toggles and direct capture commands must not be retried
+            // automatically after an uncertain result.
             pendingStartCameraIDs.remove(camera.id)
+            if camera.behavior.kind == .insta360Direct { pendingStopCameraIDs.remove(camera.id) }
             cancelStartRecording(for: camera.id)
             if result.command == .capturePhoto {
                 cancelPhotoCaptureReset(for: camera.id)
@@ -2759,6 +2919,10 @@ private extension CameraStore {
             pendingStartConnectionFailuresByCameraID.removeValue(forKey: camera.id)
         }
 
+        if wasSent, camera.behavior.kind == .insta360Direct, result.command == .stopRecording {
+            pendingStopCameraIDs.remove(camera.id)
+        }
+
         guard camera.brand == .dji else { return }
 
         guard wasSent else {
@@ -2785,7 +2949,7 @@ private extension CameraStore {
             pendingStartConnectionFailuresByCameraID.removeValue(forKey: camera.id)
             reconnectTasksByCameraID[camera.id]?.cancel()
             reconnectTasksByCameraID[camera.id] = nil
-            updateCameraStatus(camera.id, update: CameraStatusUpdate(recordingState: .stopped))
+            updateCameraStatus(camera.id, update: CameraStatusUpdate(recordingState: .unknown))
         case .setMode, .loadGoProPreset:
             break
         case .addHighlight, .toggleRecording, .cycleMode, .applySetting, .keepAlive:
@@ -2826,9 +2990,11 @@ private extension CameraStore {
                 message: message,
                 timestamp: Date()
             )
-            updateDemoState(from: result)
             commandResults.insert(result, at: 0)
             recordCommandHistory(result)
+            trackStopResult(result, for: camera)
+            handleCommandResult(result, for: camera)
+            updateDemoState(from: result)
         }
 
         appendLog("Demo command: \(command.label) sent to \(cameras.count) cameras.")
@@ -2836,6 +3002,39 @@ private extension CameraStore {
 
     func updateDemoState(from result: CameraCommandResult) {
         guard result.status == .sent || result.status == .queued else { return }
+        if result.command == .startRecording || result.command == .capturePhoto || result.command == .toggleRecording {
+            finishStopping(for: result.cameraID)
+        }
+#if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--demo-delayed-recording"),
+           result.command == .startRecording || result.command == .stopRecording {
+            if result.command == .startRecording {
+                updateCameraStatus(result.cameraID, update: CameraStatusUpdate(recordingState: .starting))
+            }
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(6))
+                guard let self,
+                      CameraRecordingStartPolicy.isLatestCaptureResult(result, among: self.commandResults) else { return }
+                if result.command == .stopRecording {
+                    let arguments = ProcessInfo.processInfo.arguments
+                    if arguments.contains("--demo-stop-timeout") { return }
+                    if arguments.contains("--demo-stop-failure") {
+                        var failure = result
+                        failure.status = .failed
+                        failure.message = "Simulated Stop rejection."
+                        self.handleBLECommandCompletion(failure)
+                        return
+                    }
+                }
+                self.applyDemoState(from: result)
+            }
+            return
+        }
+#endif
+        applyDemoState(from: result)
+    }
+
+    func applyDemoState(from result: CameraCommandResult) {
         guard let index = cameras.firstIndex(where: { $0.id == result.cameraID }) else { return }
 
         switch result.command {
@@ -2846,6 +3045,7 @@ private extension CameraStore {
             cameras[index].recordingState = .stopped
         case .stopRecording:
             cameras[index].recordingState = .stopped
+            finishStopping(for: result.cameraID)
         case .toggleRecording:
             cameras[index].recordingState = cameras[index].recordingState == .recording ? .stopped : .recording
         case let .setMode(mode):
@@ -2885,6 +3085,7 @@ private extension CameraStore {
         guard let index = cameras.firstIndex(where: { $0.id == id }) else { return }
 
         if cameras[index].brand == .dji, update.powerState == .sleeping {
+            finishStopping(for: id)
             handleSleepingDJIProtocolStatus(for: id)
             return
         }
@@ -2943,6 +3144,12 @@ private extension CameraStore {
                 return
             } else {
                 cameras[index].recordingState = recordingState
+                if stopProgress.observe(id, state: recordingState, canClearActiveRecording: update.canClearActiveRecording) {
+                    stopProgressTimerIfIdle()
+                } else if recordingState == .unknown, cameras[index].usesInsta360GPSRemote {
+                    // GPS Remote reports silence as unknown, never a confirmed Stop.
+                    finishStopping(for: id)
+                }
                 recordingDecision = "applied \(recordingState.rawValue)"
                 if recordingState == .recording,
                    (ignoreStoppedUntilByCameraID[id] ?? .distantPast) <= Date() {
@@ -2985,7 +3192,9 @@ private extension CameraStore {
 
         if let telemetry = update.telemetry {
             var mergedTelemetry = cameras[index].telemetry ?? CameraTelemetry()
-            if update.replacesDJIRSDKStatus {
+            if update.replacesTelemetry {
+                mergedTelemetry = telemetry
+            } else if update.replacesDJIRSDKStatus {
                 mergedTelemetry.mergeDJIRSDKStatus(telemetry)
             } else if update.replacesCaptureSettings {
                 mergedTelemetry.mergeReplacingCaptureSettings(telemetry)
@@ -3220,6 +3429,7 @@ private extension CameraStore {
                 cameras[index].currentMode = nil
             }
         case .disconnected, .failed:
+            finishStopping(for: id)
             if cameras[index].behavior.kind == .djiOsmoNano {
                 awakeAdvertisementByCameraID.removeValue(forKey: id)
                 awakeAdvertisementSeenAtByCameraID.removeValue(forKey: id)
@@ -3284,6 +3494,7 @@ private extension CameraStore {
                 cameras[index].currentMode = nil
             }
         case .unsupported:
+            finishStopping(for: id)
             cancelConnectedStalenessTimeout(for: id)
             lastProtocolActivityByCameraID.removeValue(forKey: id)
             cancelConnectionTimeout(for: id)

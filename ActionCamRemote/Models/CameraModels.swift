@@ -363,7 +363,7 @@ enum CameraConnectionState: Equatable, Codable {
         case .discovered:
             "Available"
         case .connecting:
-            "Connecting"
+            "Connecting…"
         case .connected:
             "Connected"
         case .disconnected:
@@ -692,6 +692,7 @@ struct CameraTelemetry: Equatable, Codable {
 enum CameraBehaviorKind: Equatable {
     case goProOpen
     case insta360Remote
+    case insta360Direct
     case djiOsmoAction4
     case djiOsmoAction5Pro
     case djiOsmoAction6
@@ -756,7 +757,7 @@ struct CameraBehaviorProfile: Equatable {
 
         if brand == .insta360 || model.brand == .insta360 {
             return CameraBehaviorProfile(
-                kind: .insta360Remote,
+                kind: model == .insta360X6 || model == .insta360X5 ? .insta360Direct : .insta360Remote,
                 assumesRecordingAfterUnconfirmedDJIStart: false,
                 preservesActiveDJIRecordingAcrossReconnect: false,
                 trustsDJICompactRecordingStatus: false,
@@ -891,7 +892,7 @@ struct CameraBehaviorProfile: Equatable {
         switch kind {
         case .djiOsmoAction4, .djiOsmoAction5Pro, .djiOsmoAction6, .djiOsmo360, .djiRSDKCamera:
             true
-        case .goProOpen, .insta360Remote, .djiOsmoNano, .djiOsmoPocket3, .genericDJI, .unknown:
+        case .goProOpen, .insta360Remote, .insta360Direct, .djiOsmoNano, .djiOsmoPocket3, .genericDJI, .unknown:
             false
         }
     }
@@ -924,6 +925,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     var lastConnectableSeen: Date? = nil
     var isPairingAdvertisement: Bool? = nil
     var advertisementAwake: Bool? = nil
+    var insta360UsesGPSRemoteFallback: Bool? = nil
 
     var isSupportedByApp: Bool {
         unsupportedReason == nil
@@ -938,9 +940,6 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
         model: CameraModel,
         name: String
     ) -> String? {
-        if model == .insta360X6 {
-            return "Insta360 X6 uses a Bluetooth remote protocol that Multicam does not support."
-        }
         return isSupportedModel(brand: brand, model: model, name: name) ? nil : unsupportedCameraReason
     }
 
@@ -967,6 +966,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
              .insta360AcePro2,
              .insta360AcePro,
              .insta360Ace,
+             .insta360X6,
              .insta360X5,
              .insta360X4Air,
              .insta360X4,
@@ -983,7 +983,6 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
              .djiAction2,
              .djiOsmoAction,
              .djiOsmoPocket3,
-             .insta360X6,
              .unknown:
             break
         }
@@ -1089,7 +1088,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
         case .discovered:
             return true
         case .disconnected, .failed:
-            return canWakeFromSleep
+            return (behavior.kind == .insta360Direct && isPaired) || canWakeFromSleep
         case .connecting, .connected, .reconnecting, .unsupported:
             return false
         }
@@ -1098,7 +1097,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     var canWakeFromSleep: Bool {
         guard isPaired else { return false }
 
-        if brand == .insta360 {
+        if usesInsta360GPSRemote {
             switch connectionState {
             case .disconnected, .failed:
                 return Insta360RemoteProtocol.wakeBeaconUUID(from: name) != nil
@@ -1153,7 +1152,13 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     }
 
     var behavior: CameraBehaviorProfile {
-        CameraBehaviorProfile.resolve(brand: brand, model: model, name: name)
+        var profile = CameraBehaviorProfile.resolve(brand: brand, model: model, name: name)
+        if model == .insta360X5, insta360UsesGPSRemoteFallback == true { profile.kind = .insta360Remote }
+        return profile
+    }
+
+    var usesInsta360GPSRemote: Bool {
+        brand == .insta360 && behavior.kind != .insta360Direct
     }
 
     var isKnownAction6: Bool {
@@ -1207,6 +1212,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
             && recordingState != .recording
             && recordingState != .starting
             && recordingState != .unavailable
+            && (!needsKnownStoppedStateForMulticam || recordingState == .stopped)
     }
 
     var isInPhotoMode: Bool {
@@ -1258,7 +1264,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
             ]
         case .djiOsmoNano:
             return [.video, .photo, .timelapse, .hyperlapse, .superNight, .slowMotion]
-        case .djiOsmoPocket3, .djiRSDKCamera, .genericDJI, .unknown:
+        case .insta360Direct, .djiOsmoPocket3, .djiRSDKCamera, .genericDJI, .unknown:
             return []
         }
     }
@@ -1276,7 +1282,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     }
 
     var needsKnownStoppedStateForMulticam: Bool {
-        false
+        behavior.kind == .insta360Direct
     }
 
     var canStartRecordingInCurrentMode: Bool {
@@ -1638,8 +1644,53 @@ struct CameraStatusUpdate: Equatable {
     var canClearActiveRecording: Bool = true
     var replacesCaptureSettings: Bool = false
     var replacesDJIRSDKStatus: Bool = false
+    var replacesTelemetry: Bool = false
     var goProPresets: [GoProPreset]? = nil
     var activeGoProPresetID: UInt32? = nil
+}
+
+/// UI progress for Stop requests, separate from the camera's reported state.
+struct CameraStopProgress {
+    private struct Entry {
+        var resultID: UUID?
+        var expiresAt: TimeInterval
+    }
+    private var entries: [UUID: Entry] = [:]
+    var isEmpty: Bool { entries.isEmpty }
+
+    func contains(_ cameraID: UUID) -> Bool { entries[cameraID] != nil }
+
+    mutating func begin(_ cameraID: UUID, at now: TimeInterval, timeout: TimeInterval) {
+        guard entries[cameraID] == nil else { return }
+        entries[cameraID] = Entry(expiresAt: now + timeout)
+    }
+
+    mutating func attach(_ result: CameraCommandResult) {
+        guard result.command == .stopRecording, let entry = entries[result.cameraID] else { return }
+        // Rejecting a duplicate Stop must not replace the Stop already in flight.
+        guard result.status == .sent || result.status == .queued || entry.resultID == nil else { return }
+        entries[result.cameraID]?.resultID = result.id
+    }
+
+    @discardableResult
+    mutating func finish(_ cameraID: UUID, matching resultID: UUID? = nil) -> Bool {
+        guard let entry = entries[cameraID] else { return false }
+        if let resultID, entry.resultID != resultID { return false }
+        entries.removeValue(forKey: cameraID)
+        return true
+    }
+
+    @discardableResult
+    mutating func observe(_ cameraID: UUID, state: CameraRecordingState, canClearActiveRecording: Bool) -> Bool {
+        guard canClearActiveRecording, state == .stopped || state == .ready else { return false }
+        return finish(cameraID)
+    }
+
+    mutating func expire(at now: TimeInterval) -> [UUID] {
+        let expired = entries.filter { now >= $0.value.expiresAt }.map(\.key)
+        for id in expired { entries.removeValue(forKey: id) }
+        return expired
+    }
 }
 
 enum CameraRecordingStartPolicy {

@@ -34,6 +34,52 @@ jobs:
             -o "$RUNNER_TEMP/insta360-remote-regression"
           "$RUNNER_TEMP/insta360-remote-regression"
 
+      - name: Check Insta360 direct Bluetooth protocols
+        # Protocol fixtures run on the host; no simulator or camera is required.
+        # X6 captures and synthetic edge cases are identified separately in tests.
+        run: |
+          xcrun swiftc -parse-as-library \
+            ActionCamRemote/Models/CameraModels.swift \
+            ActionCamRemote/Bluetooth/Insta360RemoteProtocol.swift \
+            ActionCamRemote/Bluetooth/Insta360DirectProtocol.swift \
+            ActionCamRemote/Bluetooth/Insta360DirectSession.swift \
+            Tests/Insta360X6ProtocolRegression.swift \
+            -o "$RUNNER_TEMP/insta360-x6-regression"
+          "$RUNNER_TEMP/insta360-x6-regression"
+          xcrun swiftc -parse-as-library \
+            ActionCamRemote/Models/CameraModels.swift \
+            ActionCamRemote/Bluetooth/Insta360RemoteProtocol.swift \
+            ActionCamRemote/Bluetooth/Insta360DirectProtocol.swift \
+            ActionCamRemote/Bluetooth/Insta360DirectSession.swift \
+            Tests/Insta360X5ProtocolRegression.swift \
+            -o "$RUNNER_TEMP/insta360-x5-regression"
+          "$RUNNER_TEMP/insta360-x5-regression"
+
+      - name: Check Insta360 heartbeat during UI tracking
+        run: sh ci_scripts/check_insta360_transport.sh
+
+      - name: Check DJI command deadlines
+        run: |
+          xcrun swiftc -parse-as-library \
+            ActionCamRemote/Models/CameraModels.swift \
+            ActionCamRemote/Bluetooth/Insta360RemoteProtocol.swift \
+            ActionCamRemote/Bluetooth/DJICommandTracker.swift \
+            Tests/DJICommandTrackerRegression.swift \
+            -o "$RUNNER_TEMP/dji-command-regression"
+          "$RUNNER_TEMP/dji-command-regression"
+
+      - name: Check GoPro transport lifecycle
+        run: sh ci_scripts/check_gopro_transport.sh
+
+      - name: Check recording Stop progress
+        run: |
+          xcrun swiftc -parse-as-library \
+            ActionCamRemote/Models/CameraModels.swift \
+            ActionCamRemote/Bluetooth/Insta360RemoteProtocol.swift \
+            Tests/CameraStopProgressRegression.swift \
+            -o "$RUNNER_TEMP/stop-progress-regression"
+          "$RUNNER_TEMP/stop-progress-regression"
+
       - name: Check saved command history and support attachment
         run: |
           xcrun swiftc -parse-as-library \

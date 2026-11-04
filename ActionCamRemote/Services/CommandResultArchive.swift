@@ -6,12 +6,12 @@ struct CommandResultSnapshot {
     let revision: UInt64
 
     var reportSection: String {
-        var lines = ["Command Results (newest first)"]
+        var lines = ["Command Log (newest first)"]
         if let storageError {
             lines.append("Command archive storage error: \(storageError). Current results are included from memory.")
         }
         if results.isEmpty {
-            lines.append("No saved commands.")
+            lines.append("No commands logged.")
         } else {
             lines += results.map { result in
                 "\(result.timestamp.ISO8601Format(.init(includingFractionalSeconds: true))) \(result.cameraName) \(result.command.label) [\(result.status.rawValue)]: \(result.message)"

@@ -49,18 +49,20 @@ enum GoProPresetProtocol {
         return presets
     }
 
-    private static func captureMode(flatMode: UInt64?, groupID: UInt32) -> CaptureMode? {
+    static func captureMode(flatMode: UInt64?, groupID: UInt32? = nil) -> CaptureMode? {
+        // Match the camera's menu grouping, even when a Time Lapse preset outputs video.
+        switch groupID {
+        case 1000: return .video
+        case 1001: return .photo
+        case 1002: return .timelapse
+        default: break
+        }
+
         switch flatMode {
-        case 12, 15, 22, 27, 29, 30, 31, 32: return .video
+        case 12, 15, 22, 27, 32: return .video
         case 16, 17, 18, 19, 25: return .photo
-        case 13, 20, 21, 24, 26: return .timelapse
-        default:
-            switch groupID {
-            case 1000: return .video
-            case 1001: return .photo
-            case 1002: return .timelapse
-            default: return nil
-            }
+        case 13, 20, 21, 24, 26, 29, 30, 31: return .timelapse
+        default: return nil
         }
     }
 
