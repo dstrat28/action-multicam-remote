@@ -4,6 +4,10 @@ Thanks for helping make Multicam better.
 
 ## Development
 
+Use short-lived feature branches and open pull requests against `main`. After
+merge, the Xcode Cloud TestFlight workflow builds `main` and distributes through
+its configured tester groups; there is no separate `develop` promotion.
+
 Requirements:
 
 - Xcode 26 or newer, including the iOS and watchOS SDKs.
