@@ -55,6 +55,9 @@ struct SettingsView: View {
         .background(Color.acrAppBackground)
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: insta360SDKEnabled) { _, _ in
+            store.refreshInsta360SDKPreference()
+        }
         .onAppear {
             store.setPairingModeActive(true)
             store.startScanning()

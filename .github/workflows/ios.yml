@@ -64,6 +64,9 @@ jobs:
       - name: Check Insta360 SDK command confirmation
         run: sh ci_scripts/check_insta360_sdk.sh
 
+      - name: Check Insta360 SDK adapter lifecycle
+        run: sh ci_scripts/check_insta360_sdk_adapter.sh
+
       - name: Check DJI command deadlines
         run: |
           xcrun swiftc -parse-as-library \

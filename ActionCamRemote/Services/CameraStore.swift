@@ -38,14 +38,16 @@ final class CameraStore {
     @ObservationIgnored private var commandHistoryGeneration: UInt64 = 0
     @ObservationIgnored private var commandHistoryRevision: UInt64 = 0
     @ObservationIgnored private var insta360Remote: Insta360RemoteService?
-    @ObservationIgnored private let insta360SDKEnabled = FeatureAvailability.insta360SDK
-        && UserDefaults.standard.bool(forKey: ACRPreferences.insta360SDKEnabled)
+    private var insta360SDKEnabled: Bool {
+        FeatureAvailability.insta360SDK && UserDefaults.standard.bool(forKey: ACRPreferences.insta360SDKEnabled)
+    }
     @ObservationIgnored private let phoneGPSProvider = PhoneGPSProvider()
     @ObservationIgnored private let recordingLiveActivityController = RecordingLiveActivityController()
     @ObservationIgnored private var liveActivityStopObserver: NSObjectProtocol?
     @ObservationIgnored private var liveActivityHighlightObserver: NSObjectProtocol?
     @ObservationIgnored private var clients: [UUID: any BLECameraDeviceClient] = [:]
     @ObservationIgnored private var pendingInsta360GPSFallbackIDs: Set<UUID> = []
+    @ObservationIgnored private var insta360SDKClientTokens: [UUID: UUID] = [:]
     @ObservationIgnored private var demoDiscoveryIndex = 0
     @ObservationIgnored private let pairedCamerasStorageKey = "pairedCameras.v1"
     @ObservationIgnored private let djiPhoneGPSStorageKey = "djiPhoneGPSCameraIDs.v1"
@@ -543,8 +545,12 @@ final class CameraStore {
     }
 
     func connect(_ requestedCamera: DiscoveredCamera) {
-        var camera = requestedCamera
-        camera.insta360UsesSDK = insta360SDKEnabled && camera.model.supportsInsta360SDKPrototype
+        var camera = cameras.first(where: { $0.id == requestedCamera.id }) ?? requestedCamera
+        let selection = camera.resolvedInsta360SDKSelection(preferred: insta360SDKEnabled)
+        if camera.brand == .insta360, let previous = camera.insta360UsesSDK, previous != selection {
+            clearInsta360CaptureIntents(for: camera.id)
+        }
+        camera.insta360UsesSDK = selection
         if let index = cameras.firstIndex(where: { $0.id == camera.id }) {
             cameras[index].insta360UsesSDK = camera.insta360UsesSDK
         }
@@ -603,13 +609,21 @@ final class CameraStore {
         #if INSTA360_SDK && !targetEnvironment(simulator)
         if camera.insta360UsesSDK == true {
             guard camera.connectionState != .connected else { return }
+            let token = UUID()
+            insta360SDKClientTokens[camera.id] = token
             let client = Insta360SDKClient(
-                cameraID: camera.id, cameraName: camera.name,
+                cameraID: camera.id, cameraName: camera.name, cameraModel: camera.model,
                 onStatus: { [weak self] id, state, detail in
-                    Task { @MainActor in self?.updateCamera(id, state: state, detail: detail) }
+                    Task { @MainActor in
+                        guard let self, self.insta360SDKClientTokens[id] == token else { return }
+                        self.updateCamera(id, state: state, detail: detail)
+                    }
                 },
                 onCameraStatus: { [weak self] id, update in
-                    Task { @MainActor in self?.updateCameraStatus(id, update: update) }
+                    Task { @MainActor in
+                        guard let self, self.insta360SDKClientTokens[id] == token else { return }
+                        self.updateCameraStatus(id, update: update)
+                    }
                 },
                 onLog: { [weak self] message in
                     Task { @MainActor in self?.appendLog(message) }
@@ -626,6 +640,8 @@ final class CameraStore {
             return
         }
         #endif
+
+        insta360SDKClientTokens.removeValue(forKey: camera.id)
 
         if camera.usesInsta360GPSRemote {
             lastConnectionAttemptByID[camera.id] = Date()
@@ -787,6 +803,40 @@ final class CameraStore {
         }
     }
 
+    func refreshInsta360SDKPreference() {
+        for index in cameras.indices where cameras[index].brand == .insta360 {
+            let selection = cameras[index].resolvedInsta360SDKSelection(preferred: insta360SDKEnabled)
+            guard cameras[index].insta360UsesSDK != selection else { continue }
+            let id = cameras[index].id
+            clearInsta360CaptureIntents(for: id)
+            cameras[index].insta360UsesSDK = selection
+            cameras[index].capabilities = normalizedCapabilities(cameras[index].capabilities,
+                brand: cameras[index].brand, model: cameras[index].model, name: cameras[index].name,
+                usesInsta360SDK: selection)
+            if let reason = cameras[index].unsupportedReason {
+                cameras[index].connectionState = .unsupported(reason)
+                cameras[index].isSelected = false
+            } else if case .unsupported = cameras[index].connectionState {
+                cameras[index].connectionState = cameras[index].isPaired ? .disconnected : .discovered
+            }
+        }
+        appendLog("Insta360 SDK preference updated; it applies to the next connection. Active links keep their current control method.")
+        persistPairedCameras()
+    }
+
+    private func clearInsta360CaptureIntents(for id: UUID) {
+        finishStopping(for: id)
+        clearStateGuards(for: id)
+        pendingStartCameraIDs.remove(id)
+        pendingStopCameraIDs.remove(id)
+        cancelStartRecording(for: id)
+        cancelVideoModeSwitch(for: id)
+        cancelWakeRetry(for: id)
+        reconnectTasksByCameraID[id]?.cancel()
+        reconnectTasksByCameraID[id] = nil
+        appendLog("Insta360 control method changed; cleared queued capture commands.")
+    }
+
     func connectAvailableCamera(_ camera: DiscoveredCamera) {
         if camera.canWakeFromSleep {
             wake(camera)
@@ -796,6 +846,7 @@ final class CameraStore {
     }
 
     func disconnect(_ camera: DiscoveredCamera) {
+        insta360SDKClientTokens.removeValue(forKey: camera.id)
         finishStopping(for: camera.id)
         reconnectTasksByCameraID[camera.id]?.cancel()
         reconnectTasksByCameraID[camera.id] = nil
@@ -1342,16 +1393,21 @@ private extension CameraStore {
         if let index = cameras.firstIndex(where: { $0.id == candidate.id }) {
             let previousSortRank = cameras[index].defaultSortRank
             let resolvedModel = candidate.model == .unknown ? cameras[index].model : candidate.model
+            var routeCamera = cameras[index]
+            routeCamera.model = resolvedModel
+            let sdkSelection = routeCamera.resolvedInsta360SDKSelection(preferred: insta360SDKEnabled)
             let capabilities = normalizedCapabilities(
                 candidate.capabilities,
                 brand: candidate.brand,
                 model: resolvedModel,
-                name: candidate.name
+                name: candidate.name,
+                usesInsta360SDK: sdkSelection
             )
             let unsupportedReason = unsupportedReason(
                 brand: candidate.brand,
                 model: resolvedModel,
-                name: candidate.name
+                name: candidate.name,
+                usesInsta360SDK: sdkSelection
             )
 
             if cameras[index].name != candidate.name {
@@ -1364,10 +1420,10 @@ private extension CameraStore {
             }
             if candidate.model != .unknown, cameras[index].model != resolvedModel {
                 cameras[index].model = resolvedModel
-                if cameras[index].connectionState != .connected && cameras[index].connectionState != .connecting {
-                    cameras[index].insta360UsesSDK = insta360SDKEnabled && resolvedModel.supportsInsta360SDKPrototype
-                }
                 shouldSort = true
+            }
+            if cameras[index].connectionState != .connected && cameras[index].connectionState != .connecting {
+                cameras[index].insta360UsesSDK = insta360SDKEnabled && resolvedModel.supportsInsta360SDKPrototype
             }
             if cameras[index].capabilities != capabilities {
                 cameras[index].capabilities = capabilities
@@ -3265,7 +3321,8 @@ private extension CameraStore {
                 cameras[index].capabilities,
                 brand: cameras[index].brand,
                 model: model,
-                name: cameras[index].name
+                name: cameras[index].name,
+                usesInsta360SDK: cameras[index].insta360UsesSDK
             )
             shouldSort = true
             shouldPersist = cameras[index].isPaired
@@ -3288,6 +3345,12 @@ private extension CameraStore {
     }
 
     func updateCamera(_ id: UUID, state: CameraConnectionState, detail: String?) {
+        switch state {
+        case .disconnected, .failed, .unsupported:
+            insta360SDKClientTokens.removeValue(forKey: id)
+        default:
+            break
+        }
         guard let index = cameras.firstIndex(where: { $0.id == id }) else { return }
         if cameras[index].brand == .gopro {
             switch state {
@@ -3757,9 +3820,10 @@ private extension CameraStore {
         _ capabilities: Set<CameraCapability>,
         brand: CameraBrand,
         model: CameraModel,
-        name: String
+        name: String,
+        usesInsta360SDK: Bool? = nil
     ) -> Set<CameraCapability> {
-        if unsupportedReason(brand: brand, model: model, name: name) != nil {
+        if unsupportedReason(brand: brand, model: model, name: name, usesInsta360SDK: usesInsta360SDK) != nil {
             return [.experimental]
         }
 
@@ -3776,7 +3840,7 @@ private extension CameraStore {
             normalized.remove(.mode)
             normalized.remove(.settings)
             normalized.remove(.keepAlive)
-            if insta360SDKEnabled && model.supportsInsta360SDKPrototype { normalized.insert(.mode) }
+            if (usesInsta360SDK ?? insta360SDKEnabled) && model.supportsInsta360SDKPrototype { normalized.insert(.mode) }
         }
         return normalized
     }
@@ -3784,9 +3848,10 @@ private extension CameraStore {
     func unsupportedReason(
         brand: CameraBrand,
         model: CameraModel,
-        name: String
+        name: String,
+        usesInsta360SDK: Bool? = nil
     ) -> String? {
-        if model.requiresInsta360SDK, FeatureAvailability.insta360SDK, !insta360SDKEnabled {
+        if model.requiresInsta360SDK, FeatureAvailability.insta360SDK, !(usesInsta360SDK ?? insta360SDKEnabled) {
             return DiscoveredCamera.insta360SDKRequiredReason
         }
         return DiscoveredCamera.unsupportedReason(brand: brand, model: model, name: name)

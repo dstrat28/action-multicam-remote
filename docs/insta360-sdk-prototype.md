@@ -1,30 +1,33 @@
-# Insta360 iOS SDK Bluetooth prototype
+# Insta360 iOS SDK Bluetooth control
 
-PR #15 contains an opt-in device build using the approved iOS v1.11.3 package.
-Normal builds retain the existing X5/X6 direct Bluetooth and GPS Remote backends.
-The Settings preference `experimentalInsta360SDKEnabled` defaults to false.
+PR #15 adds optional control using the approved iOS v1.11.3 package. SDK control
+is off by default. Ordinary builds retain the existing X5/X6 direct Bluetooth
+and GPS Remote implementations.
 
-## Build locally
+## Private SDK installation and build
 
-The supplied `INSCameraSDKSample-bluetooth/Frameworks` directory contains the
-Bluetooth implementation in `INSCameraServiceSDK.xcframework`. Its public
-`INSBluetoothManager`, `INSBluetoothDevice`, and `INSCameraBasicCommands` APIs
-provide the control operations used here. Binary dependency inspection and a
-device build verify that this adapter does not need `INSCameraSDK`, `INSCoreMedia`,
-`SSZipArchive`, the sample UI frameworks, or the sample's machine learning models.
+Follow the vendor's four-framework dependency list:
 
-Install the approved binary locally:
+- `INSCameraSDK.framework`
+- `INSCameraServiceSDK.framework`
+- `INSCoreMedia.framework`
+- `SSZipArchive.framework`
+
+Install the approved download locally:
 
 ```sh
 sh ci_scripts/setup_insta360_sdk.sh /path/to/INSCameraSDKSample-bluetooth
 ```
 
-`Vendor/Insta360/` is ignored by Git. Vendor binaries, headers, and sample code
-are not committed or downloaded by CI. `check_vendor_sdk_exclusion.sh` rejects
-tracked framework bundles and vendor SDK distribution paths in CI. Other approved developers must install
-their own package. The repository's MIT license does not cover the vendor SDK.
+The installer validates all four device binaries before copying their `ios-arm64`
+frameworks, resources, and privacy manifests into `Vendor/Insta360/Frameworks`.
+It omits the sample app, sample models, and debug-symbol bundles. The SDK-enabled
+app's unthinned dependencies occupy about 167 MB; normal builds do not include them.
 
-Build with the optional device configuration:
+`Vendor/Insta360/` and framework bundles are ignored by Git. CI rejects tracked
+vendor distribution files. The public repository contains our integration and
+handwritten test doubles, not vendor binaries, headers, or sample implementation.
+The repository's MIT license does not cover the vendor SDK.
 
 ```sh
 xcodebuild \
@@ -38,74 +41,97 @@ xcodebuild \
 ```
 
 For installation, configure signing as described in [CONTRIBUTING.md](../CONTRIBUTING.md).
-`INSTA360_SDK_ROOT` can override the installed directory. The optional build links,
-embeds, and signs only `INSCameraServiceSDK.framework`, with `TO_B_SDK=1`.
-The supplied camera framework has only an `ios-arm64` slice. Simulator builds
-exclude the adapter and binary, and hide the Settings switch, including
-when `MULTICAM_INSTA360_SDK_ENABLED=YES` is passed. Ordinary device builds also
-hide the switch and do not link or embed the SDK. SDK device builds show the
-**Insta360 SDK** switch without explanatory subtext.
+`INSTA360_SDK_ROOT` can override the installed directory; it must contain the
+`Frameworks` directory described above. Device builds with the option enabled
+link/embed all four frameworks, use `TO_B_SDK=1`, retain resource/privacy files,
+and sign each embedded framework when signing is enabled. Disabling the build
+option removes all four frameworks from reused build output.
 
-In an SDK device build, turn on **Settings > Insta360 SDK**, then restart Multicam.
-Selection is captured at app startup. Changing the preference never switches a
-live connection or sends a shutter command. Turning it off and restarting restores
-the existing backend, including a remembered X5 GPS Remote fallback.
+The supplied Camera/Media frameworks have no simulator slice. Simulator and
+ordinary device builds exclude SDK imports and binaries and hide the Settings
+switch. A successful public CI build therefore does not validate SDK packaging;
+the SDK-enabled device build must also be checked locally with the approved files.
+Xcode Cloud/release builders need these dependencies supplied privately and
+`MULTICAM_INSTA360_SDK_ENABLED=YES` to offer the setting to users. The current public
+CI workflow deliberately does not download the proprietary package.
 
-## Implemented scope
+The sample initializes the SDK camera manager before Bluetooth use. The supplied
+`INSCameraManager.h` directs initialization through an explicit USB/socket manager
+instead of its legacy shared accessor. Our Bluetooth integration initializes the
+explicit USB manager when the first SDK client starts and shuts it down when the
+last client closes. Bluetooth capture/status commands always use each camera's
+own command interface. Wi-Fi and external-accessory controls are not used.
 
-- The complete official iOS SDK list is eligible: X6, X5, X4 Air, X4, X3, X2,
-  ONE X, ONE R, ONE RS, and ONE RS 1-Inch. Ace and GO models retain GPS Remote
-  control. Eligibility is not hardware validation.
-- X2, ONE X, ONE R, and ONE RS 1-Inch require the enabled SDK backend. They are
-  not routed to GPS Remote in ordinary builds or when the SDK preference is off.
-  Discovery recognizes the ONE X2 alias and the ONE RS 1-Inch 360 Edition name;
-  model-specific advertisements and control still require hardware verification.
-- Each camera owns a separate vendor Bluetooth manager, device, command interface,
-  connection task, generation token, and command confirmation state. The global
-  current-camera singleton is never used.
-- Explicit video Start/Stop, normal Photo capture, normal Video/Photo mode changes,
-  capture status, elapsed time, battery, and active storage are implemented.
-  Current mode is resolved from successfully returned `photoSubMode` and
-  `videoSubMode`: normal capture is 0 and the inactive family is 100. Legacy
-  EVO synchronization-mode commands are not used.
-- A common-run-loop timer sends the sample's half-second heartbeats. Status/mode
-  queries run serially, about once per second; battery/storage refresh every 30
-  seconds and expire after 75. Only successful option fields are applied.
-- Start, Photo, and mode changes require a stopped observation no older than five
-  seconds. Start requires confirmed normal Video mode; Photo requires normal
-  Photo mode. Unsupported modes remain unknown. Explicit Stop is allowed with
-  unknown status. Stop can supersede an outstanding Start confirmation.
-- SDK command acceptance alone does not confirm Start, Stop, or a mode change.
-  A subsequent status query must match the command. Pre-command and superseded
-  replies cannot refresh state or complete another command. A 25-second timeout
-  fails confirmation without retrying capture commands.
-- Disconnects cancel connection work, stop timers/observations, fail pending
-  commands, invalidate late callbacks, and clear telemetry. A missing status
-  callback closes the SDK session after 30 seconds. SDK failures never switch
-  automatically to GPS Remote or send a toggle.
-- SDK transport selection, failures, and command completion appear in Diagnostics.
-  Unscoped global SDK capture notifications are not applied to any camera; status
-  is requested through the specific device's command interface.
+## Setting and return to existing control
+
+SDK device builds show a plain **Settings > Insta360 SDK** switch. Changes apply
+to the next connection without restarting Multicam. An established connection or
+an in-flight handshake keeps its current method, including while recording.
+
+To return to existing control, turn the switch off, disconnect the camera, and
+connect it again. The selection change clears queued capture intents; it does
+not send a shutter command. A remembered X5 GPS Remote fallback is preserved.
+X2, ONE X, ONE R, and ONE RS 1-Inch require SDK control and have no existing route
+to return to; disabling SDK makes those four models unavailable.
+
+## Camera and command scope
+
+The complete official iOS list is eligible: X6, X5, X4 Air, X4, X3, X2, ONE X,
+ONE R, ONE RS, and ONE RS 1-Inch. Ace and GO models retain GPS Remote control.
+Eligibility is not physical-camera validation. Discovery also recognizes the
+ONE X2 alias and ONE RS 1-Inch 360 Edition name.
+
+- Each camera has its own Bluetooth manager, device, command interface,
+  connection task, delegate generation, and command confirmation state.
+- Implements explicit video Start/Stop, normal Photo, normal Video/Photo mode
+  changes, capture status, elapsed time, battery, and storage. Mode reads use
+  successful `photoSubMode`/`videoSubMode` options: normal capture is 0 and the
+  inactive family is 100. Legacy EVO sync-mode commands are not used.
+- X6 requests `storageStateList` and reports its internal and SD storage
+  separately, as documented by the vendor. Capacities are not combined or
+  presented as a selected recording volume. Other cameras use `storageStatus`.
+- A common-run-loop timer sends half-second heartbeats as shown in the sample.
+  Capture/mode queries are serial, about once per second. Battery/storage refresh
+  every 30 seconds and expire after 75; only successful fields are applied.
+- Start, Photo, and mode changes require stopped status no older than five seconds.
+  Start requires normal Video; Photo requires normal Photo. Explicit Stop remains
+  available with unknown status. Stop can supersede pending Start confirmation.
+- SDK acceptance does not confirm Start, Stop, or a mode change. A subsequent
+  query must match the command and follow its acceptance. Old/superseded replies
+  cannot refresh state or complete another command. Slow mode replies retain
+  the original capture observation's age. Confirmation expires after 25 seconds.
+- Our adapter never repeats a capture call automatically. Disconnect cancels
+  connection work, stops timers/observations, invalidates late SDK callbacks,
+  fails pending commands, and clears telemetry. Missing status closes the session
+  after 30 seconds. SDK failures do not switch routes or send shutter toggles.
+- Transport selection, errors, and command outcomes appear in Diagnostics.
+  Global SDK notifications without a reliable camera identity are not applied;
+  status is requested through the specific device's interface.
 
 Preview, media transfer, firmware updates, Wi-Fi setup, wake, advanced capture
-modes, highlight tags, and settings other than normal capture mode are outside
-this Bluetooth prototype.
+modes, and highlight tags are outside this Bluetooth integration.
 
-## Validation and remaining hardware work
+## Verification and remaining uncertainty
 
-`sh ci_scripts/check_insta360_sdk.sh` runs synthetic host regressions for status
-freshness, mode gates, command confirmation, stale responses, Stop superseding
-Start, timeouts, failures, disconnects, and independent cameras. Existing protocol
-regressions still exercise the default backends. A build and synthetic tests do
-not establish compatibility with physical cameras.
+`sh ci_scripts/check_insta360_sdk.sh` tests state freshness, command confirmation,
+late replies, mode gates, timeouts, all ten models, connection-scoped preference
+changes, and return to a remembered X5 route with SDK availability on and off.
 
-Before release, verify one camera's repeated start/stop, photos, mode changes, and
-telemetry; then two supported Insta360 cameras together and a mixed
-GoPro/DJI/Insta360 group. Check background/foreground transitions, app relaunch
-while recording, Bluetooth loss, unsupported cameras, and returning to the default
-backend after disabling the experiment. Keep PR #15 a draft until these results
-are recorded.
+`sh ci_scripts/check_insta360_sdk_adapter.sh` exercises the actual adapter against
+our handwritten SDK double: initialization/shutdown, independent cameras,
+commands, pre-command replies, late connection/delegate callbacks, half-second
+heartbeats during UI tracking, X6 storage selection, and disconnect cleanup.
+The double provides no evidence that vendor internals or camera firmware behave
+identically. Native device builds verify the supplied headers and linker inputs.
 
-References: the supplied v1.11.3 headers and Bluetooth sample;
+No physical Insta360 camera is available for this review. Merge readiness is
+based on documented setup, native builds, synthetic regression tests, the
+existing routes remaining available, and SDK control being opt-in. Camera
+compatibility remains unverified and should be assessed through controlled user
+reports for one-camera capture, multiple/mixed cameras, relaunch, Bluetooth loss,
+and foreground/background transitions. Do not label a camera hardware-tested
+without observing it physically.
+
+References: supplied v1.11.3 headers and Bluetooth sample;
 [iOS SDK overview](https://github.com/Insta360Develop/Insta360-Developer_Docs/blob/main/docs/en/sdk/x-ace-go/ios/guide.md),
 [API reference](https://github.com/Insta360Develop/Insta360-Developer_Docs/blob/main/docs/en/sdk/x-ace-go/ios/api.md).

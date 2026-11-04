@@ -940,7 +940,7 @@ struct CameraBehaviorProfile: Equatable {
 
 struct DiscoveredCamera: Identifiable, Equatable, Codable {
     static let unsupportedCameraReason = "Unsupported"
-    static let insta360SDKRequiredReason = "Enable Insta360 SDK in Settings and restart Multicam."
+    static let insta360SDKRequiredReason = "Enable Insta360 SDK in Settings, then connect this camera."
 
     let id: UUID
     var name: String
@@ -1210,6 +1210,15 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
 
     var usesInsta360GPSRemote: Bool {
         brand == .insta360 && behavior.kind != .insta360Direct
+    }
+
+    func resolvedInsta360SDKSelection(preferred: Bool) -> Bool {
+        guard brand == .insta360 else { return false }
+        // Preferences affect the next connection, never an established link or
+        // an in-flight handshake. Reconnects resolve the preference afresh.
+        if connectionState == .connected || connectionState == .connecting,
+           let insta360UsesSDK { return insta360UsesSDK }
+        return preferred && model.supportsInsta360SDKPrototype
     }
 
     var isKnownAction6: Bool {

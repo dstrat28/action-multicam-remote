@@ -45,7 +45,7 @@ Support and hardware-testing status are listed separately. Camera behavior may v
 
 ## Limitations
 
-- Approved SDK device builds can opt into Bluetooth control for the full official iOS SDK camera list. X2, ONE X, ONE R, and ONE RS 1-Inch require that backend; they have no GPS Remote fallback. The SDK switch appears only in SDK device builds and takes effect after restarting Multicam. All SDK camera control remains hardware-unverified. See [SDK setup and validation](insta360-sdk-prototype.md).
+- Approved SDK device builds can opt into Bluetooth control for the full official iOS SDK camera list. X2, ONE X, ONE R, and ONE RS 1-Inch require that backend; they have no GPS Remote fallback. The SDK switch appears only in SDK device builds and applies to the next connection. Existing links keep their current method; disconnect and reconnect after changing the setting. All SDK camera control remains hardware-unverified. See [SDK setup and validation](insta360-sdk-prototype.md).
 - Camera behavior can vary by model and firmware; see the hardware-testing status above.
 - X5/X6 direct Bluetooth control uses community hardware captures (X5: October 2026 firmware; X6: 1.1.7); Multicam has not been tested on Insta360 hardware. Set normal Video mode on the camera. Direct mode changes, photos, settings, and wake are unavailable. X5 can fall back to GPS Remote before protocol confirmation or any capture transmission. [Protocol and validation details](insta360-direct-control.md).
 - Insta360 GPS Remote support requires selecting `Insta360 GPS Remote` in the camera's Bluetooth Remote settings while Multicam remains open.

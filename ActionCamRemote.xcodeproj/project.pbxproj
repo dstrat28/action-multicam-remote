@@ -456,7 +456,12 @@
 				"$(INSTA360_SDK_INPUT_$(MULTICAM_INSTA360_SDK_ENABLED))",
 			);
 			name = "Embed optional Insta360 SDK";
-			outputPaths = ("$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/INSCameraServiceSDK.framework",);
+			outputPaths = (
+				"$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/INSCameraServiceSDK.framework",
+				"$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/INSCameraSDK.framework",
+				"$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/INSCoreMedia.framework",
+				"$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/SSZipArchive.framework",
+			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "sh \"$SRCROOT/ci_scripts/embed_insta360_sdk.sh\"";
@@ -671,10 +676,10 @@
 				MULTICAM_INSTA360_SDK_ENABLED = NO;
 				INSTA360_SDK_ROOT = "$(SRCROOT)/Vendor/Insta360";
 				INSTA360_SDK_INPUT_NO = "$(SRCROOT)/ci_scripts/embed_insta360_sdk.sh";
-				INSTA360_SDK_INPUT_YES = "$(INSTA360_SDK_ROOT)/INSCameraServiceSDK.xcframework/ios-arm64/INSCameraServiceSDK.framework";
+				INSTA360_SDK_INPUT_YES = "$(INSTA360_SDK_ROOT)/Frameworks";
 				"INSTA360_SDK_INPUT_YES[sdk=iphonesimulator*]" = "$(SRCROOT)/ci_scripts/embed_insta360_sdk.sh";
 				INSTA360_SDK_SEARCH_NO = "";
-				INSTA360_SDK_SEARCH_YES = "$(INSTA360_SDK_ROOT)/INSCameraServiceSDK.xcframework/ios-arm64";
+				INSTA360_SDK_SEARCH_YES = "$(INSTA360_SDK_ROOT)/Frameworks";
 				INSTA360_SDK_CLANG_NO = "";
 				INSTA360_SDK_CLANG_YES = "-Xcc -DTO_B_SDK=1";
 				INSTA360_SDK_SWIFT_NO = "";
@@ -683,7 +688,7 @@
 				INSTA360_SDK_SANDBOX_YES = NO;
 				"ENABLE_USER_SCRIPT_SANDBOXING[sdk=iphoneos*]" = "$(INSTA360_SDK_SANDBOX_$(MULTICAM_INSTA360_SDK_ENABLED))";
 				INSTA360_SDK_LINK_NO = "";
-				INSTA360_SDK_LINK_YES = "-framework INSCameraServiceSDK";
+				INSTA360_SDK_LINK_YES = "-framework INSCameraSDK -framework INSCameraServiceSDK -framework INSCoreMedia -framework SSZipArchive -ObjC";
 				"FRAMEWORK_SEARCH_PATHS[sdk=iphoneos*]" = ("$(inherited)", "$(INSTA360_SDK_SEARCH_$(MULTICAM_INSTA360_SDK_ENABLED))",);
 				"OTHER_LDFLAGS[sdk=iphoneos*]" = "$(inherited) $(INSTA360_SDK_LINK_$(MULTICAM_INSTA360_SDK_ENABLED))";
 				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphoneos*]" = "APP_MAIN_TARGET $(inherited) $(INSTA360_SDK_SWIFT_$(MULTICAM_INSTA360_SDK_ENABLED))";
@@ -727,10 +732,10 @@
 				MULTICAM_INSTA360_SDK_ENABLED = NO;
 				INSTA360_SDK_ROOT = "$(SRCROOT)/Vendor/Insta360";
 				INSTA360_SDK_INPUT_NO = "$(SRCROOT)/ci_scripts/embed_insta360_sdk.sh";
-				INSTA360_SDK_INPUT_YES = "$(INSTA360_SDK_ROOT)/INSCameraServiceSDK.xcframework/ios-arm64/INSCameraServiceSDK.framework";
+				INSTA360_SDK_INPUT_YES = "$(INSTA360_SDK_ROOT)/Frameworks";
 				"INSTA360_SDK_INPUT_YES[sdk=iphonesimulator*]" = "$(SRCROOT)/ci_scripts/embed_insta360_sdk.sh";
 				INSTA360_SDK_SEARCH_NO = "";
-				INSTA360_SDK_SEARCH_YES = "$(INSTA360_SDK_ROOT)/INSCameraServiceSDK.xcframework/ios-arm64";
+				INSTA360_SDK_SEARCH_YES = "$(INSTA360_SDK_ROOT)/Frameworks";
 				INSTA360_SDK_CLANG_NO = "";
 				INSTA360_SDK_CLANG_YES = "-Xcc -DTO_B_SDK=1";
 				INSTA360_SDK_SWIFT_NO = "";
@@ -739,7 +744,7 @@
 				INSTA360_SDK_SANDBOX_YES = NO;
 				"ENABLE_USER_SCRIPT_SANDBOXING[sdk=iphoneos*]" = "$(INSTA360_SDK_SANDBOX_$(MULTICAM_INSTA360_SDK_ENABLED))";
 				INSTA360_SDK_LINK_NO = "";
-				INSTA360_SDK_LINK_YES = "-framework INSCameraServiceSDK";
+				INSTA360_SDK_LINK_YES = "-framework INSCameraSDK -framework INSCameraServiceSDK -framework INSCoreMedia -framework SSZipArchive -ObjC";
 				"FRAMEWORK_SEARCH_PATHS[sdk=iphoneos*]" = ("$(inherited)", "$(INSTA360_SDK_SEARCH_$(MULTICAM_INSTA360_SDK_ENABLED))",);
 				"OTHER_LDFLAGS[sdk=iphoneos*]" = "$(inherited) $(INSTA360_SDK_LINK_$(MULTICAM_INSTA360_SDK_ENABLED))";
 				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphoneos*]" = "APP_MAIN_TARGET $(inherited) $(INSTA360_SDK_SWIFT_$(MULTICAM_INSTA360_SDK_ENABLED))";

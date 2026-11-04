@@ -15,6 +15,7 @@ final class Insta360SDKSession {
     private(set) var currentMode: CaptureMode?
     private(set) var statusAt: TimeInterval?
     private var pending: Pending?
+    private(set) var observationToken = UUID()
     var pendingID: UUID? { pending?.result.id }
     var isBusy: Bool { pending != nil }
 
@@ -69,7 +70,10 @@ final class Insta360SDKSession {
         let result = CameraCommandResult(cameraID: cameraID, cameraName: cameraName, command: command,
             status: reason == nil ? .queued : .skipped,
             message: reason ?? "SDK command queued; waiting for camera confirmation.", timestamp: Date())
-        if reason == nil { pending = Pending(result: result, deadline: now + 25) }
+        if reason == nil {
+            pending = Pending(result: result, deadline: now + 25)
+            observationToken = UUID()
+        }
         return result
     }
 
@@ -83,17 +87,21 @@ final class Insta360SDKSession {
             finish(.sent, "SDK photo request completed. Verify the photo on the camera.")
         } else {
             pending?.acceptedAt = now
+            observationToken = UUID()
         }
     }
 
-    func observe(state: CameraRecordingState, mode: CaptureMode?, at now: TimeInterval, queryCommandID: UUID?) {
-        guard queryCommandID == pendingID else { return }
+    @discardableResult
+    func observe(state: CameraRecordingState, mode: CaptureMode?, at now: TimeInterval,
+                 queryCommandID: UUID?, queryToken: UUID) -> Bool {
+        guard queryToken == observationToken,
+              queryCommandID == pendingID else { return false }
         recordingState = state
         currentMode = mode
         statusAt = now
         tick(at: now)
         guard let pending, let acceptedAt = pending.acceptedAt, now >= acceptedAt,
-              pending.result.id == queryCommandID else { return }
+              pending.result.id == queryCommandID else { return true }
         let confirmed: Bool
         switch pending.result.command {
         case .startRecording: confirmed = state == .recording
@@ -102,6 +110,7 @@ final class Insta360SDKSession {
         default: confirmed = false
         }
         if confirmed { finish(.sent, "SDK camera status confirmed \(pending.result.command.label).") }
+        return true
     }
 
     func tick(at now: TimeInterval) {
@@ -120,11 +129,13 @@ final class Insta360SDKSession {
         recordingState = .unknown
         currentMode = nil
         statusAt = nil
+        observationToken = UUID()
     }
 
     private func finish(_ status: CameraCommandStatus, _ message: String) {
         guard var result = pending?.result else { return }
         pending = nil
+        observationToken = UUID()
         result.status = status
         result.message = message
         onCompletion?(result)

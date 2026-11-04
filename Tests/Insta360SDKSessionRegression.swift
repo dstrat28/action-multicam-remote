@@ -9,7 +9,7 @@ enum Insta360SDKSessionRegression {
         first.onCompletion = { results.append($0) }
 
         precondition(first.send(.startRecording, at: 0).status == .skipped)
-        first.observe(state: .stopped, mode: .photo, at: 0, queryCommandID: nil)
+        first.observe(state: .stopped, mode: .photo, at: 0, queryCommandID: nil, queryToken: first.observationToken)
         precondition(first.send(.startRecording, at: 0).status == .skipped)
         precondition(first.send(.setMode(.timelapse), at: 0).status == .skipped)
         precondition(first.send(.toggleRecording, at: 0).status == .skipped)
@@ -19,20 +19,20 @@ enum Insta360SDKSessionRegression {
         precondition(mode.status == .queued)
         first.accepted(mode.id, error: nil, at: 1)
         precondition(results.isEmpty) // SDK acceptance does not confirm a mode change.
-        first.observe(state: .stopped, mode: .video, at: 1, queryCommandID: nil)
+        first.observe(state: .stopped, mode: .video, at: 1, queryCommandID: nil, queryToken: first.observationToken)
         precondition(first.currentMode == .photo && results.isEmpty) // Pre-command reply ignored.
-        first.observe(state: .stopped, mode: .video, at: 2, queryCommandID: mode.id)
+        first.observe(state: .stopped, mode: .video, at: 2, queryCommandID: mode.id, queryToken: first.observationToken)
         precondition(results.last?.id == mode.id && results.last?.status == .sent)
 
         let start = first.send(.startRecording, at: 3)
         precondition(start.status == .queued)
         precondition(first.send(.startRecording, at: 3).status == .skipped)
-        first.observe(state: .recording, mode: .video, at: 3, queryCommandID: start.id)
+        first.observe(state: .recording, mode: .video, at: 3, queryCommandID: start.id, queryToken: first.observationToken)
         precondition(results.count == 1) // No confirmation until SDK accepts the command.
         first.accepted(start.id, error: nil, at: 3)
-        first.observe(state: .recording, mode: .video, at: 2.5, queryCommandID: start.id)
+        first.observe(state: .recording, mode: .video, at: 2.5, queryCommandID: start.id, queryToken: first.observationToken)
         precondition(results.count == 1) // A reply observed before acceptance cannot confirm it.
-        first.observe(state: .recording, mode: .video, at: 4, queryCommandID: start.id)
+        first.observe(state: .recording, mode: .video, at: 4, queryCommandID: start.id, queryToken: first.observationToken)
         precondition(results.last?.id == start.id && results.last?.status == .sent)
         precondition(second.recordingState == .unknown && second.pendingID == nil)
         precondition(first.send(.capturePhoto, at: 4).status == .skipped)
@@ -44,9 +44,9 @@ enum Insta360SDKSessionRegression {
         let stop = first.send(.stopRecording, at: 10)
         precondition(stop.status == .queued) // Explicit Stop remains safe with unknown status.
         first.accepted(stop.id, error: nil, at: 10)
-        first.observe(state: .unknown, mode: .video, at: 11, queryCommandID: stop.id)
+        first.observe(state: .unknown, mode: .video, at: 11, queryCommandID: stop.id, queryToken: first.observationToken)
         precondition(first.pendingID == stop.id)
-        first.observe(state: .stopped, mode: .video, at: 12, queryCommandID: stop.id)
+        first.observe(state: .stopped, mode: .video, at: 12, queryCommandID: stop.id, queryToken: first.observationToken)
         precondition(results.last?.id == stop.id && results.last?.status == .sent)
 
         let pendingStart = first.send(.startRecording, at: 13)
@@ -54,10 +54,10 @@ enum Insta360SDKSessionRegression {
         precondition(results.last?.id == pendingStart.id && results.last?.status == .failed)
         precondition(supersedingStop.status == .queued)
         first.accepted(pendingStart.id, error: nil, at: 14)
-        first.observe(state: .stopped, mode: .video, at: 14, queryCommandID: pendingStart.id)
+        first.observe(state: .stopped, mode: .video, at: 14, queryCommandID: pendingStart.id, queryToken: first.observationToken)
         precondition(first.pendingID == supersedingStop.id)
         first.accepted(supersedingStop.id, error: nil, at: 14)
-        first.observe(state: .stopped, mode: .video, at: 15, queryCommandID: supersedingStop.id)
+        first.observe(state: .stopped, mode: .video, at: 15, queryCommandID: supersedingStop.id, queryToken: first.observationToken)
         precondition(results.last?.id == supersedingStop.id && results.last?.status == .sent)
 
         let timeout = first.send(.startRecording, at: 16)
@@ -66,10 +66,10 @@ enum Insta360SDKSessionRegression {
         precondition(results.last?.id == timeout.id && results.last?.status == .failed)
         let completedCount = results.count
         first.accepted(timeout.id, error: nil, at: 42)
-        first.observe(state: .recording, mode: .video, at: 42, queryCommandID: timeout.id)
+        first.observe(state: .recording, mode: .video, at: 42, queryCommandID: timeout.id, queryToken: first.observationToken)
         precondition(first.recordingState == .unknown && results.count == completedCount)
 
-        first.observe(state: .stopped, mode: .photo, at: 43, queryCommandID: nil)
+        first.observe(state: .stopped, mode: .photo, at: 43, queryCommandID: nil, queryToken: first.observationToken)
         let photo = first.send(.capturePhoto, at: 43)
         first.accepted(photo.id, error: nil, at: 43)
         precondition(results.last?.status == .sent && first.recordingState == .stopped)
@@ -105,6 +105,13 @@ enum Insta360SDKSessionRegression {
                 recordingState: .stopped, isPaired: true, isSelected: true, lastSeen: Date())
             if model.requiresInsta360SDK { precondition(!camera.isSupportedByApp) }
             camera.insta360UsesSDK = true
+            precondition(camera.resolvedInsta360SDKSelection(preferred: false))
+            camera.connectionState = .connecting
+            precondition(camera.resolvedInsta360SDKSelection(preferred: false))
+            camera.connectionState = .disconnected
+            precondition(!camera.resolvedInsta360SDKSelection(preferred: false))
+            precondition(camera.resolvedInsta360SDKSelection(preferred: true))
+            camera.connectionState = .connected
             precondition(camera.behavior.kind == .insta360Direct)
             precondition(!camera.usesInsta360GPSRemote)
             precondition(camera.availableCaptureModes == [.video, .photo])
@@ -113,8 +120,31 @@ enum Insta360SDKSessionRegression {
         precondition(!CameraModel.insta360AcePro2.supportsInsta360SDKPrototype)
         precondition(!CameraModel.insta360Go3S.supportsInsta360SDKPrototype)
 
+        let ordered = Insta360SDKSession(cameraID: UUID(), cameraName: "X3")
+        let beforeCommand = ordered.observationToken
+        let orderedStop = ordered.send(.stopRecording, at: 0)
+        let beforeAcceptance = ordered.observationToken
+        ordered.accepted(orderedStop.id, error: nil, at: 1)
+        precondition(!ordered.observe(state: .stopped, mode: .video, at: 2,
+            queryCommandID: orderedStop.id, queryToken: beforeAcceptance))
+        ordered.tick(at: 26)
+        precondition(!ordered.observe(state: .stopped, mode: .video, at: 27,
+            queryCommandID: nil, queryToken: beforeCommand))
+        precondition(ordered.recordingState == .unknown)
+
+        var legacy = DiscoveredCamera(id: UUID(), name: "X5 ABC123", brand: .insta360,
+            model: .insta360X5, rssi: -50, capabilities: [.record, .status], connectionState: .connected,
+            recordingState: .recording, isPaired: true, isSelected: true, lastSeen: Date(),
+            insta360UsesGPSRemoteFallback: true, insta360UsesSDK: false)
+        precondition(!legacy.resolvedInsta360SDKSelection(preferred: true))
+        legacy.insta360UsesSDK = true
+        precondition(legacy.resolvedInsta360SDKSelection(preferred: false))
+        legacy.connectionState = .disconnected
+        legacy.insta360UsesSDK = legacy.resolvedInsta360SDKSelection(preferred: false)
+        precondition(legacy.usesInsta360GPSRemote && legacy.insta360UsesGPSRemoteFallback == true)
+
         let slowMode = Insta360SDKSession(cameraID: UUID(), cameraName: "X4")
-        slowMode.observe(state: .stopped, mode: .video, at: 0, queryCommandID: nil)
+        slowMode.observe(state: .stopped, mode: .video, at: 0, queryCommandID: nil, queryToken: slowMode.observationToken)
         slowMode.tick(at: 6) // A delayed mode callback preserves the capture observation's age.
         precondition(slowMode.send(.startRecording, at: 6).status == .skipped)
         print("Insta360 SDK session regressions passed (synthetic; no camera validation).")
