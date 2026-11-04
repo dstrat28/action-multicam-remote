@@ -747,17 +747,16 @@ final class CameraStore {
                     events.deliver({ [weak self] in self?.handleBLECommandCompletion(result) },
                         onDiscard: { [weak self] in self?.recordBLECommandOutcome(result) })
                 },
-                onPairingRejected: { [weak self] id in
-                    events.deliver { [weak self] in
-                        guard let self else { return }
-                        self.invalidateClientEventSession(for: id)
+                onPairingRejected: { [weak self] id, message in
+                    events.deliverStatus(.failed(message), apply: { [weak self] in
+                        guard let self, let camera = self.cameras.first(where: { $0.id == id }) else { return }
                         self.userDisconnectedCameraIDs.insert(id)
                         self.settleStopIntent(for: id)
-                        self.pendingStartCameraIDs.remove(id)
-                        self.cancelStartRecording(for: id)
+                        self.clearPendingStartIfDJIUnavailable(for: camera)
                         self.cancelWakeRetry(for: id)
-                        self.scanner.disconnect(from: id)
-                    }
+                        self.passiveDJIProbeCameraIDs.remove(id)
+                        self.updateCamera(id, state: .failed(message), detail: message)
+                    }, onFailure: { [weak self] in self?.scanner.disconnect(from: id) })
                 }
             )
         case .insta360:
@@ -3730,6 +3729,7 @@ private extension CameraStore {
 
         switch state {
         case .failed, .disconnected:
+            guard !userDisconnectedCameraIDs.contains(camera.id) else { return .disconnected }
             let hasQueuedCommand = pendingStartCameraIDs.contains(camera.id)
                 || stopState.needsReplay(camera.id)
             let shouldPreserveActiveDJIConnection = camera.brand == .dji

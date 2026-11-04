@@ -58,6 +58,10 @@ reach command history without changing the new connection's state or controls.
 For GoPro and direct Insta360 failures, applying terminal status and requesting
 the required Bluetooth disconnect run in one guarded actor turn. Retiring that
 session cannot discard its own teardown, and a replaced session cannot close its successor.
+DJI pairing rejection is one terminal event: it pauses automatic pairing,
+applies the rejection reason and completes teardown in the same guarded actor turn.
+An explicitly disconnected camera stays Not Connected even when its last report
+was Recording; the camera's recording state does not override the user's pause.
 
 The scanner reports physical link state; opening that link keeps the app in
 Connecting until the client reports protocol-ready Connected. Pending Start/Stop
