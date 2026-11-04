@@ -153,6 +153,7 @@
 		ACR000000000000000000049 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		ACR000000000000000000050 /* Insta360SDKSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Insta360SDKSession.swift; sourceTree = "<group>"; };
 		ACR000000000000000000051 /* Insta360SDKClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Insta360SDKClient.swift; sourceTree = "<group>"; };
+		ACR000000000000000000052 /* Insta360SDK.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = ci_scripts/Insta360SDK.xcconfig; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -185,6 +186,7 @@
 			children = (
 				ACR000000000000000000301 /* ActionCamRemote */,
 				ACR000000000000000000047 /* THIRD_PARTY_NOTICES.md */,
+				ACR000000000000000000052 /* Insta360SDK.xcconfig */,
 				ACR000000000000000000307 /* MulticamWatchApp */,
 				ACR000000000000000000309 /* MulticamLiveActivity */,
 				ACR000000000000000000302 /* Products */,
@@ -465,6 +467,7 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "sh \"$SRCROOT/ci_scripts/embed_insta360_sdk.sh\"";
+			showEnvVarsInLog = 0;
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -667,13 +670,13 @@
 		};
 		ACR000000000000000000702 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = ACR000000000000000000052 /* Insta360SDK.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CODE_SIGN_ENTITLEMENTS = "$(MULTICAM_CARPLAY_ENTITLEMENTS_$(MULTICAM_CARPLAY_ENABLED))";
 				MULTICAM_CARPLAY_ENABLED = YES;
-				MULTICAM_INSTA360_SDK_ENABLED = NO;
 				INSTA360_SDK_ROOT = "$(SRCROOT)/Vendor/Insta360";
 				INSTA360_SDK_INPUT_NO = "$(SRCROOT)/ci_scripts/embed_insta360_sdk.sh";
 				INSTA360_SDK_INPUT_YES = "$(INSTA360_SDK_ROOT)/Frameworks";
@@ -723,13 +726,13 @@
 		};
 		ACR000000000000000000703 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = ACR000000000000000000052 /* Insta360SDK.xcconfig */;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_STYLE = Automatic;
 				CODE_SIGN_ENTITLEMENTS = "$(MULTICAM_CARPLAY_ENTITLEMENTS_$(MULTICAM_CARPLAY_ENABLED))";
 				MULTICAM_CARPLAY_ENABLED = YES;
-				MULTICAM_INSTA360_SDK_ENABLED = NO;
 				INSTA360_SDK_ROOT = "$(SRCROOT)/Vendor/Insta360";
 				INSTA360_SDK_INPUT_NO = "$(SRCROOT)/ci_scripts/embed_insta360_sdk.sh";
 				INSTA360_SDK_INPUT_YES = "$(INSTA360_SDK_ROOT)/Frameworks";

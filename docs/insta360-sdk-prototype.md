@@ -51,9 +51,85 @@ The supplied Camera/Media frameworks have no simulator slice. Simulator and
 ordinary device builds exclude SDK imports and binaries and hide the Settings
 switch. A successful public CI build therefore does not validate SDK packaging;
 the SDK-enabled device build must also be checked locally with the approved files.
-Xcode Cloud/release builders need these dependencies supplied privately and
-`MULTICAM_INSTA360_SDK_ENABLED=YES` to offer the setting to users. The current public
-CI workflow deliberately does not download the proprietary package.
+The current public GitHub CI workflow deliberately does not download the proprietary
+package. It tests the Cloud provisioning code using handwritten fixtures.
+
+### Xcode Cloud
+
+Xcode Cloud runs `ci_scripts/ci_pre_xcodebuild.sh` before each build, analyze, or
+archive action. The hook provisions the approved SDK privately when the workflow
+opts in, then retains the existing Cloud build-number update. Test-without-building
+actions reuse compiled products and skip provisioning because they lack the checkout.
+No post-clone script or globally installed third-party tools are required.
+
+Prepare the private device archive after the local install above:
+
+```sh
+python3 ci_scripts/insta360_sdk_cloud.py package \
+  "$PWD/Vendor/Insta360/insta360-ios-v1.11.3-device.zip"
+```
+
+The command includes only the four `Frameworks/*.framework` bundles, including
+their headers, modules, resources, signatures, and supplied privacy manifests. It
+prints the archive's SHA-256. It excludes sample code, debug symbols, and generated
+build settings. Keep the archive in private storage; do not commit it or attach it
+to a public GitHub release, PR, Actions artifact, or log.
+
+In the **release workflow's Environment** settings in Xcode or App Store Connect, set:
+
+| Variable | Value | Secret |
+| --- | --- | --- |
+| `MULTICAM_INSTA360_SDK_ENABLED` | `YES` | No |
+| `INSTA360_SDK_URL` | Authenticated HTTPS download URL for the private archive | Yes |
+| `INSTA360_SDK_SHA256` | SHA-256 printed by the package command | No |
+| `INSTA360_SDK_AUTH_TOKEN` | Optional read-only bearer token, if the download endpoint requires one | Yes |
+
+A signed download URL can replace the bearer token, but must remain valid for
+future builds. Redirects must stay on HTTPS; bearer tokens are not forwarded to a
+different host. Download errors never print the URL or token. The embed build phase
+also suppresses environment-variable logging. Keep these credentials scoped to a
+trusted release workflow, without start conditions that run untrusted PR code.
+Public PR checks need no SDK credentials.
+
+Recommended hosting: a **separate private GitHub repository**, with the ZIP attached
+to a versioned release. This keeps it out of the public source repository and avoids
+adding another hosting service. Use the authenticated asset API URL
+`https://api.github.com/repos/OWNER/PRIVATE_REPO/releases/assets/ASSET_ID` for
+`INSTA360_SDK_URL`, and a fine-grained token limited to **Contents: read** on that
+private repository for `INSTA360_SDK_AUTH_TOKEN`. The downloader requests the asset's
+binary content and follows GitHub's download redirect without forwarding the token
+to the storage host. Do not store the temporary redirect URL. Verify the repository
+is private before uploading any SDK files. See GitHub's
+[release asset API](https://docs.github.com/en/rest/releases/assets).
+
+The hook verifies the archive checksum, validates all four bundles before installing,
+and writes ignored `Vendor/Insta360/Build.xcconfig` to enable the device build. Both
+app configurations include it through `ci_scripts/Insta360SDK.xcconfig`. Merely
+exporting an environment variable would not override a target's project setting;
+the generated configuration makes the workflow flag effective. Credentials are
+never written to the generated configuration or the app bundle.
+
+If the workflow opts in but its URL, checksum, or frameworks are missing/invalid,
+the build fails instead of silently producing an SDK-free release. Leaving the
+flag unset or setting `NO` removes any generated override and builds the existing
+routes. Simulator builds always omit the vendor SDK. The in-app switch remains
+off by default even when the release includes the SDK.
+
+The hooks and a local reproduction are checked in this PR. A private hosting
+location and the live Xcode Cloud workflow variables still need to be configured;
+no SDK has been uploaded by this work. Run a Cloud archive on this branch and verify
+the result before distributing the first SDK-enabled release. The post-build hook
+checks the actual archive for all four linked/embedded frameworks, their signatures,
+and the two supplied privacy manifests. It fails if an SDK-enabled archive omits them.
+This verifies Cloud download/signing, which local unsigned builds cannot establish.
+Vendor debug symbols are not included in this compact dependency archive, so
+symbolication inside the vendor's prebuilt binaries requires their matching dSYMs
+separately. The app's own dSYM is generated normally.
+
+Apple documents the hook lifecycle in
+[Writing custom build scripts](https://developer.apple.com/documentation/xcode/writing-custom-build-scripts)
+and secret workflow variables in
+[Xcode Cloud workflow reference](https://developer.apple.com/documentation/xcode/xcode-cloud-workflow-reference).
 
 The sample initializes the SDK camera manager before Bluetooth use. The supplied
 `INSCameraManager.h` directs initialization through an explicit USB/socket manager

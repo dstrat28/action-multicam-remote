@@ -17,6 +17,9 @@ jobs:
       - name: Keep vendor SDK distributions out of Git
         run: sh ci_scripts/check_vendor_sdk_exclusion.sh
 
+      - name: Check private SDK provisioning
+        run: python3 -B Tests/Insta360SDKCloudRegression.py
+
       - name: Select Xcode
         run: xcodebuild -version
 
