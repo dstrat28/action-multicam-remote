@@ -88,9 +88,10 @@ actually transmitted. It uses the same duration as the transport; duplicate or
 superseded delivery callbacks cannot extend the wait. Recording timers while
 Stop is still queued keep Recording visible and cannot cancel its pending UI.
 
-The app's Stop spinner ends after five seconds for GPS Remote. Other cameras
-wait for stopped status, with a 15-second fallback to an advisory “Stop not
-confirmed”; a late trusted stopped status clears it. GPS Remote returns
+The app's Stop spinner ends after five seconds for GPS Remote. SDK cameras wait
+up to 25 seconds, matching their command confirmation deadline; GoPro/DJI and
+legacy direct cameras wait up to 15 seconds. Missing stopped status becomes an
+advisory “Stop not confirmed”; a late trusted stopped status clears it. GPS Remote returns
 to the green connection display because it cannot explicitly confirm Stop, while
 its underlying recording state remains unknown. Missing confirmation adds no new
 recording lockout.

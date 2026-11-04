@@ -1742,7 +1742,8 @@ struct CameraStopProgress {
     static func confirmationTimeout(for camera: DiscoveredCamera) -> TimeInterval {
         // Only GPS Remote lacks Stop confirmation. Other cameras can still be
         // finalizing after acceptance and must get time to report Stopped.
-        camera.usesInsta360GPSRemote ? Insta360RemoteProtocol.stopFeedbackCooldown : 15
+        if camera.insta360UsesSDK == true { return 25 }
+        return camera.usesInsta360GPSRemote ? Insta360RemoteProtocol.stopFeedbackCooldown : 15
     }
 
     private struct Entry {

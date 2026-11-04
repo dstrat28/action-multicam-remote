@@ -57,7 +57,13 @@ enum CameraStopProgressRegression {
         let front = UUID(), rear = UUID()
         precondition(CameraStopProgress.confirmationTimeout(for: gopro) == 15)
         x3.insta360UsesSDK = true
-        precondition(CameraStopProgress.confirmationTimeout(for: x3) == 15)
+        precondition(CameraStopProgress.confirmationTimeout(for: x3) == 25)
+        var sdkProgress = CameraStopProgress()
+        sdkProgress.begin(x3.id, at: 0, timeout: CameraStopProgress.confirmationTimeout(for: x3))
+        precondition(sdkProgress.expire(at: 15).isEmpty,
+            "SDK Stop must not report failure while its 25-second confirmation is still pending")
+        precondition(sdkProgress.expire(at: 24.9).isEmpty)
+        precondition(sdkProgress.expire(at: 25) == [x3.id])
         func stop(_ cameraID: UUID, status: CameraCommandStatus = .sent) -> CameraCommandResult {
             CameraCommandResult(cameraID: cameraID, cameraName: "Test camera", command: .stopRecording,
                 status: status, message: "Stop requested", timestamp: Date())
