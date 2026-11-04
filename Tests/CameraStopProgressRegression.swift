@@ -11,18 +11,22 @@ enum CameraStopProgressRegression {
         precondition(x3.isTargetForStopAll, "Siri Stop must reach SDK cameras even after capture status expires")
         var replayState = CameraStopState()
         replayState.queueReplay(x3, at: 0)
-        precondition(!replayState.consumeReplayIfReady(camera: x3, detail: nil))
-        precondition(replayState.consumeReplayIfReady(camera: x3, detail: "Insta360 SDK Bluetooth ready"))
-        precondition(!replayState.consumeReplayIfReady(camera: x3, detail: "Insta360 SDK Bluetooth ready"))
+        x3.connectionState = .connecting.applyingLinkUpdate(.connected)
+        precondition(!replayState.consumeReplayIfReady(camera: x3), "A Bluetooth link cannot dispatch queued Stop before protocol readiness")
+        x3.connectionState = .connected // Typed client protocol-ready callback.
+        precondition(replayState.consumeReplayIfReady(camera: x3))
+        precondition(!replayState.consumeReplayIfReady(camera: x3))
         x3.insta360UsesSDK = false
         replayState.queueReplay(x3, at: 0)
-        precondition(!replayState.consumeReplayIfReady(camera: x3, detail: "Insta360 GPS Remote connected"))
+        precondition(!replayState.consumeReplayIfReady(camera: x3))
         var gopro = x3
         gopro.brand = .gopro
         gopro.model = .goproHero13Black
-        precondition(!replayState.consumeReplayIfReady(camera: gopro, detail: "BLE connected"))
-        precondition(replayState.consumeReplayIfReady(camera: gopro, detail: "Open GoPro protocol ready"))
-        precondition(!replayState.consumeReplayIfReady(camera: gopro, detail: "Open GoPro protocol ready"))
+        gopro.connectionState = .connecting
+        precondition(!replayState.consumeReplayIfReady(camera: gopro))
+        gopro.connectionState = .connected
+        precondition(replayState.consumeReplayIfReady(camera: gopro))
+        precondition(!replayState.consumeReplayIfReady(camera: gopro))
         x3.insta360UsesSDK = true
         x3.connectionState = .disconnected
         precondition(!x3.isTargetForStopAll, "Do not newly reconnect an unknown-state camera to issue Stop")
@@ -227,7 +231,6 @@ enum CameraStopProgressRegression {
             var camera = DiscoveredCamera(id: UUID(), name: model.rawValue, brand: model.brand, model: model,
                 rssi: -40, capabilities: [.record, .status], connectionState: .connected,
                 recordingState: .unknown, isPaired: true, isSelected: true, lastSeen: Date())
-            let ready = camera.brand == .gopro ? "Open GoPro protocol ready" : "DJI Nano protocol ready"
             for status in [CameraCommandStatus.queued, .sent] {
                 var state = CameraStopState()
                 state.begin(camera.id, at: 0, timeout: 15)
@@ -250,10 +253,10 @@ enum CameraStopProgressRegression {
                 precondition(!state.isWaiting(camera.id) && state.needsReplay(camera.id) && state.hasIntent(camera.id),
                     "Connection teardown ends feedback without losing the requested Stop")
                 camera.connectionState = .disconnected
-                precondition(!state.consumeReplayIfReady(camera: camera, detail: ready))
+                precondition(!state.consumeReplayIfReady(camera: camera))
                 camera.connectionState = .connected
-                precondition(state.consumeReplayIfReady(camera: camera, detail: ready))
-                precondition(!state.consumeReplayIfReady(camera: camera, detail: ready))
+                precondition(state.consumeReplayIfReady(camera: camera))
+                precondition(!state.consumeReplayIfReady(camera: camera))
                 state.begin(camera.id, at: 20, timeout: 15)
                 precondition(state.expire(at: 34.9).isEmpty, "Reconnect Stop gets a fresh confirmation deadline")
                 precondition(state.observe(camera, state: .stopped, canClearActiveRecording: true))
@@ -276,7 +279,7 @@ enum CameraStopProgressRegression {
                 precondition(state.observe(camera, state: confirmed, canClearActiveRecording: true))
                 precondition(!state.hasIntent(camera.id) && state.needsReplay(other.id),
                     "Confirmation must settle only its own camera, even without pending UI feedback")
-                precondition(!state.consumeReplayIfReady(camera: camera, detail: ready),
+                precondition(!state.consumeReplayIfReady(camera: camera),
                     "A trusted confirmation before readiness must prevent replay")
                 let failure = CameraCommandResult(cameraID: camera.id, cameraName: camera.name,
                     command: .stopRecording, status: .failed, message: "Late failure", timestamp: Date())
@@ -291,7 +294,7 @@ enum CameraStopProgressRegression {
                 precondition(state.settle(camera.id))
                 precondition(!state.hasIntent(camera.id) && !state.hasPendingFeedback,
                     "A new capture, manual Disconnect, or Remove clears all Stop state in one operation")
-                precondition(!state.consumeReplayIfReady(camera: camera, detail: ready))
+                precondition(!state.consumeReplayIfReady(camera: camera))
                 precondition(!state.settle(camera.id), "Settlement is idempotent")
             }
         }

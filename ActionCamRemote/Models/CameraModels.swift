@@ -394,6 +394,13 @@ enum CameraConnectionState: Equatable, Codable {
     case unsupported(String)
     case failed(String)
 
+    /// A scanner link opening does not establish command readiness. Only a
+    /// client that has completed protocol setup can promote Connecting.
+    func applyingLinkUpdate(_ state: CameraConnectionState) -> CameraConnectionState {
+        if state == .connected, self != .connected { return .connecting }
+        return state
+    }
+
     var label: String {
         switch self {
         case .discovered:
@@ -1893,22 +1900,9 @@ struct CameraStopState {
             && (isWaiting(camera.id) || isUnconfirmed(camera.id))
     }
 
-    mutating func consumeReplayIfReady(camera: DiscoveredCamera, detail: String?) -> Bool {
-        guard camera.isConnected, needsReplay(camera.id), let detail else { return false }
-        let ready: Bool
-        switch camera.brand {
-        case .gopro:
-            ready = detail.contains("Open GoPro protocol ready")
-        case .dji:
-            ready = detail.contains("DJI record characteristics ready") || detail.contains("DJI R SDK protocol ready")
-                || detail.contains("DJI Nano protocol ready")
-        case .insta360:
-            ready = !camera.usesInsta360GPSRemote && (detail.contains("direct Bluetooth ready")
-                || (camera.insta360UsesSDK == true && detail.contains("SDK Bluetooth ready")))
-        case .unknown:
-            ready = false
-        }
-        guard ready else { return false }
+    mutating func consumeReplayIfReady(camera: DiscoveredCamera) -> Bool {
+        guard camera.isConnected, needsReplay(camera.id), camera.brand != .unknown,
+              !camera.usesInsta360GPSRemote else { return false }
         // Consume before dispatch: repeated readiness/status callbacks must not
         // replay the same Stop. An immediate transport failure can requeue it.
         replayCameraIDs.remove(camera.id)

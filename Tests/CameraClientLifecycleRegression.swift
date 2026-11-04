@@ -31,6 +31,16 @@ private final class EventProbe {
 @MainActor
 enum CameraClientLifecycleRegression {
     static func main() async {
+        for current in [CameraConnectionState.discovered, .disconnected, .connecting, .reconnecting] {
+            precondition(current.applyingLinkUpdate(.connected) == .connecting,
+                "Opening a Bluetooth link must not enable controls before the client's protocol-ready status")
+        }
+        precondition(CameraConnectionState.connected.applyingLinkUpdate(.connected) == .connected,
+            "A late link-open notification must not demote an already ready connection")
+        for linkState in [CameraConnectionState.connecting, .reconnecting, .disconnected, .failed("Link failed")] {
+            precondition(CameraConnectionState.connected.applyingLinkUpdate(linkState) == linkState,
+                "A lost or restarted link must clear application readiness")
+        }
         for brand in [CameraBrand.gopro, .insta360] {
             let active = EventProbe()
             let (client, peripheral) = failClient(brand: brand, probe: active)

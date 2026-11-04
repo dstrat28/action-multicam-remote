@@ -59,6 +59,11 @@ For GoPro and direct Insta360 failures, applying terminal status and requesting
 the required Bluetooth disconnect run in one guarded actor turn. Retiring that
 session cannot discard its own teardown, and a replaced session cannot close its successor.
 
+The scanner reports physical link state; opening that link keeps the app in
+Connecting until the client reports protocol-ready Connected. Pending Start/Stop
+and passive DJI setup use those typed states, never diagnostic-message text.
+Nano's deferred awake/readiness marker is cleared with its connection session.
+
 First-time pairing requests camera confirmation and allows 90 seconds for it.
 An explicit camera rejection pauses automatic pairing attempts until a user
 connects again. Stop delivery or acknowledgement does not establish stopped

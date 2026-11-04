@@ -1236,7 +1236,9 @@ private extension CameraStore {
                 }
                 return
             }
-            updateCamera(id, state: state, detail: nil)
+            let current = cameras.first(where: { $0.id == id })?.connectionState ?? .disconnected
+            if state != .connected { nanoWakeProtocolReadyCameraIDs.remove(id) }
+            updateCamera(id, state: current.applyingLinkUpdate(state), detail: nil)
         case let .log(message):
             appendLog(message)
         }
@@ -2455,7 +2457,7 @@ private extension CameraStore {
                 }
 
                 if latest.connectionState == .connected {
-                    self.replayPendingStopIfReady(for: id, detail: nil)
+                    self.replayPendingStopIfReady(for: id)
                     self.reconnectTasksByCameraID[id] = nil
                     return
                 }
@@ -2562,10 +2564,10 @@ private extension CameraStore {
         }
     }
 
-    func replayPendingStopIfReady(for id: UUID, detail: String?) {
+    func replayPendingStopIfReady(for id: UUID) {
         guard stopState.needsReplay(id) else { return }
         guard let latest = cameras.first(where: { $0.id == id }), latest.connectionState == .connected else { return }
-        guard stopState.consumeReplayIfReady(camera: latest, detail: detail) else { return }
+        guard stopState.consumeReplayIfReady(camera: latest) else { return }
 
         appendLog("\(latest.name): sending queued stop after reconnect.")
         finishStopFeedback(for: id)
@@ -2573,34 +2575,12 @@ private extension CameraStore {
         send(.stopRecording, to: [latest])
     }
 
-    func replayPendingStartIfReady(for id: UUID, detail: String?) {
+    func replayPendingStartIfReady(for id: UUID) {
         guard pendingStartCameraIDs.contains(id) else { return }
         guard let latest = cameras.first(where: { $0.id == id }), latest.connectionState == .connected else { return }
 
-        let isReady: Bool
-        switch latest.brand {
-        case .gopro:
-            isReady = detail?.contains("Open GoPro protocol ready") == true
-        case .dji:
-            isReady = isDJIControlReady(detail: detail)
-        case .insta360:
-            isReady = latest.usesInsta360GPSRemote
-                ? detail?.contains("Insta360 GPS Remote connected") == true
-                : (detail?.contains("direct Bluetooth ready") == true
-                   || (latest.insta360UsesSDK == true && detail?.contains("SDK Bluetooth ready") == true))
-        case .unknown:
-            isReady = false
-        }
-        guard isReady else { return }
-
         appendLog("\(latest.name): sending queued start after reconnect.")
         scheduleRecordAfterModeSwitch(for: [latest.id])
-    }
-
-    func isDJIControlReady(detail: String?) -> Bool {
-        guard let detail else { return false }
-        return detail.contains("DJI record characteristics ready")
-            || detail.contains("DJI R SDK protocol ready")
     }
 
     func startRecordingSequence(for cameras: [DiscoveredCamera]) {
@@ -3004,6 +2984,7 @@ private extension CameraStore {
 
     func invalidateClientEventSession(for id: UUID) {
         clientEventSessions.removeValue(forKey: id)?.invalidate()
+        nanoWakeProtocolReadyCameraIDs.remove(id)
     }
 
     func handleBLECommandCompletion(_ result: CameraCommandResult) {
@@ -3471,15 +3452,11 @@ private extension CameraStore {
                 // probe invisible until the protocol reports an awake camera.
                 return
             case .connected:
-                let isProtocolReady = isDJIControlReady(detail: detail)
-                    || detail?.contains("DJI Nano protocol ready") == true
                 if cameras[index].behavior.kind == .djiOsmoNano,
-                   isProtocolReady,
                    !hasConfirmedAwakeNanoAdvertisement(for: id, now: Date()) {
                     nanoWakeProtocolReadyCameraIDs.insert(id)
                     return
                 }
-                guard isProtocolReady else { return }
                 passiveDJIProbeCameraIDs.remove(id)
             case .disconnected, .failed:
                 passiveDJIProbeCameraIDs.remove(id)
@@ -3574,8 +3551,8 @@ private extension CameraStore {
                 cameras[index].isSelected = false
             }
             persistPairedCameras()
-            replayPendingStartIfReady(for: id, detail: detail)
-            replayPendingStopIfReady(for: id, detail: detail)
+            replayPendingStartIfReady(for: id)
+            replayPendingStopIfReady(for: id)
             noteProtocolActivity(for: id)
         case .reconnecting:
             cancelConnectedStalenessTimeout(for: id)

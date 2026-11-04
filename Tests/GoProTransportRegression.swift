@@ -6,6 +6,7 @@ private final class Harness {
     var client: GoProBLEClient!
     var completions: [CameraCommandResult] = []
     var states: [CameraConnectionState] = []
+    var connectionState: CameraConnectionState = .connecting
     var disconnects = 0
     var nextWrite = 0
     var commandPayloads: [Data] = []
@@ -25,11 +26,15 @@ private final class Harness {
         peripheral.services = [service]
         client = GoProBLEClient(cameraID: UUID(), cameraName: "Test GoPro", peripheral: peripheral,
             isInitialPairing: initialPairing,
-            onStatus: { [weak self] _, state, _ in self?.states.append(state) },
+            onStatus: { [weak self] _, state, _ in
+                self?.states.append(state)
+                self?.connectionState = state
+            },
             onCameraStatus: { _, _ in }, onLog: { _ in },
             onCommandCompleted: { [weak self] in self?.completions.append($0) },
             onDisconnectRequested: { [weak self] _ in self?.disconnects += 1 })
         client.didConnect()
+        connectionState = connectionState.applyingLinkUpdate(.connected)
         client.peripheral(peripheral, didDiscoverCharacteristicsFor: service, error: nil)
     }
 
@@ -87,15 +92,18 @@ enum GoProTransportRegression {
     static func main() {
         do {
             let h = Harness(maximumLength: 8)
+            precondition(h.connectionState == .connecting, "The open link alone must not mark the GoPro ready")
             precondition(h.peripheral.writes.count == 1)
             h.client.peripheral(h.peripheral, didWriteValueFor: h.peripheral.writes[0].characteristic, error: nil)
             precondition(h.peripheral.writes.count == 1, "ATT completion must not advance the command queue")
             h.notify(Data([0x93, 0, 8, 1, 0, 10, 1, 0]), on: h.queryResponse)
+            precondition(h.connectionState == .connecting, "Status alone cannot bypass hardware-info confirmation")
             precondition(h.peripheral.writes.count == 1, "Status notifications are not request replies")
             h.notify(Data([0x3C, 0]), on: h.commandResponse)
             h.nextWrite = 1
             h.drain()
             precondition(h.states.contains(.connected))
+            precondition(h.connectionState == .connected, "Protocol readiness comes from the typed client callback")
             let start = h.client.send(.startRecording)
             let count = h.peripheral.writes.count
             h.notify(Data([1, 0]), on: h.commandResponse) // Response arrives before ATT callback.
