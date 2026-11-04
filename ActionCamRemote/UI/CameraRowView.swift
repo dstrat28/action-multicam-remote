@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct CameraRowView: View {
     @Environment(CameraStore.self) private var store
@@ -168,7 +169,7 @@ struct CameraRowView: View {
 
             Text(connectionText)
                 .font(.subheadline)
-                .foregroundStyle(Color.acrMutedText)
+                .foregroundStyle(camera.recordingState == .recording ? Color.acrRecord : Color.acrMutedText)
                 .lineLimit(1)
 
             Spacer(minLength: 6)
@@ -197,6 +198,9 @@ struct CameraRowView: View {
     }
 
     private var connectionIndicatorColor: Color {
+        if camera.recordingState == .recording {
+            return .acrRecord
+        }
         if isConnectInProgress {
             return .acrWarning
         }
@@ -231,6 +235,7 @@ struct CameraRowView: View {
         VStack(alignment: .leading, spacing: 0) {
             if camera.availableCaptureModes.count > 1 {
                 captureModeLabel(showsChevron: true)
+                    .padding(.vertical, largerControls ? 0 : 7)
                     .overlay {
                         CameraCaptureModeMenu(
                             configuration: .init(
@@ -257,7 +262,6 @@ struct CameraRowView: View {
                                 store.loadGoProPreset(preset, for: current)
                             }
                         )
-                        .equatable()
                     }
                     .disabled(!camera.canSwitchCaptureMode)
             } else if let currentMode = camera.currentMode {
@@ -606,9 +610,9 @@ struct CameraRowView: View {
 
 }
 
-// Keep the native menu unchanged when its row receives telemetry or discovery updates.
-// Actions resolve the latest camera in the store rather than using this menu's snapshot.
-private struct CameraCaptureModeMenu: View, Equatable {
+// Retain the button and its UIActions across telemetry-driven SwiftUI updates.
+// Refresh callbacks separately so actions always resolve the latest camera state.
+private struct CameraCaptureModeMenu: UIViewRepresentable {
     struct Configuration: Equatable {
         let cameraID: UUID
         let displayName: String
@@ -624,54 +628,71 @@ private struct CameraCaptureModeMenu: View, Equatable {
     let onSelectMode: (CaptureMode) -> Void
     let onSelectPreset: (GoProPreset) -> Void
 
-    static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.configuration == rhs.configuration
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onSelectMode: onSelectMode, onSelectPreset: onSelectPreset)
     }
 
-    var body: some View {
-        Menu {
-            if configuration.presets.isEmpty {
-                ForEach(configuration.modes) { mode in
-                    Button {
-                        onSelectMode(mode)
-                    } label: {
-                        if mode == configuration.selectedMode {
-                            Label(mode.displayName(for: configuration.model), systemImage: "checkmark")
-                        } else {
-                            Text(mode.displayName(for: configuration.model))
-                        }
-                    }
+    func makeUIView(context: Context) -> UIButton {
+        let button = UIButton(type: .custom)
+        button.showsMenuAsPrimaryAction = true
+        return button
+    }
+
+    func updateUIView(_ button: UIButton, context: Context) {
+        let coordinator = context.coordinator
+        coordinator.onSelectMode = onSelectMode
+        coordinator.onSelectPreset = onSelectPreset
+        button.isEnabled = configuration.isEnabled
+        button.accessibilityLabel = "Capture mode for \(configuration.displayName)"
+        button.accessibilityHint = "Changes the capture mode or camera preset"
+
+        guard coordinator.configuration != configuration else { return }
+        coordinator.configuration = configuration
+        button.menu = makeMenu(coordinator: coordinator)
+    }
+
+    private func makeMenu(coordinator: Coordinator) -> UIMenu {
+        if configuration.presets.isEmpty {
+            return UIMenu(children: configuration.modes.map { mode in
+                UIAction(
+                    title: mode.displayName(for: configuration.model),
+                    state: mode == configuration.selectedMode ? .on : .off
+                ) { [weak coordinator] _ in
+                    coordinator?.onSelectMode(mode)
                 }
-            } else {
-                ForEach(configuration.modes) { mode in
-                    let presets = configuration.presets.filter { $0.mode == mode }
-                    if !presets.isEmpty {
-                        Section(mode.displayName(for: configuration.model)) {
-                            ForEach(presets) { preset in
-                                Button {
-                                    onSelectPreset(preset)
-                                } label: {
-                                    if preset.id == configuration.activePresetID {
-                                        Label(preset.name, systemImage: "checkmark")
-                                    } else {
-                                        Text(preset.name)
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        } label: {
-            Text("Capture mode for \(configuration.displayName)")
-                .foregroundStyle(.clear)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .contentShape(Capsule())
-                .accessibilityLabel("Capture mode for \(configuration.displayName)")
-                .accessibilityHint("Changes the capture mode or camera preset")
+            })
         }
-        .buttonStyle(.plain)
-        .disabled(!configuration.isEnabled)
+
+        return UIMenu(children: configuration.modes.compactMap { mode in
+            let presets = configuration.presets.filter { $0.mode == mode }
+            guard !presets.isEmpty else { return nil }
+            return UIMenu(
+                title: mode.displayName(for: configuration.model),
+                options: .displayInline,
+                children: presets.map { preset in
+                    UIAction(
+                        title: preset.name,
+                        state: preset.id == configuration.activePresetID ? .on : .off
+                    ) { [weak coordinator] _ in
+                        coordinator?.onSelectPreset(preset)
+                    }
+                }
+            )
+        })
+    }
+
+    final class Coordinator {
+        var configuration: Configuration?
+        var onSelectMode: (CaptureMode) -> Void
+        var onSelectPreset: (GoProPreset) -> Void
+
+        init(
+            onSelectMode: @escaping (CaptureMode) -> Void,
+            onSelectPreset: @escaping (GoProPreset) -> Void
+        ) {
+            self.onSelectMode = onSelectMode
+            self.onSelectPreset = onSelectPreset
+        }
     }
 }
 
