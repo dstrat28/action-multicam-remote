@@ -430,6 +430,16 @@ enum Insta360RemoteProtocolRegression {
         precondition(silentStop.lastTimerAt == nil)
         precondition(silentStop.rejectionReason(for: .startRecording) == nil,
             "A silent Stop must allow a new explicit Start after three seconds")
+
+        var timerBeforeCleanup = Insta360RemoteRecordingStatus()
+        timerBeforeCleanup.observeTimer(at: now)
+        timerBeforeCleanup.shutterSent(at: now.addingTimeInterval(1))
+        precondition(!timerBeforeCleanup.observeTimer(at: now.addingTimeInterval(3.9)))
+        precondition(timerBeforeCleanup.observeTimer(at: now.addingTimeInterval(4)),
+            "Fresh feedback at the cooldown deadline must recover before periodic cleanup runs")
+        precondition(!timerBeforeCleanup.awaitingStopFeedback)
+        precondition(timerBeforeCleanup.state == .recording)
+        precondition(timerBeforeCleanup.rejectionReason(for: .stopRecording) == nil)
     }
 
     private static func checkQueuedCommands() {

@@ -139,6 +139,19 @@ enum CameraStopProgressRegression {
         x3.recordingState = .recording
         precondition(progress.showsRecordingStatus(for: x3), "A later recording must appear red again")
 
+        progress.begin(x3.id, at: 215, timeout: CameraStopProgress.confirmationTimeout)
+        precondition(!progress.showsRecordingStatus(for: x3))
+        precondition(progress.observe(x3, state: .recording, canClearActiveRecording: true),
+            "Fresh GPS Remote Recording feedback must clear Stop even before the UI expiry timer runs")
+        precondition(!progress.contains(x3.id))
+        precondition(progress.showsRecordingStatus(for: x3))
+        progress.begin(x3.id, at: 216, timeout: CameraStopProgress.confirmationTimeout)
+        x3.recordingState = .unknown
+        precondition(progress.observe(x3, state: .unknown, canClearActiveRecording: true))
+        x3.recordingState = .recording
+        precondition(progress.observe(x3, state: .recording, canClearActiveRecording: true))
+        precondition(progress.showsRecordingStatus(for: x3), "Fresh feedback must also clear the expired GPS Remote display mask")
+
         progress.begin(front, at: 220, timeout: 3)
         precondition(progress.expire(at: 223) == [front])
         progress.begin(front, at: 224, timeout: 3)

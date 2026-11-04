@@ -1764,7 +1764,7 @@ private extension CameraStore {
 
     func beginStopping(for camera: DiscoveredCamera) {
         stopProgress.begin(camera.id, at: ProcessInfo.processInfo.systemUptime,
-            timeout: 3)
+            timeout: CameraStopProgress.confirmationTimeout)
         guard stopProgressTimer == nil else { return }
         let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.expireStopProgress() }
@@ -3285,18 +3285,9 @@ private extension CameraStore {
                 return
             } else {
                 cameras[index].recordingState = recordingState
-                if stopProgress.observe(id, state: recordingState, canClearActiveRecording: update.canClearActiveRecording) {
+                if stopProgress.observe(cameras[index], state: recordingState,
+                    canClearActiveRecording: update.canClearActiveRecording) {
                     stopProgressTimerIfIdle()
-                } else if recordingState == .unknown, cameras[index].usesInsta360GPSRemote {
-                    // GPS Remote reports silence as unknown, never a confirmed Stop.
-                    stopProgress.markUnconfirmed(id)
-                    stopProgressTimerIfIdle()
-                } else if recordingState == .recording,
-                          cameras[index].usesInsta360GPSRemote,
-                          !stopProgress.contains(id) {
-                    // GPS Remote suppresses trailing timers during its Stop
-                    // window. A new timer afterward establishes Recording.
-                    finishStopping(for: id)
                 }
                 recordingDecision = "applied \(recordingState.rawValue)"
                 if recordingState == .recording,

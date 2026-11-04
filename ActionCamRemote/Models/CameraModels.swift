@@ -1721,6 +1721,8 @@ struct CameraStatusUpdate: Equatable {
 
 /// UI progress for Stop requests, separate from the camera's reported state.
 struct CameraStopProgress {
+    static let confirmationTimeout: TimeInterval = 3
+
     private struct Entry {
         var resultID: UUID?
         var expiresAt: TimeInterval
@@ -1772,6 +1774,21 @@ struct CameraStopProgress {
         guard entries.removeValue(forKey: cameraID) != nil else { return false }
         unconfirmedCameraIDs.insert(cameraID)
         return true
+    }
+
+    @discardableResult
+    mutating func observe(_ camera: DiscoveredCamera, state: CameraRecordingState, canClearActiveRecording: Bool) -> Bool {
+        if camera.usesInsta360GPSRemote {
+            if state == .recording {
+                // The transport suppresses trailing timers during its Stop
+                // cooldown, so a new Recording update is authoritative.
+                return finish(camera.id)
+            }
+            if state == .unknown {
+                return markUnconfirmed(camera.id)
+            }
+        }
+        return observe(camera.id, state: state, canClearActiveRecording: canClearActiveRecording)
     }
 
     @discardableResult

@@ -49,13 +49,6 @@ struct Insta360RemoteRecordingStatus {
             default: break
             }
         }
-        if state == .unknown, lastTimerAt != nil {
-            switch command {
-            case .startRecording, .capturePhoto, .toggleRecording:
-                return "The camera may still be recording; wait for updated camera feedback before another shutter press."
-            default: break
-            }
-        }
         switch command {
         case .startRecording where state == .recording:
             return "The Insta360 camera is already recording; no shutter toggle was sent."
@@ -76,6 +69,9 @@ struct Insta360RemoteRecordingStatus {
 
     @discardableResult
     mutating func observeTimer(at now: Date) -> Bool {
+        // Incoming feedback must honor the deadline even when the periodic
+        // expiry timer has not run yet.
+        expire(at: now)
         lastTimerAt = now
         // A timer can confirm Start, but a trailing timer cannot confirm Stop.
         // Keep Stop blocked until the feedback window expires.
