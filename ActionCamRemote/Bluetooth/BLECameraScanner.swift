@@ -160,6 +160,12 @@ final class BLECameraScanner: NSObject {
     }
 
     func disconnect(from id: UUID) {
+        if let client = clientsByID[id], client.managesOwnConnection {
+            clientsByID[id] = nil
+            client.disconnectManagedConnection()
+            onEvent?(.connectionChanged(id, .disconnected))
+            return
+        }
         guard let peripheral = peripheralsByID[id] else {
             clientsByID[id]?.didDisconnect(error: nil)
             clientsByID[id] = nil
@@ -175,6 +181,14 @@ final class BLECameraScanner: NSObject {
         }
 
         centralManager.cancelPeripheralConnection(peripheral)
+    }
+
+    // The vendor owns its CBCentralManager and peripheral delegate. Register its
+    // lifecycle here so all existing teardown paths still close the right link.
+    func connectManaged(client: any BLECameraDeviceClient) {
+        clientsByID[client.cameraID] = client
+        onEvent?(.connectionChanged(client.cameraID, .connecting))
+        client.didConnect()
     }
 }
 

@@ -1,51 +1,104 @@
-# Insta360 iOS SDK prototype
+# Insta360 iOS SDK Bluetooth prototype
 
-The 1.2.2 release is on `develop` and `main`. This work is separate from that release.
+PR #15 contains an opt-in device build using the approved iOS v1.11.3 package.
+Normal builds retain the existing X5/X6 direct Bluetooth and GPS Remote backends.
+The Settings preference `experimentalInsta360SDKEnabled` defaults to false.
 
-## Current state
+## Build locally
 
-Settings contains an **Insta360 SDK** switch marked experimental. Its stored preference,
-`experimentalInsta360SDKEnabled`, defaults to false. The switch is disabled while
-`FeatureAvailability.insta360SDK` is false. No SDK binaries or adapter are included;
-camera control continues through the existing GPS Remote implementation.
+The supplied `INSCameraSDKSample-bluetooth/Frameworks` directory contains the
+Bluetooth implementation in `INSCameraServiceSDK.xcframework`. Its public
+`INSBluetoothManager`, `INSBluetoothDevice`, and `INSCameraBasicCommands` APIs
+provide the control operations used here. Binary dependency inspection and a
+device build verify that this adapter does not need `INSCameraSDK`, `INSCoreMedia`,
+`SSZipArchive`, the sample UI frameworks, or the sample's machine learning models.
 
-This is preparation for the SDK prototype, not a working SDK integration. Do not
-enable the availability flag until the adapter is implemented and verified.
+Install the approved binary locally:
 
-## Required package
+```sh
+sh ci_scripts/setup_insta360_sdk.sh /path/to/INSCameraSDKSample-bluetooth
+```
 
-Apply for the iOS Camera SDK at <https://www.insta360.com/sdk/apply>. The public
-repository contains documentation, not the framework package. The current guide
-lists `INSCoreMedia.xcframework`, `INSCameraServiceSDK.xcframework`,
-`INSCameraSDK.xcframework`, and `SSZipArchive.xcframework`, with `TO_B_SDK=1`.
-Inspect the supplied headers, sample project, supported architectures, and
-distribution instructions before adding the approved package to the project.
+`Vendor/Insta360/` is ignored by Git. Vendor binaries, headers, and sample code
+are not committed or downloaded by CI. Other approved developers must install
+their own package. The repository's MIT license does not cover the vendor SDK.
 
-## Integration scope once the package is available
+Build with the optional device configuration:
 
-- Use the SDK's Bluetooth manager and per-peripheral command managers. Keep
-  one session per camera; avoid routing multicamera commands through a global
-  current-camera singleton.
-- Start with the X-series models present in both our model list and the iOS
-  support list: X6, X5, X4 Air, X4, X3, and ONE RS. Keep Ace and GO models on the
-  existing GPS Remote backend unless Insta360 confirms iOS SDK support.
-- Route explicit recording start/stop, photo capture, current mode, battery,
-  and storage status through the SDK adapter. Register observations and send
-  the documented heartbeats. Handle disconnects and command failures explicitly.
-- Apply the setting to a camera when establishing its connection. Require an
-  idle camera before changing backends; never send a shutter command or switch
-  backend automatically during a recording.
-- Keep preview, media transfer, firmware updates, and Wi-Fi setup outside this
-  Bluetooth control prototype.
-- Expose SDK transport selection, errors, and command results in diagnostics.
+```sh
+xcodebuild \
+  -project ActionCamRemote.xcodeproj \
+  -scheme ActionCamRemote \
+  -destination 'generic/platform=iOS' \
+  -derivedDataPath /tmp/multicam-insta360-sdk-device-dd \
+  MULTICAM_INSTA360_SDK_ENABLED=YES \
+  CODE_SIGNING_ALLOWED=NO \
+  build
+```
 
-## Validation before enabling the switch
+For installation, configure signing as described in [CONTRIBUTING.md](../CONTRIBUTING.md).
+`INSTA360_SDK_ROOT` can override the installed directory. The optional build links,
+embeds, and signs only `INSCameraServiceSDK.framework`, with `TO_B_SDK=1`.
+The supplied camera framework has only an `ios-arm64` slice. Simulator builds
+exclude the adapter and binary, and keep the Settings switch disabled, including
+when `MULTICAM_INSTA360_SDK_ENABLED=YES` is passed. Ordinary device builds also
+keep the switch disabled and do not link or embed the SDK.
 
-Verify one camera's repeated start/stop and telemetry first, then two supported
-cameras together and a mixed GoPro/DJI/Insta360 group. Check background/foreground
-transitions, app relaunch, Bluetooth loss, unsupported cameras, and a return to
-GPS Remote control after disabling the experiment. A settings preference or a
-successful simulator build does not establish camera compatibility.
+In an SDK device build, turn on **Settings > Insta360 SDK**, then restart Multicam.
+Selection is captured at app startup. Changing the preference never switches a
+live connection or sends a shutter command. Turning it off and restarting restores
+the existing backend, including a remembered X5 GPS Remote fallback.
 
-Sources: [iOS SDK overview](https://github.com/Insta360Develop/Insta360-Developer_Docs/blob/main/docs/en/sdk/x-ace-go/ios/guide.md),
+## Implemented scope
+
+- X6, X5, X4 Air, X4, X3, and ONE RS are eligible for the experiment. Ace and GO
+  models retain GPS Remote control. Eligibility is not hardware validation.
+- Each camera owns a separate vendor Bluetooth manager, device, command interface,
+  connection task, generation token, and command confirmation state. The global
+  current-camera singleton is never used.
+- Explicit video Start/Stop, normal Photo capture, normal Video/Photo mode changes,
+  capture status, elapsed time, battery, and active storage are implemented.
+  Current mode is resolved from successfully returned `photoSubMode` and
+  `videoSubMode`: normal capture is 0 and the inactive family is 100. Legacy
+  EVO synchronization-mode commands are not used.
+- A common-run-loop timer sends the sample's half-second heartbeats. Status/mode
+  queries run serially, about once per second; battery/storage refresh every 30
+  seconds and expire after 75. Only successful option fields are applied.
+- Start, Photo, and mode changes require a stopped observation no older than five
+  seconds. Start requires confirmed normal Video mode; Photo requires normal
+  Photo mode. Unsupported modes remain unknown. Explicit Stop is allowed with
+  unknown status. Stop can supersede an outstanding Start confirmation.
+- SDK command acceptance alone does not confirm Start, Stop, or a mode change.
+  A subsequent status query must match the command. Pre-command and superseded
+  replies cannot refresh state or complete another command. A 25-second timeout
+  fails confirmation without retrying capture commands.
+- Disconnects cancel connection work, stop timers/observations, fail pending
+  commands, invalidate late callbacks, and clear telemetry. A missing status
+  callback closes the SDK session after 30 seconds. SDK failures never switch
+  automatically to GPS Remote or send a toggle.
+- SDK transport selection, failures, and command completion appear in Diagnostics.
+  Unscoped global SDK capture notifications are not applied to any camera; status
+  is requested through the specific device's command interface.
+
+Preview, media transfer, firmware updates, Wi-Fi setup, wake, advanced capture
+modes, highlight tags, and settings other than normal capture mode are outside
+this Bluetooth prototype.
+
+## Validation and remaining hardware work
+
+`sh ci_scripts/check_insta360_sdk.sh` runs synthetic host regressions for status
+freshness, mode gates, command confirmation, stale responses, Stop superseding
+Start, timeouts, failures, disconnects, and independent cameras. Existing protocol
+regressions still exercise the default backends. A build and synthetic tests do
+not establish compatibility with physical cameras.
+
+Before release, verify one camera's repeated start/stop, photos, mode changes, and
+telemetry; then two supported Insta360 cameras together and a mixed
+GoPro/DJI/Insta360 group. Check background/foreground transitions, app relaunch
+while recording, Bluetooth loss, unsupported cameras, and returning to the default
+backend after disabling the experiment. Keep PR #15 a draft until these results
+are recorded.
+
+References: the supplied v1.11.3 headers and Bluetooth sample;
+[iOS SDK overview](https://github.com/Insta360Develop/Insta360-Developer_Docs/blob/main/docs/en/sdk/x-ace-go/ios/guide.md),
 [API reference](https://github.com/Insta360Develop/Insta360-Developer_Docs/blob/main/docs/en/sdk/x-ace-go/ios/api.md).

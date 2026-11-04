@@ -2,10 +2,11 @@ import Foundation
 
 enum FeatureAvailability {
     static let djiPhoneGPS = true
-    // Keep the prototype unavailable until the approved vendor frameworks and
-    // a working Bluetooth adapter are integrated. Importability alone is not
-    // proof that SDK control is ready.
+    #if INSTA360_SDK && !targetEnvironment(simulator)
+    static let insta360SDK = true
+    #else
     static let insta360SDK = false
+    #endif
 }
 
 enum CameraBrand: String, CaseIterable, Identifiable, Codable {
@@ -54,6 +55,15 @@ enum CameraModel: String, Identifiable, Codable {
     case unknown = "Unknown Camera"
 
     var id: String { rawValue }
+
+    var supportsInsta360SDKPrototype: Bool {
+        switch self {
+        case .insta360X6, .insta360X5, .insta360X4Air, .insta360X4, .insta360X3, .insta360OneRS:
+            true
+        default:
+            false
+        }
+    }
 
     var brand: CameraBrand {
         return switch self {
@@ -926,6 +936,8 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     var isPairingAdvertisement: Bool? = nil
     var advertisementAwake: Bool? = nil
     var insta360UsesGPSRemoteFallback: Bool? = nil
+    // Connection-scoped; cleared before saving paired cameras.
+    var insta360UsesSDK: Bool? = nil
 
     var isSupportedByApp: Bool {
         unsupportedReason == nil
@@ -1153,6 +1165,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
 
     var behavior: CameraBehaviorProfile {
         var profile = CameraBehaviorProfile.resolve(brand: brand, model: model, name: name)
+        if insta360UsesSDK == true { profile.kind = .insta360Direct; return profile }
         if model == .insta360X5, insta360UsesGPSRemoteFallback == true { profile.kind = .insta360Remote }
         return profile
     }
@@ -1241,6 +1254,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
 
     var availableCaptureModes: [CaptureMode] {
         guard capabilities.contains(.mode) else { return [] }
+        if insta360UsesSDK == true { return [.video, .photo] }
 
         switch behavior.kind {
         case .goProOpen:
@@ -1286,6 +1300,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     }
 
     var canStartRecordingInCurrentMode: Bool {
+        if insta360UsesSDK == true { return !isConnected || currentMode == .video }
         if behavior.kind == .djiOsmoNano {
             return !isConnected || currentMode == nil || currentMode != .photo
         }

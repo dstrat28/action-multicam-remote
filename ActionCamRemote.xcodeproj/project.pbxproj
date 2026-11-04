@@ -55,6 +55,8 @@
 		ACR000000000000000000146 /* THIRD_PARTY_NOTICES.md in Resources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000047 /* THIRD_PARTY_NOTICES.md */; };
 		ACR000000000000000000147 /* DJICommandTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000048 /* DJICommandTracker.swift */; };
 		ACR000000000000000000148 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000049 /* PrivacyInfo.xcprivacy */; };
+		ACR000000000000000000150 /* Insta360SDKSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000050 /* Insta360SDKSession.swift */; };
+		ACR000000000000000000151 /* Insta360SDKClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000051 /* Insta360SDKClient.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -149,6 +151,8 @@
 		ACR000000000000000000047 /* THIRD_PARTY_NOTICES.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = THIRD_PARTY_NOTICES.md; sourceTree = SOURCE_ROOT; };
 		ACR000000000000000000048 /* DJICommandTracker.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DJICommandTracker.swift; sourceTree = "<group>"; };
 		ACR000000000000000000049 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
+		ACR000000000000000000050 /* Insta360SDKSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Insta360SDKSession.swift; sourceTree = "<group>"; };
+		ACR000000000000000000051 /* Insta360SDKClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Insta360SDKClient.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -238,6 +242,8 @@
 				ACR000000000000000000031 /* Insta360RemoteService.swift */,
 				ACR000000000000000000046 /* Insta360DirectBLEClient.swift */,
 				ACR000000000000000000045 /* Insta360DirectSession.swift */,
+				ACR000000000000000000050 /* Insta360SDKSession.swift */,
+				ACR000000000000000000051 /* Insta360SDKClient.swift */,
 				ACR000000000000000000044 /* Insta360DirectProtocol.swift */,
 			);
 			path = Bluetooth;
@@ -323,6 +329,7 @@
 				ACR000000000000000000501 /* Resources */,
 				ACR000000000000000000502 /* Embed Watch Content */,
 				ACR000000000000000000503 /* Embed Foundation Extensions */,
+				ACR000000000000000000504 /* Embed optional Insta360 SDK */,
 			);
 			buildRules = (
 			);
@@ -438,6 +445,24 @@
 		};
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		ACR000000000000000000504 /* Embed optional Insta360 SDK */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = ();
+			inputPaths = (
+				"$(SRCROOT)/ci_scripts/embed_insta360_sdk.sh",
+				"$(INSTA360_SDK_INPUT_$(MULTICAM_INSTA360_SDK_ENABLED))",
+			);
+			name = "Embed optional Insta360 SDK";
+			outputPaths = ("$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/INSCameraServiceSDK.framework",);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "sh \"$SRCROOT/ci_scripts/embed_insta360_sdk.sh\"";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		ACR000000000000000000500 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -457,6 +482,8 @@
 				ACR000000000000000000131 /* Insta360RemoteService.swift in Sources */,
 				ACR000000000000000000145 /* Insta360DirectBLEClient.swift in Sources */,
 				ACR000000000000000000144 /* Insta360DirectSession.swift in Sources */,
+				ACR000000000000000000150 /* Insta360SDKSession.swift in Sources */,
+				ACR000000000000000000151 /* Insta360SDKClient.swift in Sources */,
 				ACR000000000000000000143 /* Insta360DirectProtocol.swift in Sources */,
 				ACR000000000000000000107 /* CameraStore.swift in Sources */,
 				ACR000000000000000000132 /* DiagnosticLogArchive.swift in Sources */,
@@ -641,6 +668,27 @@
 				CODE_SIGN_STYLE = Automatic;
 				CODE_SIGN_ENTITLEMENTS = "$(MULTICAM_CARPLAY_ENTITLEMENTS_$(MULTICAM_CARPLAY_ENABLED))";
 				MULTICAM_CARPLAY_ENABLED = YES;
+				MULTICAM_INSTA360_SDK_ENABLED = NO;
+				INSTA360_SDK_ROOT = "$(SRCROOT)/Vendor/Insta360";
+				INSTA360_SDK_INPUT_NO = "$(SRCROOT)/ci_scripts/embed_insta360_sdk.sh";
+				INSTA360_SDK_INPUT_YES = "$(INSTA360_SDK_ROOT)/INSCameraServiceSDK.xcframework/ios-arm64/INSCameraServiceSDK.framework";
+				"INSTA360_SDK_INPUT_YES[sdk=iphonesimulator*]" = "$(SRCROOT)/ci_scripts/embed_insta360_sdk.sh";
+				INSTA360_SDK_SEARCH_NO = "";
+				INSTA360_SDK_SEARCH_YES = "$(INSTA360_SDK_ROOT)/INSCameraServiceSDK.xcframework/ios-arm64";
+				INSTA360_SDK_CLANG_NO = "";
+				INSTA360_SDK_CLANG_YES = "-Xcc -DTO_B_SDK=1";
+				INSTA360_SDK_SWIFT_NO = "";
+				INSTA360_SDK_SWIFT_YES = INSTA360_SDK;
+				INSTA360_SDK_SANDBOX_NO = YES;
+				INSTA360_SDK_SANDBOX_YES = NO;
+				"ENABLE_USER_SCRIPT_SANDBOXING[sdk=iphoneos*]" = "$(INSTA360_SDK_SANDBOX_$(MULTICAM_INSTA360_SDK_ENABLED))";
+				INSTA360_SDK_LINK_NO = "";
+				INSTA360_SDK_LINK_YES = "-framework INSCameraServiceSDK";
+				"FRAMEWORK_SEARCH_PATHS[sdk=iphoneos*]" = ("$(inherited)", "$(INSTA360_SDK_SEARCH_$(MULTICAM_INSTA360_SDK_ENABLED))",);
+				"OTHER_LDFLAGS[sdk=iphoneos*]" = "$(inherited) $(INSTA360_SDK_LINK_$(MULTICAM_INSTA360_SDK_ENABLED))";
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphoneos*]" = "APP_MAIN_TARGET $(inherited) $(INSTA360_SDK_SWIFT_$(MULTICAM_INSTA360_SDK_ENABLED))";
+				"OTHER_SWIFT_FLAGS[sdk=iphoneos*]" = "$(inherited) $(INSTA360_SDK_CLANG_$(MULTICAM_INSTA360_SDK_ENABLED))";
+
 				MULTICAM_CARPLAY_ENTITLEMENTS_NO = "";
 				MULTICAM_CARPLAY_ENTITLEMENTS_YES = ActionCamRemote/CarPlay/MulticamCarPlay.entitlements;
 				CURRENT_PROJECT_VERSION = 43;
@@ -676,6 +724,27 @@
 				CODE_SIGN_STYLE = Automatic;
 				CODE_SIGN_ENTITLEMENTS = "$(MULTICAM_CARPLAY_ENTITLEMENTS_$(MULTICAM_CARPLAY_ENABLED))";
 				MULTICAM_CARPLAY_ENABLED = YES;
+				MULTICAM_INSTA360_SDK_ENABLED = NO;
+				INSTA360_SDK_ROOT = "$(SRCROOT)/Vendor/Insta360";
+				INSTA360_SDK_INPUT_NO = "$(SRCROOT)/ci_scripts/embed_insta360_sdk.sh";
+				INSTA360_SDK_INPUT_YES = "$(INSTA360_SDK_ROOT)/INSCameraServiceSDK.xcframework/ios-arm64/INSCameraServiceSDK.framework";
+				"INSTA360_SDK_INPUT_YES[sdk=iphonesimulator*]" = "$(SRCROOT)/ci_scripts/embed_insta360_sdk.sh";
+				INSTA360_SDK_SEARCH_NO = "";
+				INSTA360_SDK_SEARCH_YES = "$(INSTA360_SDK_ROOT)/INSCameraServiceSDK.xcframework/ios-arm64";
+				INSTA360_SDK_CLANG_NO = "";
+				INSTA360_SDK_CLANG_YES = "-Xcc -DTO_B_SDK=1";
+				INSTA360_SDK_SWIFT_NO = "";
+				INSTA360_SDK_SWIFT_YES = INSTA360_SDK;
+				INSTA360_SDK_SANDBOX_NO = YES;
+				INSTA360_SDK_SANDBOX_YES = NO;
+				"ENABLE_USER_SCRIPT_SANDBOXING[sdk=iphoneos*]" = "$(INSTA360_SDK_SANDBOX_$(MULTICAM_INSTA360_SDK_ENABLED))";
+				INSTA360_SDK_LINK_NO = "";
+				INSTA360_SDK_LINK_YES = "-framework INSCameraServiceSDK";
+				"FRAMEWORK_SEARCH_PATHS[sdk=iphoneos*]" = ("$(inherited)", "$(INSTA360_SDK_SEARCH_$(MULTICAM_INSTA360_SDK_ENABLED))",);
+				"OTHER_LDFLAGS[sdk=iphoneos*]" = "$(inherited) $(INSTA360_SDK_LINK_$(MULTICAM_INSTA360_SDK_ENABLED))";
+				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphoneos*]" = "APP_MAIN_TARGET $(inherited) $(INSTA360_SDK_SWIFT_$(MULTICAM_INSTA360_SDK_ENABLED))";
+				"OTHER_SWIFT_FLAGS[sdk=iphoneos*]" = "$(inherited) $(INSTA360_SDK_CLANG_$(MULTICAM_INSTA360_SDK_ENABLED))";
+
 				MULTICAM_CARPLAY_ENTITLEMENTS_NO = "";
 				MULTICAM_CARPLAY_ENTITLEMENTS_YES = ActionCamRemote/CarPlay/MulticamCarPlay.entitlements;
 				CURRENT_PROJECT_VERSION = 43;

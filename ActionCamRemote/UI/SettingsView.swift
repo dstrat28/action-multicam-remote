@@ -28,11 +28,11 @@ struct SettingsView: View {
                             .frame(width: 20)
                         VStack(alignment: .leading, spacing: 3) {
                             Text("Insta360 SDK")
-                            if !FeatureAvailability.insta360SDK {
-                                Text("Experimental · Requires SDK build.")
+                                Text(FeatureAvailability.insta360SDK
+                                     ? "Experimental · Restart Multicam to apply."
+                                     : "Experimental · Requires SDK device build.")
                                     .font(.caption)
                                     .foregroundStyle(Color.acrMutedText)
-                            }
                         }
                     }
                     .foregroundStyle(Color.acrInk)

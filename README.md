@@ -40,6 +40,10 @@ Open `ActionCamRemote.xcodeproj` and select the `ActionCamRemote` scheme. Follow
 
 CarPlay development and testing notes are in [docs/carplay.md](docs/carplay.md).
 
+An opt-in [Insta360 SDK Bluetooth prototype](docs/insta360-sdk-prototype.md) is
+available for approved SDK device builds. It remains off by default and requires
+physical camera validation.
+
 ## Acknowledgements
 
 Thank you to the projects whose documentation, implementations, and camera captures informed Multicam:

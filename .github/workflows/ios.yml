@@ -58,6 +58,9 @@ jobs:
       - name: Check Insta360 heartbeat during UI tracking
         run: sh ci_scripts/check_insta360_transport.sh
 
+      - name: Check Insta360 SDK command confirmation
+        run: sh ci_scripts/check_insta360_sdk.sh
+
       - name: Check DJI command deadlines
         run: |
           xcrun swiftc -parse-as-library \

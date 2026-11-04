@@ -38,6 +38,8 @@ final class CameraStore {
     @ObservationIgnored private var commandHistoryGeneration: UInt64 = 0
     @ObservationIgnored private var commandHistoryRevision: UInt64 = 0
     @ObservationIgnored private var insta360Remote: Insta360RemoteService?
+    @ObservationIgnored private let insta360SDKEnabled = FeatureAvailability.insta360SDK
+        && UserDefaults.standard.bool(forKey: ACRPreferences.insta360SDKEnabled)
     @ObservationIgnored private let phoneGPSProvider = PhoneGPSProvider()
     @ObservationIgnored private let recordingLiveActivityController = RecordingLiveActivityController()
     @ObservationIgnored private var liveActivityStopObserver: NSObjectProtocol?
@@ -540,7 +542,12 @@ final class CameraStore {
         }
     }
 
-    func connect(_ camera: DiscoveredCamera) {
+    func connect(_ requestedCamera: DiscoveredCamera) {
+        var camera = requestedCamera
+        camera.insta360UsesSDK = insta360SDKEnabled && camera.model.supportsInsta360SDKPrototype
+        if let index = cameras.firstIndex(where: { $0.id == camera.id }) {
+            cameras[index].insta360UsesSDK = camera.insta360UsesSDK
+        }
         if let unsupportedReason = camera.unsupportedReason {
             setCameraDiagnostic(unsupportedReason, for: camera)
             updateCamera(camera.id, state: .unsupported(unsupportedReason), detail: nil)
@@ -593,6 +600,32 @@ final class CameraStore {
             return
         }
 
+        #if INSTA360_SDK && !targetEnvironment(simulator)
+        if camera.insta360UsesSDK == true {
+            guard camera.connectionState != .connected else { return }
+            let client = Insta360SDKClient(
+                cameraID: camera.id, cameraName: camera.name,
+                onStatus: { [weak self] id, state, detail in
+                    Task { @MainActor in self?.updateCamera(id, state: state, detail: detail) }
+                },
+                onCameraStatus: { [weak self] id, update in
+                    Task { @MainActor in self?.updateCameraStatus(id, update: update) }
+                },
+                onLog: { [weak self] message in
+                    Task { @MainActor in self?.appendLog(message) }
+                },
+                onCommandCompleted: { [weak self] result in
+                    Task { @MainActor in self?.handleBLECommandCompletion(result) }
+                }
+            )
+            clients[camera.id] = client
+            lastConnectionAttemptByID[camera.id] = Date()
+            scheduleConnectionTimeout(for: camera.id)
+            setCameraDiagnostic("Experimental Insta360 SDK Bluetooth session selected.", for: camera)
+            scanner.connectManaged(client: client)
+            return
+        }
+        #endif
 
         if camera.usesInsta360GPSRemote {
             lastConnectionAttemptByID[camera.id] = Date()
@@ -1099,6 +1132,7 @@ final class CameraStore {
 private extension CameraStore {
     func beginInsta360GPSFallback(for id: UUID, reason: String) {
         guard let index = cameras.firstIndex(where: { $0.id == id }), cameras[index].model == .insta360X5,
+              cameras[index].insta360UsesSDK != true,
               !cameras[index].usesInsta360GPSRemote else { return }
         if cameras[index].isConnected || cameras[index].connectionState == .connecting,
            let client = clients[id] as? Insta360DirectBLEClient,
@@ -1328,6 +1362,9 @@ private extension CameraStore {
             }
             if candidate.model != .unknown, cameras[index].model != resolvedModel {
                 cameras[index].model = resolvedModel
+                if cameras[index].connectionState != .connected && cameras[index].connectionState != .connecting {
+                    cameras[index].insta360UsesSDK = insta360SDKEnabled && resolvedModel.supportsInsta360SDKPrototype
+                }
                 shouldSort = true
             }
             if cameras[index].capabilities != capabilities {
@@ -1475,7 +1512,8 @@ private extension CameraStore {
                     lastSeen: Date(),
                     lastConnectableSeen: isConnectionFreshnessAdvertisement ? Date() : nil,
                     isPairingAdvertisement: candidate.brand == .gopro ? candidate.isPairing : nil,
-                    advertisementAwake: candidate.isAwake
+                    advertisementAwake: candidate.isAwake,
+                    insta360UsesSDK: insta360SDKEnabled && candidate.model.supportsInsta360SDKPrototype
                 )
             )
             shouldSort = true
@@ -1819,7 +1857,7 @@ private extension CameraStore {
                     return
                 }
 
-                if latest.model == .insta360X5, !latest.usesInsta360GPSRemote {
+                if latest.model == .insta360X5, !latest.usesInsta360GPSRemote, latest.insta360UsesSDK != true {
                     self.beginInsta360GPSFallback(for: id, reason: "Direct BLE setup timed out.")
                     return
                 }
@@ -2450,6 +2488,7 @@ private extension CameraStore {
         guard let latest = cameras.first(where: { $0.id == id }), latest.connectionState == .connected else { return }
         let isReady = isDJIControlReady(detail: detail)
             || (latest.behavior.kind == .insta360Direct && detail?.contains("direct Bluetooth ready") == true)
+            || (latest.insta360UsesSDK == true && detail?.contains("SDK Bluetooth ready") == true)
         guard isReady else { return }
 
         appendLog("\(latest.name): sending queued stop after reconnect.")
@@ -2469,7 +2508,8 @@ private extension CameraStore {
         case .insta360:
             isReady = latest.usesInsta360GPSRemote
                 ? detail?.contains("Insta360 GPS Remote connected") == true
-                : detail?.contains("direct Bluetooth ready") == true
+                : (detail?.contains("direct Bluetooth ready") == true
+                   || (latest.insta360UsesSDK == true && detail?.contains("SDK Bluetooth ready") == true))
         case .unknown:
             isReady = false
         }
@@ -3175,7 +3215,9 @@ private extension CameraStore {
             canClearActiveRecording: update.canClearActiveRecording
         )
 
-        if let currentMode = update.currentMode {
+        if cameras[index].insta360UsesSDK == true {
+            cameras[index].currentMode = update.currentMode
+        } else if let currentMode = update.currentMode {
             cameras[index].currentMode = currentMode
         }
 
@@ -3610,6 +3652,7 @@ private extension CameraStore {
         do {
             cameras = try JSONDecoder().decode([DiscoveredCamera].self, from: data).map { saved in
                 var camera = saved
+                camera.insta360UsesSDK = insta360SDKEnabled && camera.model.supportsInsta360SDKPrototype
                 camera.capabilities = normalizedCapabilities(
                     camera.capabilities,
                     brand: camera.brand,
@@ -3671,6 +3714,7 @@ private extension CameraStore {
     func persistPairedCameras() {
         let saved = cameras.filter(\.isPaired).map { camera in
             var copy = camera
+            copy.insta360UsesSDK = nil
             copy.connectionState = .disconnected
             copy.recordingState = copy.supportsBatchRecord ? .unknown : .unavailable
             copy.currentMode = nil
@@ -3719,6 +3763,7 @@ private extension CameraStore {
             normalized.remove(.mode)
             normalized.remove(.settings)
             normalized.remove(.keepAlive)
+            if insta360SDKEnabled && model.supportsInsta360SDKPrototype { normalized.insert(.mode) }
         }
         return normalized
     }
