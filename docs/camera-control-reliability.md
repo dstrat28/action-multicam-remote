@@ -43,6 +43,8 @@ twice. Trusted stopped status ends confirmation. A newer capture request
 (including Start still preparing Video mode), Disconnect, or Remove supersedes
 recovery. Uncertain Start, photo, mode-change, and Insta360 capture commands are
 never automatically repeated by this recovery path.
+Trusted stopped status also clears a retained Stop before protocol readiness,
+so a later readiness callback cannot replay a request already settled by the camera.
 Once trusted stopped status settles Stop, a late transport failure cannot reopen
 recovery. A rejected duplicate Stop cannot supersede the request already in flight.
 
@@ -50,6 +52,9 @@ Every GoPro, DJI, direct Insta360 and SDK client has a connection-scoped callbac
 session. Replacement, Disconnect, Remove and terminal connection status invalidate
 even callbacks already queued on the main actor. Discarded command outcomes still
 reach command history without changing the new connection's state or controls.
+For GoPro and direct Insta360 failures, applying terminal status and requesting
+the required Bluetooth disconnect run in one guarded actor turn. Retiring that
+session cannot discard its own teardown, and a replaced session cannot close its successor.
 
 First-time pairing requests camera confirmation and allows 90 seconds for it.
 An explicit camera rejection pauses automatic pairing attempts until a user

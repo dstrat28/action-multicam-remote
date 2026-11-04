@@ -1735,6 +1735,19 @@ final class CameraClientEventSession {
             if self?.active == true { apply() } else { onDiscard() }
         }
     }
+
+    nonisolated func deliverStatus(
+        _ state: CameraConnectionState,
+        apply: @escaping @MainActor () -> Void,
+        onFailure: @escaping @MainActor () -> Void
+    ) {
+        deliver {
+            apply()
+            // Applying Failed retires this session. Finish its required
+            // teardown in the same actor turn, before any replacement can run.
+            if case .failed = state { onFailure() }
+        }
+    }
 }
 
 /// UI progress for Stop requests, separate from the camera's reported state.
@@ -1843,6 +1856,15 @@ struct CameraStopProgress {
 }
 
 enum CameraStopReplayPolicy {
+    @discardableResult
+    static func clearIfConfirmed(
+        _ cameraID: UUID, state: CameraRecordingState,
+        canClearActiveRecording: Bool, pending: inout Set<UUID>
+    ) -> Bool {
+        guard canClearActiveRecording, state == .stopped || state == .ready else { return false }
+        return pending.remove(cameraID) != nil
+    }
+
     static func shouldRetainAfterConnectionLoss(
         camera: DiscoveredCamera, progress: CameraStopProgress,
         hasPendingExplicitStart: Bool, userDisconnected: Bool

@@ -702,7 +702,9 @@ final class CameraStore {
                 shouldSendAppPowerOnStart: explicitGoProWakeCameraIDs.contains(camera.id),
                 isInitialPairing: !camera.isPaired,
                 onStatus: { [weak self] id, state, detail in
-                    events.deliver { [weak self] in self?.updateCamera(id, state: state, detail: detail) }
+                    events.deliverStatus(state,
+                        apply: { [weak self] in self?.updateCamera(id, state: state, detail: detail) },
+                        onFailure: { [weak self] in self?.scanner.disconnect(from: id) })
                 },
                 onCameraStatus: { [weak self] id, update in
                     events.deliver { [weak self] in self?.updateCameraStatus(id, update: update) }
@@ -767,7 +769,9 @@ final class CameraStore {
                 cameraModel: camera.model,
                 peripheral: peripheral,
                 onStatus: { [weak self] id, state, detail in
-                    events.deliver { [weak self] in self?.updateCamera(id, state: state, detail: detail) }
+                    events.deliverStatus(state,
+                        apply: { [weak self] in self?.updateCamera(id, state: state, detail: detail) },
+                        onFailure: { [weak self] in self?.scanner.disconnect(from: id) })
                 },
                 onCameraStatus: { [weak self] id, update in
                     events.deliver { [weak self] in self?.updateCameraStatus(id, update: update) }
@@ -3037,6 +3041,7 @@ private extension CameraStore {
         }
         if wasSent, result.command == .startRecording || result.command == .capturePhoto || result.command == .toggleRecording {
             finishStopping(for: camera.id)
+            pendingStopCameraIDs.remove(camera.id)
         }
         if result.status == .sent, result.command == .stopRecording,
            camera.usesInsta360GPSRemote,
@@ -3315,6 +3320,11 @@ private extension CameraStore {
                 if stopProgress.observe(cameras[index], state: recordingState,
                     canClearActiveRecording: update.canClearActiveRecording) {
                     stopProgressTimerIfIdle()
+                }
+                if CameraStopReplayPolicy.clearIfConfirmed(id, state: recordingState,
+                    canClearActiveRecording: update.canClearActiveRecording, pending: &pendingStopCameraIDs) {
+                    reconnectTasksByCameraID[id]?.cancel()
+                    reconnectTasksByCameraID[id] = nil
                 }
                 recordingDecision = "applied \(recordingState.rawValue)"
                 if recordingState == .recording,

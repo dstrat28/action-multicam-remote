@@ -258,6 +258,32 @@ enum CameraStopProgressRegression {
                 precondition(progress.expire(at: 34.9).isEmpty, "Reconnect Stop gets a fresh confirmation deadline")
                 precondition(progress.observe(camera, state: .stopped, canClearActiveRecording: true))
                 precondition(!needsRecovery(), "Observed Stopped must end recovery")
+
+                // Confirmation can arrive on the replacement connection before
+                // protocol readiness, after the old UI progress was cleared.
+                for confirmedState in [CameraRecordingState.stopped, .ready] {
+                    let otherCameraID = UUID()
+                    pending = [camera.id, otherCameraID]
+                    for unconfirmedState in [CameraRecordingState.unknown, .recording, .starting] {
+                        precondition(!CameraStopReplayPolicy.clearIfConfirmed(camera.id, state: unconfirmedState,
+                            canClearActiveRecording: true, pending: &pending))
+                    }
+                    precondition(!CameraStopReplayPolicy.clearIfConfirmed(camera.id, state: confirmedState,
+                        canClearActiveRecording: false, pending: &pending))
+                    precondition(pending.contains(camera.id))
+                    precondition(CameraStopReplayPolicy.clearIfConfirmed(camera.id, state: confirmedState,
+                        canClearActiveRecording: true, pending: &pending))
+                    precondition(pending == [otherCameraID], "Confirmation must not cancel another camera's Stop")
+                    precondition(!CameraStopReplayPolicy.consumeIfReady(camera: camera, detail: ready, pending: &pending),
+                        "A trusted confirmation before readiness must prevent replay of the settled Stop")
+                    let failure = CameraCommandResult(cameraID: camera.id, cameraName: camera.name,
+                        command: .stopRecording, status: .failed, message: "Late failure", timestamp: Date())
+                    precondition(CameraCommandFailurePolicy.action(for: failure, brand: camera.brand, among: [failure],
+                        hasPendingExplicitStart: false,
+                        hasUnconfirmedStop: progress.contains(camera.id) || progress.isUnconfirmed(camera.id) || pending.contains(camera.id),
+                        userDisconnected: false) == .ignore,
+                        "A late failure must not resurrect recovery after confirmation cleared both states")
+                }
             }
         }
         for usesSDK in [false, true] {

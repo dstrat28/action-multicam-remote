@@ -86,7 +86,7 @@ jobs:
       - name: Check DJI Nano Stop confirmation
         run: sh ci_scripts/check_dji_stop_feedback.sh
 
-      - name: Check GoPro transport lifecycle
+      - name: Check GoPro transport and client lifecycle
         run: sh ci_scripts/check_gopro_transport.sh
 
       - name: Check recording Stop progress
