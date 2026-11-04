@@ -130,7 +130,7 @@ class SDKCloudTests(unittest.TestCase):
     def test_archive_validation_checks_linkage_resources_and_signatures(self):
         app = self.root / "build.xcarchive/Products/Applications/Multicam.app"
         sdk.unpack(self.archive, app)
-        (app / "Info.plist").write_bytes(plistlib.dumps({"CFBundleExecutable": "Multicam"}))
+        (app / "Info.plist").write_bytes(plistlib.dumps({"CFBundleExecutable": "Multicam", "NSCameraUsageDescription": "SDK camera APIs"}))
         dependencies = "\n".join(f"@rpath/{name}.framework/{name}" for name in sdk.FRAMEWORKS)
         with mock.patch.object(sdk.subprocess, "check_output", return_value=dependencies), mock.patch.object(sdk.subprocess, "run") as codesign:
             sdk.verify_archive(self.root / "build.xcarchive")
@@ -141,6 +141,13 @@ class SDKCloudTests(unittest.TestCase):
         with mock.patch.object(sdk.subprocess, "check_output", return_value=""):
             with self.assertRaisesRegex(ValueError, "embedded/linked"):
                 sdk.verify_archive(self.root / "build.xcarchive")
+
+    def test_sdk_archive_requires_camera_purpose_string(self):
+        app = self.root / "build.xcarchive/Products/Applications/Multicam.app"
+        app.mkdir(parents=True)
+        (app / "Info.plist").write_bytes(plistlib.dumps({"CFBundleExecutable": "Multicam"}))
+        with self.assertRaisesRegex(ValueError, "NSCameraUsageDescription"):
+            sdk.verify_archive(self.root / "build.xcarchive")
 
     def run_prebuild(self, **updates):
         environment = dict(os.environ, CI_XCODE_CLOUD="TRUE", CI_PRIMARY_REPOSITORY_PATH=str(self.root))

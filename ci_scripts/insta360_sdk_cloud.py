@@ -137,7 +137,10 @@ def verify_archive(archive, verify_signatures=True):
         raise ValueError("Expected one iOS app in the Cloud archive.")
     app = apps[0]
     with (app / "Info.plist").open("rb") as source:
-        executable = plistlib.load(source)["CFBundleExecutable"]
+        info = plistlib.load(source)
+    if not info.get("NSCameraUsageDescription", "").strip():
+        raise ValueError("SDK-enabled archive needs NSCameraUsageDescription for the SDK's linked camera APIs.")
+    executable = info["CFBundleExecutable"]
     dependencies = subprocess.check_output(["xcrun", "otool", "-L", str(app / executable)], text=True)
     for name in FRAMEWORKS:
         framework = app / "Frameworks" / f"{name}.framework"

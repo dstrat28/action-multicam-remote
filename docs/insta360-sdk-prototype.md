@@ -47,6 +47,13 @@ link/embed all four frameworks, use `TO_B_SDK=1`, retain resource/privacy files,
 and sign each embedded framework when signing is enabled. Disabling the build
 option removes all four frameworks from reused build output.
 
+SDK-enabled device builds also merge `NSCameraUsageDescription` into the app's
+Info.plist. Apple's processing checks require it because the linked SDK contains
+camera-access APIs, even though this integration's Bluetooth commands do not
+request the phone/tablet camera. Its description states that distinction without
+claiming an app feature that uses the phone camera. Standard and simulator builds
+omit this SDK-specific purpose string. The original Info.plist keys are retained.
+
 The supplied Camera/Media frameworks have no simulator slice. Simulator and
 ordinary device builds exclude SDK imports and binaries and hide the Settings
 switch. A successful public CI build therefore does not validate SDK packaging;
@@ -120,7 +127,8 @@ archive and workflow variables separately for your release environment; the publ
 repository contains no private endpoint or credentials. Run a signed Cloud archive
 and verify the result before distributing the first SDK-enabled release. The post-build hook
 checks the actual archive for all four linked/embedded frameworks, their signatures,
-and the two supplied privacy manifests. It fails if an SDK-enabled archive omits them.
+the two supplied privacy manifests, and the required camera purpose string. It fails
+if an SDK-enabled archive omits them.
 This verifies Cloud download/signing, which local unsigned builds cannot establish.
 Vendor debug symbols are not included in this compact dependency archive, so
 symbolication inside the vendor's prebuilt binaries requires their matching dSYMs
