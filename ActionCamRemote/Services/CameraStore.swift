@@ -380,6 +380,14 @@ final class CameraStore {
         stopProgress.contains(camera.id)
     }
 
+    func isCameraStopUnconfirmed(_ camera: DiscoveredCamera) -> Bool {
+        stopProgress.isUnconfirmed(for: camera)
+    }
+
+    func showsRecordingStatus(for camera: DiscoveredCamera) -> Bool {
+        stopProgress.showsRecordingStatus(for: camera)
+    }
+
     var canStopMulticamRecording: Bool {
         selectedConnectedCameras.contains { camera in
             camera.supportsBatchRecord
@@ -1756,7 +1764,7 @@ private extension CameraStore {
 
     func beginStopping(for camera: DiscoveredCamera) {
         stopProgress.begin(camera.id, at: ProcessInfo.processInfo.systemUptime,
-            timeout: camera.behavior.kind == .insta360Direct ? 30 : 15)
+            timeout: 3)
         guard stopProgressTimer == nil else { return }
         let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.expireStopProgress() }
@@ -1784,7 +1792,7 @@ private extension CameraStore {
 
     func expireStopProgress() {
         for id in stopProgress.expire(at: ProcessInfo.processInfo.systemUptime) {
-            if let camera = cameras.first(where: { $0.id == id }) {
+            if let camera = cameras.first(where: { $0.id == id }), !camera.usesInsta360GPSRemote {
                 setCameraDiagnostic("Stop could not be confirmed. Check the camera before recording again.", for: camera)
             }
         }
@@ -3001,6 +3009,13 @@ private extension CameraStore {
         if wasSent, result.command == .startRecording || result.command == .capturePhoto || result.command == .toggleRecording {
             finishStopping(for: camera.id)
         }
+        if result.status == .sent, result.command == .stopRecording,
+           camera.usesInsta360GPSRemote,
+           let index = cameras.firstIndex(where: { $0.id == camera.id }) {
+            // GPS Remote has no Stopped event. Offer Record after the short
+            // shutter cooldown, without claiming the camera confirmed Stop.
+            cameras[index].recordingState = .unknown
+        }
 
         if !wasSent, camera.brand == .insta360 {
             // GPS Remote toggles and direct capture commands must not be retried
@@ -3274,6 +3289,13 @@ private extension CameraStore {
                     stopProgressTimerIfIdle()
                 } else if recordingState == .unknown, cameras[index].usesInsta360GPSRemote {
                     // GPS Remote reports silence as unknown, never a confirmed Stop.
+                    stopProgress.markUnconfirmed(id)
+                    stopProgressTimerIfIdle()
+                } else if recordingState == .recording,
+                          cameras[index].usesInsta360GPSRemote,
+                          !stopProgress.contains(id) {
+                    // GPS Remote suppresses trailing timers during its Stop
+                    // window. A new timer afterward establishes Recording.
                     finishStopping(for: id)
                 }
                 recordingDecision = "applied \(recordingState.rawValue)"

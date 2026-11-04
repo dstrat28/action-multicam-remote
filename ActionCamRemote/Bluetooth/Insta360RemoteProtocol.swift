@@ -89,18 +89,18 @@ struct Insta360RemoteRecordingStatus {
 
     @discardableResult
     mutating func expire(at now: Date) -> Bool {
-        guard let lastObservation = awaitingFeedbackSince ?? lastTimerAt,
-              now.timeIntervalSince(lastObservation) > Insta360RemoteProtocol.recordingStatusTimeout else {
+        guard let lastObservation = awaitingFeedbackSince ?? lastTimerAt else { return false }
+        let elapsed = now.timeIntervalSince(lastObservation)
+        let expired = awaitingStopFeedback
+            ? elapsed >= Insta360RemoteProtocol.stopFeedbackCooldown
+            : elapsed > Insta360RemoteProtocol.recordingStatusTimeout
+        guard expired else {
             return false
         }
-        // The Stop gate and timer freshness have separate deadlines. Retain
-        // recent evidence to block Start/photo/toggle, without allowing another
-        // Stop until a new timer arrives after this gate ends.
-        let hasRecentStopTimer = awaitingStopFeedback && lastTimerAt.map {
-            let age = now.timeIntervalSince($0)
-            return age >= 0 && age <= Insta360RemoteProtocol.recordingStatusTimeout
-        } == true
-        if !hasRecentStopTimer { self.lastTimerAt = nil }
+        // Trailing timers cannot confirm Stop. Once its short cooldown ends,
+        // allow a new explicit shutter action without requiring proof of Stop.
+        // A new timer after this point can establish Recording again.
+        lastTimerAt = nil
         awaitingFeedbackSince = nil
         awaitingStopFeedback = false
         // Expiry cannot distinguish stopped recording from lost traffic or a
@@ -296,6 +296,7 @@ enum Insta360RemoteProtocol {
     static let powerOffCommand = Data([0xFC, 0xEF, 0xFE, 0x86, 0x00, 0x03, 0x01, 0x00, 0x03])
 
     static let recordingStatusTimeout: TimeInterval = 5
+    static let stopFeedbackCooldown: TimeInterval = 3
 
     static func isRecordingTimerPacket(_ data: Data) -> Bool {
         recordingTimeLabel(from: data) != nil

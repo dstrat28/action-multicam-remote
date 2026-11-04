@@ -89,7 +89,10 @@ struct CameraRowView: View {
     }
 
     private var rowStroke: Color {
-        if camera.recordingState == .recording {
+        if store.isCameraStopUnconfirmed(camera) {
+            return Color.acrWarning.opacity(0.48)
+        }
+        if showsRecordingStatus {
             return Color.acrRecord.opacity(0.48)
         }
         if camera.isSelected {
@@ -169,7 +172,7 @@ struct CameraRowView: View {
 
             Text(connectionText)
                 .font(.subheadline)
-                .foregroundStyle(camera.recordingState == .recording ? Color.acrRecord : Color.acrMutedText)
+                .foregroundStyle(connectionTextColor)
                 .lineLimit(1)
 
             Spacer(minLength: 6)
@@ -198,7 +201,10 @@ struct CameraRowView: View {
     }
 
     private var connectionIndicatorColor: Color {
-        if camera.recordingState == .recording {
+        if store.isCameraStopUnconfirmed(camera) {
+            return .acrWarning
+        }
+        if showsRecordingStatus {
             return .acrRecord
         }
         if isConnectInProgress {
@@ -221,13 +227,27 @@ struct CameraRowView: View {
     }
 
     private var connectionText: String {
-        if camera.recordingState == .recording {
+        if store.isCameraStopUnconfirmed(camera) {
+            return "Stop not confirmed"
+        }
+        if showsRecordingStatus {
             return "Recording"
         }
         if isConnectInProgress {
             return "Connecting"
         }
         return camera.displayConnectionLabel
+    }
+
+    private var showsRecordingStatus: Bool {
+        store.showsRecordingStatus(for: camera)
+    }
+
+    private var connectionTextColor: Color {
+        if store.isCameraStopUnconfirmed(camera) {
+            return .acrWarning
+        }
+        return showsRecordingStatus ? .acrRecord : .acrMutedText
     }
 
     @ViewBuilder

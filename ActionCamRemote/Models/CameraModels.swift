@@ -1726,12 +1726,29 @@ struct CameraStopProgress {
         var expiresAt: TimeInterval
     }
     private var entries: [UUID: Entry] = [:]
+    private var unconfirmedCameraIDs: Set<UUID> = []
     var isEmpty: Bool { entries.isEmpty }
 
     func contains(_ cameraID: UUID) -> Bool { entries[cameraID] != nil }
+    func isUnconfirmed(_ cameraID: UUID) -> Bool { unconfirmedCameraIDs.contains(cameraID) }
+
+    func isUnconfirmed(for camera: DiscoveredCamera) -> Bool {
+        !camera.usesInsta360GPSRemote && isUnconfirmed(camera.id)
+    }
+
+    func showsRecordingStatus(for camera: DiscoveredCamera) -> Bool {
+        // GPS Remote has no explicit Stop confirmation. Show connection status
+        // after its shutter request without synthesizing a stopped camera state.
+        if camera.usesInsta360GPSRemote,
+           contains(camera.id) || isUnconfirmed(camera.id) {
+            return false
+        }
+        return camera.recordingState == .recording || contains(camera.id)
+    }
 
     mutating func begin(_ cameraID: UUID, at now: TimeInterval, timeout: TimeInterval) {
         guard entries[cameraID] == nil else { return }
+        unconfirmedCameraIDs.remove(cameraID)
         entries[cameraID] = Entry(expiresAt: now + timeout)
     }
 
@@ -1744,9 +1761,16 @@ struct CameraStopProgress {
 
     @discardableResult
     mutating func finish(_ cameraID: UUID, matching resultID: UUID? = nil) -> Bool {
-        guard let entry = entries[cameraID] else { return false }
-        if let resultID, entry.resultID != resultID { return false }
-        entries.removeValue(forKey: cameraID)
+        if let resultID, entries[cameraID]?.resultID != resultID { return false }
+        let removedPending = entries.removeValue(forKey: cameraID) != nil
+        let removedUnconfirmed = unconfirmedCameraIDs.remove(cameraID) != nil
+        return removedPending || removedUnconfirmed
+    }
+
+    @discardableResult
+    mutating func markUnconfirmed(_ cameraID: UUID) -> Bool {
+        guard entries.removeValue(forKey: cameraID) != nil else { return false }
+        unconfirmedCameraIDs.insert(cameraID)
         return true
     }
 
@@ -1758,7 +1782,7 @@ struct CameraStopProgress {
 
     mutating func expire(at now: TimeInterval) -> [UUID] {
         let expired = entries.filter { now >= $0.value.expiresAt }.map(\.key)
-        for id in expired { entries.removeValue(forKey: id) }
+        for id in expired { markUnconfirmed(id) }
         return expired
     }
 }

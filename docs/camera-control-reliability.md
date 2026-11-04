@@ -58,11 +58,18 @@ notification. A backpressured command therefore retains the correct sequence.
 Counters are separate for every camera and reset when its session is replaced.
 After a shutter press, further shutter commands wait for feedback. A trailing recording timer does not reopen Stop during that window: a second Stop toggle could restart recording. Silence returns the state to unknown rather than claiming the camera stopped.
 
-When the Stop feedback window expires, recent timer evidence still blocks Start,
-photo, and toggle requests until that evidence becomes stale. Only a new timer
-after the window ends can permit another Stop. Trailing timers do not publish a
-Recording state during the Stop window, and expiry runs in common run-loop modes
-so scrolling does not suspend the deadline.
+The Stop feedback cooldown lasts three seconds. Trailing timers do not extend it
+or block a new explicit Record/photo/toggle afterward; no stopped-state confirmation
+is required for that next action. A fresh timer after the cooldown can establish
+Recording again and permit another Stop. No shutter action is repeated automatically.
+Expiry runs in common run-loop modes so scrolling does not suspend the deadline.
+
+The app's Stop spinner also ends after three seconds, independently of transport
+deadlines. Cameras with Stop confirmation show an advisory “Stop not confirmed”
+if it has not arrived; a late trusted stopped status clears it. GPS Remote returns
+to the green connection display because it cannot explicitly confirm Stop, while
+its underlying recording state remains unknown. Missing confirmation adds no new
+recording lockout.
 
 The sequence behavior comes from [physical X4 remote observations](https://github.com/TheAngryRaven/insta360-ble-gps-spec/blob/7964f1133e5d0f2c7eb73aaaaf5d6ebdd2127199/README.md).
 Applicability to other GPS Remote models is inferred from the shared packet

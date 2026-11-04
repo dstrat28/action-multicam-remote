@@ -100,6 +100,50 @@ enum CameraStopProgressRegression {
         progress.begin(front, at: 100, timeout: 15)
         precondition(progress.finish(front), "Disconnect or a superseding capture clears progress")
         precondition(progress.expire(at: 120).isEmpty)
+
+        var nano = DiscoveredCamera(id: front, name: "Nano", brand: .dji, model: .djiOsmoNano,
+            rssi: -40, capabilities: [.record, .mode, .status], connectionState: .connected,
+            recordingState: .recording, isPaired: true, isSelected: true, lastSeen: Date())
+        progress.begin(front, at: 200, timeout: 3)
+        let missingReply = stop(front)
+        progress.attach(missingReply)
+        precondition(progress.showsRecordingStatus(for: nano))
+        nano.recordingState = .unknown
+        precondition(progress.showsRecordingStatus(for: nano), "Pending Stop must not flash Connected on unknown status")
+        precondition(progress.expire(at: 202.9).isEmpty)
+        precondition(progress.expire(at: 203) == [front])
+        precondition(!progress.contains(front), "Stop spinner must end after its short UI deadline")
+        precondition(progress.isUnconfirmed(for: nano), "Missing confirmation must stay distinct from Stopped")
+        precondition(nano.recordingState == .unknown, "UI expiry must not synthesize a camera state")
+        precondition(!progress.finish(front, matching: missingReply.id), "Late command outcomes cannot erase an unconfirmed Stop")
+        precondition(!progress.observe(front, state: .recording, canClearActiveRecording: true))
+        precondition(!progress.observe(front, state: .stopped, canClearActiveRecording: false))
+        precondition(progress.isUnconfirmed(for: nano))
+        precondition(progress.observe(front, state: .stopped, canClearActiveRecording: true), "Late trusted confirmation must clear the warning")
+        precondition(!progress.isUnconfirmed(front))
+
+        // GPS Remote cannot explicitly confirm Stop. Its presentation returns
+        // to Connected while its underlying recording state remains unknown.
+        x3.insta360UsesSDK = false
+        x3.recordingState = .recording
+        progress.begin(x3.id, at: 210, timeout: 3)
+        precondition(!progress.showsRecordingStatus(for: x3))
+        x3.recordingState = .unknown
+        precondition(progress.markUnconfirmed(x3.id))
+        precondition(!progress.contains(x3.id))
+        precondition(!progress.isUnconfirmed(for: x3), "Expected GPS Remote silence must not show a missing-confirmation warning")
+        precondition(!progress.showsRecordingStatus(for: x3))
+        precondition(x3.recordingState == .unknown)
+        precondition(x3.primaryRecordCommand == .startRecording, "Unknown GPS Remote status must still allow an explicit new Record action")
+        precondition(progress.finish(x3.id), "A new capture or disconnect must clear GPS Remote presentation state")
+        x3.recordingState = .recording
+        precondition(progress.showsRecordingStatus(for: x3), "A later recording must appear red again")
+
+        progress.begin(front, at: 220, timeout: 3)
+        precondition(progress.expire(at: 223) == [front])
+        progress.begin(front, at: 224, timeout: 3)
+        precondition(!progress.isUnconfirmed(front), "An explicit Stop retry starts a fresh confirmation window")
+        precondition(progress.finish(front))
         print("Stop progress checks passed: confirmation, unknown state, rejected duplicates, late results, failures, independent cameras, deadlines, and cleanup.")
     }
 }

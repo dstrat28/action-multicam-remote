@@ -124,6 +124,9 @@ private struct SessionReadiness: View {
     }
 
     private var sessionSummary: String {
+        if hasUnconfirmedStop {
+            return "Stop not confirmed"
+        }
         if recordingCameraCount > 0 {
             return recordingCameraCount == 1
                 ? "1 camera recording"
@@ -135,14 +138,24 @@ private struct SessionReadiness: View {
     }
 
     private var recordingCameraCount: Int {
-        store.pairedCameras.filter { $0.recordingState == .recording }.count
+        store.pairedCameras.filter {
+            // Stop may temporarily report unknown while confirmation is pending.
+            store.showsRecordingStatus(for: $0)
+        }.count
     }
 
     private var statusColor: Color {
+        if hasUnconfirmedStop {
+            return .acrWarning
+        }
         if recordingCameraCount > 0 {
             return .acrRecord
         }
         return store.readyConnectedCameras.isEmpty ? .secondary : .acrReady
+    }
+
+    private var hasUnconfirmedStop: Bool {
+        store.pairedCameras.contains { store.isCameraStopUnconfirmed($0) }
     }
 }
 
