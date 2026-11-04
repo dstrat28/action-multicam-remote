@@ -2,6 +2,11 @@ import Foundation
 
 enum FeatureAvailability {
     static let djiPhoneGPS = true
+    #if INSTA360_SDK && !targetEnvironment(simulator)
+    static let insta360SDK = true
+    #else
+    static let insta360SDK = false
+    #endif
 }
 
 enum CameraBrand: String, CaseIterable, Identifiable, Codable {
@@ -43,6 +48,10 @@ enum CameraModel: String, Identifiable, Codable {
     case insta360X4Air = "X4 Air"
     case insta360X4 = "X4"
     case insta360X3 = "X3"
+    case insta360X2 = "X2"
+    case insta360OneX = "ONE X"
+    case insta360OneR = "ONE R"
+    case insta360OneRS1Inch = "ONE RS 1-Inch"
     case insta360OneRS = "ONE RS"
     case insta360GoUltra = "GO Ultra"
     case insta360Go3S = "GO 3S"
@@ -50,6 +59,25 @@ enum CameraModel: String, Identifiable, Codable {
     case unknown = "Unknown Camera"
 
     var id: String { rawValue }
+
+    var supportsInsta360SDKPrototype: Bool {
+        switch self {
+        case .insta360X6, .insta360X5, .insta360X4Air, .insta360X4, .insta360X3,
+             .insta360X2, .insta360OneX, .insta360OneR, .insta360OneRS, .insta360OneRS1Inch:
+            true
+        default:
+            false
+        }
+    }
+
+    var requiresInsta360SDK: Bool {
+        switch self {
+        case .insta360X2, .insta360OneX, .insta360OneR, .insta360OneRS1Inch:
+            true
+        default:
+            false
+        }
+    }
 
     var brand: CameraBrand {
         return switch self {
@@ -84,6 +112,10 @@ enum CameraModel: String, Identifiable, Codable {
              .insta360X4Air,
              .insta360X4,
              .insta360X3,
+             .insta360X2,
+             .insta360OneX,
+             .insta360OneR,
+             .insta360OneRS1Inch,
              .insta360OneRS,
              .insta360GoUltra,
              .insta360Go3S,
@@ -281,6 +313,10 @@ extension CameraModel {
              .insta360X4Air,
              .insta360X4,
              .insta360X3,
+             .insta360X2,
+             .insta360OneX,
+             .insta360OneR,
+             .insta360OneRS1Inch,
              .insta360OneRS,
              .insta360GoUltra,
              .insta360Go3S,
@@ -324,6 +360,10 @@ extension CameraModel {
              .insta360X4Air,
              .insta360X4,
              .insta360X3,
+             .insta360X2,
+             .insta360OneX,
+             .insta360OneR,
+             .insta360OneRS1Inch,
              .insta360OneRS,
              .insta360GoUltra,
              .insta360Go3S,
@@ -900,6 +940,7 @@ struct CameraBehaviorProfile: Equatable {
 
 struct DiscoveredCamera: Identifiable, Equatable, Codable {
     static let unsupportedCameraReason = "Unsupported"
+    static let insta360SDKRequiredReason = "Enable Insta360 SDK in Settings, then connect this camera."
 
     let id: UUID
     var name: String
@@ -922,13 +963,17 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     var isPairingAdvertisement: Bool? = nil
     var advertisementAwake: Bool? = nil
     var insta360UsesGPSRemoteFallback: Bool? = nil
+    // Connection-scoped; cleared before saving paired cameras.
+    var insta360UsesSDK: Bool? = nil
 
     var isSupportedByApp: Bool {
         unsupportedReason == nil
     }
 
     var unsupportedReason: String? {
-        Self.unsupportedReason(brand: brand, model: model, name: name)
+        if let reason = Self.unsupportedReason(brand: brand, model: model, name: name) { return reason }
+        if model.requiresInsta360SDK, insta360UsesSDK != true { return Self.insta360SDKRequiredReason }
+        return nil
     }
 
     static func unsupportedReason(
@@ -944,6 +989,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
         model: CameraModel,
         name: String
     ) -> Bool {
+        if model.requiresInsta360SDK { return FeatureAvailability.insta360SDK }
         switch model {
         case .goproLitHero,
              .goproMax2,
@@ -967,6 +1013,10 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
              .insta360X4Air,
              .insta360X4,
              .insta360X3,
+             .insta360X2,
+             .insta360OneX,
+             .insta360OneR,
+             .insta360OneRS1Inch,
              .insta360OneRS,
              .insta360GoUltra,
              .insta360Go3S,
@@ -1039,6 +1089,10 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
                  .insta360X4Air,
                  .insta360X4,
                  .insta360X3,
+                 .insta360X2,
+                 .insta360OneX,
+                 .insta360OneR,
+                 .insta360OneRS1Inch,
                  .insta360OneRS,
                  .insta360GoUltra,
                  .insta360Go3S,
@@ -1149,12 +1203,22 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
 
     var behavior: CameraBehaviorProfile {
         var profile = CameraBehaviorProfile.resolve(brand: brand, model: model, name: name)
+        if insta360UsesSDK == true { profile.kind = .insta360Direct; return profile }
         if model == .insta360X5, insta360UsesGPSRemoteFallback == true { profile.kind = .insta360Remote }
         return profile
     }
 
     var usesInsta360GPSRemote: Bool {
         brand == .insta360 && behavior.kind != .insta360Direct
+    }
+
+    func resolvedInsta360SDKSelection(preferred: Bool) -> Bool {
+        guard brand == .insta360 else { return false }
+        // Preferences affect the next connection, never an established link or
+        // an in-flight handshake. Reconnects resolve the preference afresh.
+        if connectionState == .connected || connectionState == .connecting,
+           let insta360UsesSDK { return insta360UsesSDK }
+        return preferred && model.supportsInsta360SDKPrototype
     }
 
     var isKnownAction6: Bool {
@@ -1237,6 +1301,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
 
     var availableCaptureModes: [CaptureMode] {
         guard capabilities.contains(.mode) else { return [] }
+        if insta360UsesSDK == true { return [.video, .photo] }
 
         switch behavior.kind {
         case .goProOpen:
@@ -1282,6 +1347,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     }
 
     var canStartRecordingInCurrentMode: Bool {
+        if insta360UsesSDK == true { return !isConnected || currentMode == .video }
         if behavior.kind == .djiOsmoNano {
             return !isConnected || currentMode == nil || currentMode != .photo
         }

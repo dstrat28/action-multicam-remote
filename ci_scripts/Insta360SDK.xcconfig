@@ -1,0 +1,4 @@
+// Ordinary builds do not require the proprietary SDK. Xcode Cloud's pre-build
+// hook writes the optional override only after validating the private download.
+MULTICAM_INSTA360_SDK_ENABLED = NO
+#include? "../Vendor/Insta360/Build.xcconfig"

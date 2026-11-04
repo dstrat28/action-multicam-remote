@@ -14,6 +14,12 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Keep vendor SDK distributions out of Git
+        run: sh ci_scripts/check_vendor_sdk_exclusion.sh
+
+      - name: Check private SDK provisioning
+        run: python3 -B Tests/Insta360SDKCloudRegression.py
+
       - name: Select Xcode
         run: xcodebuild -version
 
@@ -57,6 +63,12 @@ jobs:
 
       - name: Check Insta360 heartbeat during UI tracking
         run: sh ci_scripts/check_insta360_transport.sh
+
+      - name: Check Insta360 SDK command confirmation
+        run: sh ci_scripts/check_insta360_sdk.sh
+
+      - name: Check Insta360 SDK adapter lifecycle
+        run: sh ci_scripts/check_insta360_sdk_adapter.sh
 
       - name: Check DJI command deadlines
         run: |

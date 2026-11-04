@@ -5,6 +5,7 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(CameraStore.self) private var store
     @AppStorage(ACRPreferences.largerControls) private var largerControls = false
+    @AppStorage(ACRPreferences.insta360SDKEnabled) private var insta360SDKEnabled = false
     @State private var supportPresentation: SupportPresentation?
     @State private var isPreparingSupport = false
     @State private var supportError: String?
@@ -21,6 +22,13 @@ struct SettingsView: View {
                         .foregroundStyle(Color.acrInk)
                 }
                 .listRowBackground(Color.acrSurface)
+                if FeatureAvailability.insta360SDK {
+                    Toggle(isOn: $insta360SDKEnabled) {
+                        Label("Insta360 SDK", systemImage: "camera")
+                            .foregroundStyle(Color.acrInk)
+                    }
+                    .listRowBackground(Color.acrSurface)
+                }
                 NavigationLink {
                     DiagnosticsView()
                 } label: {
@@ -47,6 +55,9 @@ struct SettingsView: View {
         .background(Color.acrAppBackground)
         .navigationTitle("Settings")
         .navigationBarTitleDisplayMode(.inline)
+        .onChange(of: insta360SDKEnabled) { _, _ in
+            store.refreshInsta360SDKPreference()
+        }
         .onAppear {
             store.setPairingModeActive(true)
             store.startScanning()

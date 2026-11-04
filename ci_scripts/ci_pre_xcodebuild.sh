@@ -1,6 +1,15 @@
 #!/bin/sh
 set -eu
 
+task_scripts_dir=$(CDPATH= cd "$(dirname "$0")" && pwd)
+# Test runners do not have the source checkout and reuse already-built products.
+if [ "${CI_XCODEBUILD_ACTION:-}" = test-without-building ]; then
+  exit 0
+fi
+if [ "${CI_XCODE_CLOUD:-}" = TRUE ]; then
+  python3 "$task_scripts_dir/insta360_sdk_cloud.py" configure
+fi
+
 if [ -z "${CI_BUILD_NUMBER:-}" ]; then
   echo "CI_BUILD_NUMBER is not set; leaving CURRENT_PROJECT_VERSION unchanged."
   exit 0

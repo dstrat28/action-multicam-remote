@@ -29,3 +29,8 @@ Package.resolved
 *.log
 diagnostics/
 bluetooth-logs/
+
+# Approved proprietary SDK downloads are installed locally, never committed.
+Vendor/Insta360/
+*.xcframework/
+*.framework/
