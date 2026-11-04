@@ -2,7 +2,7 @@ import Foundation
 
 @main
 enum CameraStopProgressRegression {
-    static func main() {
+    static func main() async {
         var x3 = DiscoveredCamera(id: UUID(), name: "X3 ABC123", brand: .insta360, model: .insta360X3,
             rssi: -40, capabilities: [.record, .mode, .status], connectionState: .connected,
             recordingState: .unknown, isPaired: true, isSelected: true, lastSeen: Date())
@@ -211,6 +211,7 @@ enum CameraStopProgressRegression {
         precondition(progress.expire(at: 313).isEmpty)
         precondition(progress.expire(at: 315) == [x3.id])
         checkStopRecoveryAfterConnectionLoss()
+        await checkRetiredClientCallbacks()
         print("Stop progress checks passed: confirmation, unknown state, rejected duplicates, late results, failures, connection-loss recovery, independent cameras, deadlines, and cleanup.")
     }
 
@@ -262,5 +263,30 @@ enum CameraStopProgressRegression {
             precondition(!CameraStopReplayPolicy.shouldRetainAfterConnectionLoss(camera: camera, progress: progress,
                 hasPendingExplicitStart: false, userDisconnected: false), "Uncertain Insta360 capture cannot be replayed")
         }
+    }
+
+    @MainActor
+    private static func checkRetiredClientCallbacks() async {
+        var applied: [String] = []
+        var archived = 0
+        let old = CameraClientEventSession()
+        old.deliver({ applied.append("old queued status") }, onDiscard: { archived += 1 })
+        old.invalidate() // Disconnect/replacement happens before the queued callback runs.
+        let current = CameraClientEventSession()
+        current.deliver { applied.append("current status") }
+        old.deliver({ applied.append("old disconnect request") }, onDiscard: { archived += 1 })
+        let otherCamera = CameraClientEventSession()
+        otherCamera.deliver { applied.append("other camera") }
+        let deadline = Date().addingTimeInterval(2)
+        while applied.count < 2 || archived < 2, Date() < deadline {
+            try? await Task.sleep(nanoseconds: 1_000_000)
+        }
+        precondition(applied.sorted() == ["current status", "other camera"],
+            "A retired connection must not change status or close its replacement")
+        precondition(archived == 2, "Discarded control callbacks can still preserve command-history outcomes")
+        current.invalidate()
+        current.deliver({ applied.append("after manual Disconnect") }, onDiscard: { archived += 1 })
+        while archived < 3, Date() < deadline { try? await Task.sleep(nanoseconds: 1_000_000) }
+        precondition(archived == 3 && applied.count == 2, "Manual Disconnect invalidates queued callbacks")
     }
 }

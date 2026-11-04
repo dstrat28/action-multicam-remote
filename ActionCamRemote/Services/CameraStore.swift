@@ -47,7 +47,7 @@ final class CameraStore {
     @ObservationIgnored private var liveActivityHighlightObserver: NSObjectProtocol?
     @ObservationIgnored private var clients: [UUID: any BLECameraDeviceClient] = [:]
     @ObservationIgnored private var pendingInsta360GPSFallbackIDs: Set<UUID> = []
-    @ObservationIgnored private var insta360SDKClientTokens: [UUID: UUID] = [:]
+    @ObservationIgnored private var clientEventSessions: [UUID: CameraClientEventSession] = [:]
     @ObservationIgnored private var demoDiscoveryIndex = 0
     @ObservationIgnored private let pairedCamerasStorageKey = "pairedCameras.v1"
     @ObservationIgnored private let djiPhoneGPSStorageKey = "djiPhoneGPSCameraIDs.v1"
@@ -617,27 +617,25 @@ final class CameraStore {
         #if INSTA360_SDK && !targetEnvironment(simulator)
         if camera.insta360UsesSDK == true {
             guard camera.connectionState != .connected else { return }
-            let token = UUID()
-            insta360SDKClientTokens[camera.id] = token
+            let events = beginClientEventSession(for: camera.id)
             let client = Insta360SDKClient(
                 cameraID: camera.id, cameraName: camera.name, cameraModel: camera.model,
                 onStatus: { [weak self] id, state, detail in
-                    Task { @MainActor in
-                        guard let self, self.insta360SDKClientTokens[id] == token else { return }
-                        self.updateCamera(id, state: state, detail: detail)
+                    events.deliver { [weak self] in
+                        self?.updateCamera(id, state: state, detail: detail)
                     }
                 },
                 onCameraStatus: { [weak self] id, update in
-                    Task { @MainActor in
-                        guard let self, self.insta360SDKClientTokens[id] == token else { return }
-                        self.updateCameraStatus(id, update: update)
+                    events.deliver { [weak self] in
+                        self?.updateCameraStatus(id, update: update)
                     }
                 },
                 onLog: { [weak self] message in
-                    Task { @MainActor in self?.appendLog(message) }
+                    events.deliver { [weak self] in self?.appendLog(message) }
                 },
                 onCommandCompleted: { [weak self] result in
-                    Task { @MainActor in self?.handleBLECommandCompletion(result) }
+                    events.deliver({ [weak self] in self?.handleBLECommandCompletion(result) },
+                        onDiscard: { [weak self] in self?.recordBLECommandOutcome(result) })
                 }
             )
             clients[camera.id] = client
@@ -649,7 +647,7 @@ final class CameraStore {
         }
         #endif
 
-        insta360SDKClientTokens.removeValue(forKey: camera.id)
+        invalidateClientEventSession(for: camera.id)
 
         if camera.usesInsta360GPSRemote {
             lastConnectionAttemptByID[camera.id] = Date()
@@ -693,6 +691,7 @@ final class CameraStore {
 
         setCameraDiagnostic(connectionRequestDiagnostic(for: camera, lookupState: lookup.state), for: camera)
 
+        let events = beginClientEventSession(for: camera.id)
         let client: any BLECameraDeviceClient
         switch camera.brand {
         case .gopro:
@@ -703,19 +702,20 @@ final class CameraStore {
                 shouldSendAppPowerOnStart: explicitGoProWakeCameraIDs.contains(camera.id),
                 isInitialPairing: !camera.isPaired,
                 onStatus: { [weak self] id, state, detail in
-                    Task { @MainActor in self?.updateCamera(id, state: state, detail: detail) }
+                    events.deliver { [weak self] in self?.updateCamera(id, state: state, detail: detail) }
                 },
                 onCameraStatus: { [weak self] id, update in
-                    Task { @MainActor in self?.updateCameraStatus(id, update: update) }
+                    events.deliver { [weak self] in self?.updateCameraStatus(id, update: update) }
                 },
                 onLog: { [weak self] message in
-                    Task { @MainActor in self?.appendLog(message) }
+                    events.deliver { [weak self] in self?.appendLog(message) }
                 },
                 onCommandCompleted: { [weak self] result in
-                    Task { @MainActor in self?.handleBLECommandCompletion(result) }
+                    events.deliver({ [weak self] in self?.handleBLECommandCompletion(result) },
+                        onDiscard: { [weak self] in self?.recordBLECommandOutcome(result) })
                 },
                 onDisconnectRequested: { [weak self] id in
-                    Task { @MainActor in self?.scanner.disconnect(from: id) }
+                    events.deliver { [weak self] in self?.scanner.disconnect(from: id) }
                 }
             )
         case .dji:
@@ -725,29 +725,31 @@ final class CameraStore {
                 cameraModel: camera.model,
                 peripheral: peripheral,
                 onStatus: { [weak self] id, state, detail in
-                    Task { @MainActor in self?.updateCamera(id, state: state, detail: detail) }
+                    events.deliver { [weak self] in self?.updateCamera(id, state: state, detail: detail) }
                 },
                 onCameraStatus: { [weak self] id, update in
-                    Task { @MainActor in self?.updateCameraStatus(id, update: update) }
+                    events.deliver { [weak self] in self?.updateCameraStatus(id, update: update) }
                 },
                 onProtocolActivity: { [weak self] id in
-                    Task { @MainActor in self?.noteProtocolActivity(for: id) }
+                    events.deliver { [weak self] in self?.noteProtocolActivity(for: id) }
                 },
                 onNanoPairingStatus: { [weak self] id, status in
-                    Task { @MainActor in self?.handleNanoPairingStatus(status, for: id) }
+                    events.deliver { [weak self] in self?.handleNanoPairingStatus(status, for: id) }
                 },
                 hasConfirmedAwakeNanoAdvertisement: camera.behavior.kind == .djiOsmoNano
                     && freshAwakeAdvertisement(for: camera.id, now: Date()) == true,
                 onLog: { [weak self] message in
-                    Task { @MainActor in self?.appendLog(message) }
+                    events.deliver { [weak self] in self?.appendLog(message) }
                 },
                 isInitialPairing: !camera.isPaired,
                 onCommandCompleted: { [weak self] result in
-                    Task { @MainActor in self?.handleBLECommandCompletion(result) }
+                    events.deliver({ [weak self] in self?.handleBLECommandCompletion(result) },
+                        onDiscard: { [weak self] in self?.recordBLECommandOutcome(result) })
                 },
                 onPairingRejected: { [weak self] id in
-                    Task { @MainActor in
+                    events.deliver { [weak self] in
                         guard let self else { return }
+                        self.invalidateClientEventSession(for: id)
                         self.userDisconnectedCameraIDs.insert(id)
                         self.finishStopping(for: id)
                         self.pendingStartCameraIDs.remove(id)
@@ -765,25 +767,26 @@ final class CameraStore {
                 cameraModel: camera.model,
                 peripheral: peripheral,
                 onStatus: { [weak self] id, state, detail in
-                    Task { @MainActor in self?.updateCamera(id, state: state, detail: detail) }
+                    events.deliver { [weak self] in self?.updateCamera(id, state: state, detail: detail) }
                 },
                 onCameraStatus: { [weak self] id, update in
-                    Task { @MainActor in self?.updateCameraStatus(id, update: update) }
+                    events.deliver { [weak self] in self?.updateCameraStatus(id, update: update) }
                 },
                 onProtocolActivity: { [weak self] id in
-                    Task { @MainActor in self?.noteProtocolActivity(for: id) }
+                    events.deliver { [weak self] in self?.noteProtocolActivity(for: id) }
                 },
                 onLog: { [weak self] message in
-                    Task { @MainActor in self?.appendLog(message) }
+                    events.deliver { [weak self] in self?.appendLog(message) }
                 },
                 onCommandCompleted: { [weak self] result in
-                    Task { @MainActor in self?.handleBLECommandCompletion(result) }
+                    events.deliver({ [weak self] in self?.handleBLECommandCompletion(result) },
+                        onDiscard: { [weak self] in self?.recordBLECommandOutcome(result) })
                 },
                 onDisconnectRequested: { [weak self] id in
-                    Task { @MainActor in self?.scanner.disconnect(from: id) }
+                    events.deliver { [weak self] in self?.scanner.disconnect(from: id) }
                 },
                 onSetupUnavailable: { [weak self] id, reason in
-                    Task { @MainActor in self?.beginInsta360GPSFallback(for: id, reason: reason) }
+                    events.deliver { [weak self] in self?.beginInsta360GPSFallback(for: id, reason: reason) }
                 }
             )
         case .unknown:
@@ -854,7 +857,7 @@ final class CameraStore {
     }
 
     func disconnect(_ camera: DiscoveredCamera) {
-        insta360SDKClientTokens.removeValue(forKey: camera.id)
+        invalidateClientEventSession(for: camera.id)
         finishStopping(for: camera.id)
         reconnectTasksByCameraID[camera.id]?.cancel()
         reconnectTasksByCameraID[camera.id] = nil
@@ -938,6 +941,7 @@ final class CameraStore {
     }
 
     func remove(_ camera: DiscoveredCamera) {
+        invalidateClientEventSession(for: camera.id)
         finishStopping(for: camera.id)
         cancelStartRecording(for: camera.id)
         cancelPhotoCaptureReset(for: camera.id)
@@ -2978,11 +2982,28 @@ private extension CameraStore {
         }
     }
 
-    func handleBLECommandCompletion(_ result: CameraCommandResult) {
+    func recordBLECommandOutcome(_ result: CameraCommandResult) {
         if let index = commandResults.firstIndex(where: { $0.id == result.id }) {
             commandResults[index] = result
         }
         recordCommandHistory(result)
+    }
+
+    func beginClientEventSession(for id: UUID) -> CameraClientEventSession {
+        invalidateClientEventSession(for: id)
+        let events = CameraClientEventSession()
+        clientEventSessions[id] = events
+        return events
+    }
+
+    func invalidateClientEventSession(for id: UUID) {
+        clientEventSessions.removeValue(forKey: id)?.invalidate()
+    }
+
+    func handleBLECommandCompletion(_ result: CameraCommandResult) {
+        recordBLECommandOutcome(result)
+        let hasUnconfirmedStop = stopProgress.contains(result.cameraID) || stopProgress.isUnconfirmed(result.cameraID)
+            || pendingStopCameraIDs.contains(result.cameraID)
         if result.command == .stopRecording, result.status != .sent, result.status != .queued {
             finishStopping(for: result.cameraID, matching: result.id)
         }
@@ -2990,6 +3011,7 @@ private extension CameraStore {
         let action = CameraCommandFailurePolicy.action(
             for: result, brand: camera.brand, among: commandResults,
             hasPendingExplicitStart: pendingStartCameraIDs.contains(camera.id),
+            hasUnconfirmedStop: hasUnconfirmedStop,
             userDisconnected: userDisconnectedCameraIDs.contains(camera.id)
         )
         guard action != .ignore else { return }
@@ -3382,7 +3404,7 @@ private extension CameraStore {
     func updateCamera(_ id: UUID, state: CameraConnectionState, detail: String?) {
         switch state {
         case .disconnected, .failed, .unsupported:
-            insta360SDKClientTokens.removeValue(forKey: id)
+            invalidateClientEventSession(for: id)
         default:
             break
         }

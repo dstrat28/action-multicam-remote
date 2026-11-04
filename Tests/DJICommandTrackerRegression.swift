@@ -64,9 +64,9 @@ enum DJICommandTrackerRegression {
         }
         func action(_ failure: CameraCommandResult, brand: CameraBrand = .dji,
                     results: [CameraCommandResult]? = nil, pendingStart: Bool = false,
-                    disconnected: Bool = false) -> CameraCommandFailureAction {
+                    pendingStop: Bool = true, disconnected: Bool = false) -> CameraCommandFailureAction {
             CameraCommandFailurePolicy.action(for: failure, brand: brand, among: results ?? [failure],
-                hasPendingExplicitStart: pendingStart, userDisconnected: disconnected)
+                hasPendingExplicitStart: pendingStart, hasUnconfirmedStop: pendingStop, userDisconnected: disconnected)
         }
 
         for wasSent in [false, true] {
@@ -101,6 +101,10 @@ enum DJICommandTrackerRegression {
             "An explicit Start preparing Video mode supersedes Stop before its result exists")
         precondition(action(failure, disconnected: true) == .ignore,
             "A disconnect callback must not undo the user's Disconnect request")
+        precondition(action(failure, pendingStop: false) == .ignore,
+            "A late transport failure must not undo trusted Stopped status")
+        precondition(action(failure, results: [result(.stopRecording, status: .skipped), failure]) == .reconnectToStop,
+            "A rejected duplicate Stop cannot cancel the original Stop's failure recovery")
         var otherCamera = result(.startRecording)
         otherCamera.cameraID = UUID()
         precondition(action(failure, results: [otherCamera, failure]) == .reconnectToStop)

@@ -1719,6 +1719,24 @@ struct CameraStatusUpdate: Equatable {
     var activeGoProPresetID: UInt32? = nil
 }
 
+/// One connection's deferred callbacks. Retiring it also invalidates work
+/// already queued on the main actor, without losing command-history outcomes.
+@MainActor
+final class CameraClientEventSession {
+    private var active = true
+
+    func invalidate() { active = false }
+
+    nonisolated func deliver(
+        _ apply: @escaping @MainActor () -> Void,
+        onDiscard: @escaping @MainActor () -> Void = {}
+    ) {
+        Task { @MainActor [weak self] in
+            if self?.active == true { apply() } else { onDiscard() }
+        }
+    }
+}
+
 /// UI progress for Stop requests, separate from the camera's reported state.
 struct CameraStopProgress {
     static func confirmationTimeout(for camera: DiscoveredCamera) -> TimeInterval {
@@ -1875,6 +1893,8 @@ enum CameraRecordingStartPolicy {
     static func isLatestCaptureResult(_ result: CameraCommandResult, among results: [CameraCommandResult]) -> Bool {
         results.first {
             guard $0.cameraID == result.cameraID else { return false }
+            if result.command == .stopRecording, $0.command == .stopRecording,
+               $0.status == .skipped || $0.status == .unsupported { return false }
             switch $0.command {
             case .startRecording, .stopRecording, .capturePhoto, .toggleRecording: return true
             default: return false
@@ -1904,6 +1924,7 @@ enum CameraCommandFailurePolicy {
         brand: CameraBrand,
         among results: [CameraCommandResult],
         hasPendingExplicitStart: Bool,
+        hasUnconfirmedStop: Bool,
         userDisconnected: Bool
     ) -> CameraCommandFailureAction {
         guard result.status != .sent, result.status != .queued,
@@ -1911,6 +1932,9 @@ enum CameraCommandFailurePolicy {
               CameraRecordingStartPolicy.isLatestCaptureResult(result, among: results) else { return .ignore }
         // Start can be waiting for mode selection before it has a command result.
         guard result.command != .stopRecording || !hasPendingExplicitStart else { return .ignore }
+        // Trusted Stopped, manual cancellation or a newer capture can settle
+        // the intent before a transport failure is delivered.
+        guard result.command != .stopRecording || hasUnconfirmedStop else { return .ignore }
         // GoPro/DJI Stop is explicit and idempotent. Never replay Start, photos, or
         // Insta360 shutter toggles after an uncertain outcome.
         return (brand == .gopro || brand == .dji) && result.command == .stopRecording && result.status == .failed
