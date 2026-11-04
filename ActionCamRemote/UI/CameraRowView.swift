@@ -7,7 +7,6 @@ struct CameraRowView: View {
     @State private var pendingCaptureMode: CaptureMode?
     @State private var captureSettingsTimestampBeforeModeChange: Date?
     var camera: DiscoveredCamera
-    var matchesConnectedPeerHeight: Bool = false
     var onShowDetails: () -> Void = {}
 
     var body: some View {
@@ -27,6 +26,8 @@ struct CameraRowView: View {
             .padding(.top, 8)
             .padding(.bottom, 12)
 
+            Spacer(minLength: 0)
+
             if showsCaptureBar {
                 Divider()
                     .overlay(Color.acrLine.opacity(0.58))
@@ -44,7 +45,8 @@ struct CameraRowView: View {
             }
         }
         .frame(
-            minHeight: matchesConnectedPeerHeight ? 168 : nil,
+            maxWidth: .infinity,
+            maxHeight: .infinity,
             alignment: .top
         )
         .clipShape(RoundedRectangle(cornerRadius: ACRDesign.cardCornerRadius, style: .continuous))
@@ -89,7 +91,10 @@ struct CameraRowView: View {
     }
 
     private var rowStroke: Color {
-        if camera.recordingState == .recording {
+        if store.isCameraStopUnconfirmed(camera) {
+            return Color.acrWarning.opacity(0.48)
+        }
+        if showsRecordingStatus {
             return Color.acrRecord.opacity(0.48)
         }
         if camera.isSelected {
@@ -169,7 +174,7 @@ struct CameraRowView: View {
 
             Text(connectionText)
                 .font(.subheadline)
-                .foregroundStyle(camera.recordingState == .recording ? Color.acrRecord : Color.acrMutedText)
+                .foregroundStyle(connectionTextColor)
                 .lineLimit(1)
 
             Spacer(minLength: 6)
@@ -198,7 +203,10 @@ struct CameraRowView: View {
     }
 
     private var connectionIndicatorColor: Color {
-        if camera.recordingState == .recording {
+        if store.isCameraStopUnconfirmed(camera) {
+            return .acrWarning
+        }
+        if showsRecordingStatus {
             return .acrRecord
         }
         if isConnectInProgress {
@@ -221,13 +229,27 @@ struct CameraRowView: View {
     }
 
     private var connectionText: String {
-        if camera.recordingState == .recording {
+        if store.isCameraStopUnconfirmed(camera) {
+            return "Stop not confirmed"
+        }
+        if showsRecordingStatus {
             return "Recording"
         }
         if isConnectInProgress {
             return "Connecting"
         }
         return camera.displayConnectionLabel
+    }
+
+    private var showsRecordingStatus: Bool {
+        store.showsRecordingStatus(for: camera)
+    }
+
+    private var connectionTextColor: Color {
+        if store.isCameraStopUnconfirmed(camera) {
+            return .acrWarning
+        }
+        return showsRecordingStatus ? .acrRecord : .acrMutedText
     }
 
     @ViewBuilder

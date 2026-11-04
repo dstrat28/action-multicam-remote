@@ -55,6 +55,9 @@ enum CameraStopProgressRegression {
             now: modeStarted.addingTimeInterval(8)) == .failed)
 
         let front = UUID(), rear = UUID()
+        precondition(CameraStopProgress.confirmationTimeout(for: gopro) == 15)
+        x3.insta360UsesSDK = true
+        precondition(CameraStopProgress.confirmationTimeout(for: x3) == 15)
         func stop(_ cameraID: UUID, status: CameraCommandStatus = .sent) -> CameraCommandResult {
             CameraCommandResult(cameraID: cameraID, cameraName: "Test camera", command: .stopRecording,
                 status: status, message: "Stop requested", timestamp: Date())
@@ -100,6 +103,110 @@ enum CameraStopProgressRegression {
         progress.begin(front, at: 100, timeout: 15)
         precondition(progress.finish(front), "Disconnect or a superseding capture clears progress")
         precondition(progress.expire(at: 120).isEmpty)
+
+        var nano = DiscoveredCamera(id: front, name: "Nano", brand: .dji, model: .djiOsmoNano,
+            rssi: -40, capabilities: [.record, .mode, .status], connectionState: .connected,
+            recordingState: .recording, isPaired: true, isSelected: true, lastSeen: Date())
+        precondition(CameraStopProgress.confirmationTimeout(for: nano) == 15)
+        progress.begin(front, at: 200, timeout: CameraStopProgress.confirmationTimeout(for: nano))
+        let missingReply = stop(front)
+        progress.attach(missingReply)
+        precondition(progress.showsRecordingStatus(for: nano))
+        nano.recordingState = .unknown
+        precondition(progress.showsRecordingStatus(for: nano), "Pending Stop must not flash Connected on unknown status")
+        precondition(progress.expire(at: 202.9).isEmpty)
+        precondition(progress.expire(at: 203).isEmpty, "Nano must not offer Record merely because three seconds elapsed")
+        precondition(progress.contains(front))
+        precondition(progress.expire(at: 214.9).isEmpty)
+        precondition(progress.expire(at: 215) == [front])
+        precondition(!progress.contains(front), "A missing Nano confirmation must still have a bounded deadline")
+        precondition(progress.isUnconfirmed(for: nano), "Missing confirmation must stay distinct from Stopped")
+        precondition(nano.recordingState == .unknown, "UI expiry must not synthesize a camera state")
+        precondition(!progress.finish(front, matching: missingReply.id), "Late command outcomes cannot erase an unconfirmed Stop")
+        precondition(!progress.observe(front, state: .recording, canClearActiveRecording: true))
+        precondition(!progress.observe(front, state: .stopped, canClearActiveRecording: false))
+        precondition(progress.isUnconfirmed(for: nano))
+        precondition(nano.primaryRecordCommand == .startRecording,
+            "A missing confirmation cannot indefinitely block a new explicit action")
+        precondition(progress.observe(front, state: .stopped, canClearActiveRecording: true), "Late trusted confirmation must clear the warning")
+        precondition(!progress.isUnconfirmed(front))
+
+        // GPS Remote cannot explicitly confirm Stop. Its presentation returns
+        // to Connected while its underlying recording state remains unknown.
+        x3.insta360UsesSDK = false
+        x3.recordingState = .recording
+        progress.begin(x3.id, at: 210, timeout: 3)
+        let remoteStop = stop(x3.id)
+        progress.attach(remoteStop)
+        precondition(progress.didSend(remoteStop, for: x3, at: 210))
+        precondition(!progress.showsRecordingStatus(for: x3))
+        x3.recordingState = .unknown
+        precondition(progress.markUnconfirmed(x3.id))
+        precondition(!progress.contains(x3.id))
+        precondition(!progress.isUnconfirmed(for: x3), "Expected GPS Remote silence must not show a missing-confirmation warning")
+        precondition(!progress.showsRecordingStatus(for: x3))
+        precondition(x3.recordingState == .unknown)
+        precondition(x3.primaryRecordCommand == .startRecording, "Unknown GPS Remote status must still allow an explicit new Record action")
+        precondition(progress.finish(x3.id), "A new capture or disconnect must clear GPS Remote presentation state")
+        x3.recordingState = .recording
+        precondition(progress.showsRecordingStatus(for: x3), "A later recording must appear red again")
+
+        precondition(CameraStopProgress.confirmationTimeout(for: x3) == 3)
+        progress.begin(x3.id, at: 215, timeout: CameraStopProgress.confirmationTimeout(for: x3))
+        let freshRemoteStop = stop(x3.id)
+        progress.attach(freshRemoteStop)
+        precondition(progress.didSend(freshRemoteStop, for: x3, at: 215))
+        precondition(!progress.showsRecordingStatus(for: x3))
+        precondition(progress.observe(x3, state: .recording, canClearActiveRecording: true),
+            "Fresh GPS Remote Recording feedback must clear Stop even before the UI expiry timer runs")
+        precondition(!progress.contains(x3.id))
+        precondition(progress.showsRecordingStatus(for: x3))
+        progress.begin(x3.id, at: 216, timeout: CameraStopProgress.confirmationTimeout(for: x3))
+        x3.recordingState = .unknown
+        precondition(progress.observe(x3, state: .unknown, canClearActiveRecording: true))
+        x3.recordingState = .recording
+        precondition(progress.observe(x3, state: .recording, canClearActiveRecording: true))
+        precondition(progress.showsRecordingStatus(for: x3), "Fresh feedback must also clear the expired GPS Remote display mask")
+
+        progress.begin(front, at: 220, timeout: 3)
+        precondition(progress.expire(at: 223) == [front])
+        progress.begin(front, at: 224, timeout: 3)
+        precondition(!progress.isUnconfirmed(front), "An explicit Stop retry starts a fresh confirmation window")
+        precondition(progress.finish(front))
+        nano.recordingState = .recording
+        progress.begin(front, at: 230, timeout: CameraStopProgress.confirmationTimeout(for: nano))
+        precondition(!progress.observe(nano, state: .recording, canClearActiveRecording: true))
+        precondition(progress.contains(front), "Continued Nano Recording status must leave Stop pending")
+        nano.recordingState = .stopped
+        precondition(progress.observe(nano, state: .stopped, canClearActiveRecording: true))
+        precondition(!progress.contains(front), "Confirmed Nano Stop must finish immediately without waiting for the deadline")
+        precondition(nano.primaryRecordCommand == .startRecording)
+
+        // A queued GPS Remote Stop must keep its entire shutter cooldown after
+        // Bluetooth accepts it, rather than measuring from the original tap.
+        x3.recordingState = .recording
+        progress.begin(x3.id, at: 300, timeout: CameraStopProgress.confirmationTimeout(for: x3))
+        var queuedStop = stop(x3.id, status: .queued)
+        progress.attach(queuedStop)
+        precondition(progress.showsRecordingStatus(for: x3), "An unsent Stop must not hide an active recording")
+        precondition(!progress.observe(x3, state: .recording, canClearActiveRecording: true))
+        precondition(progress.contains(x3.id), "Recording timers before transmission must not cancel a queued Stop")
+        precondition(!progress.didSend(queuedStop, for: x3, at: 300))
+        queuedStop.status = .sent
+        precondition(progress.didSend(queuedStop, for: x3, at: 301.5))
+        precondition(!progress.showsRecordingStatus(for: x3))
+        precondition(progress.expire(at: 303).isEmpty,
+            "The original tap deadline must not expose Record during the transport cooldown")
+        precondition(!progress.didSend(queuedStop, for: x3, at: 304),
+            "Duplicate delivery callbacks must not prolong the cooldown")
+        precondition(progress.expire(at: 304.49).isEmpty)
+        precondition(progress.expire(at: 304.5) == [x3.id])
+        precondition(progress.finish(x3.id))
+        progress.begin(x3.id, at: 310, timeout: CameraStopProgress.confirmationTimeout(for: x3))
+        progress.attach(stop(x3.id, status: .queued))
+        precondition(!progress.didSend(queuedStop, for: x3, at: 311),
+            "An older Stop delivery must not change a newer request's deadline")
+        precondition(progress.expire(at: 313) == [x3.id])
         print("Stop progress checks passed: confirmation, unknown state, rejected duplicates, late results, failures, independent cameras, deadlines, and cleanup.")
     }
 }

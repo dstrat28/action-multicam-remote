@@ -124,6 +124,9 @@ private struct SessionReadiness: View {
     }
 
     private var sessionSummary: String {
+        if hasUnconfirmedStop {
+            return "Stop not confirmed"
+        }
         if recordingCameraCount > 0 {
             return recordingCameraCount == 1
                 ? "1 camera recording"
@@ -135,14 +138,24 @@ private struct SessionReadiness: View {
     }
 
     private var recordingCameraCount: Int {
-        store.pairedCameras.filter { $0.recordingState == .recording }.count
+        store.pairedCameras.filter {
+            // Stop may temporarily report unknown while confirmation is pending.
+            store.showsRecordingStatus(for: $0)
+        }.count
     }
 
     private var statusColor: Color {
+        if hasUnconfirmedStop {
+            return .acrWarning
+        }
         if recordingCameraCount > 0 {
             return .acrRecord
         }
         return store.readyConnectedCameras.isEmpty ? .secondary : .acrReady
+    }
+
+    private var hasUnconfirmedStop: Bool {
+        store.pairedCameras.contains { store.isCameraStopUnconfirmed($0) }
     }
 }
 
@@ -285,31 +298,19 @@ private struct MulticamRecordBar: View {
 
 private struct CameraListView: View {
     @Environment(CameraStore.self) private var store
-    @State private var columnCount = 1
     var onManage: () -> Void
     var onShowCameraDetails: (DiscoveredCamera) -> Void
 
     var body: some View {
         let cameras = dashboardCameras
-        let minimumCardWidth: CGFloat = 330
-        let columnSpacing: CGFloat = 10
-
         VStack(alignment: .leading, spacing: 8) {
             if cameras.isEmpty {
                 firstCameraPrompt
             } else {
-                LazyVGrid(
-                    columns: [GridItem(.adaptive(minimum: minimumCardWidth), spacing: columnSpacing, alignment: .top)],
-                    alignment: .leading,
-                    spacing: 7
-                ) {
-                    ForEach(Array(cameras.enumerated()), id: \.element.id) { index, camera in
+                CameraGridLayout {
+                    ForEach(cameras) { camera in
                         CameraRowView(
                             camera: camera,
-                            matchesConnectedPeerHeight: shouldMatchConnectedPeerHeight(
-                                at: index,
-                                in: cameras
-                            ),
                             onShowDetails: {
                                 onShowCameraDetails(camera)
                             }
@@ -319,11 +320,6 @@ private struct CameraListView: View {
             }
         }
         .padding(.top, 8)
-        .onGeometryChange(for: Int.self) { geometry in
-            max(1, Int((geometry.size.width + columnSpacing) / (minimumCardWidth + columnSpacing)))
-        } action: { count in
-            columnCount = count
-        }
     }
 
     private var firstCameraPrompt: some View {
@@ -382,19 +378,54 @@ private struct CameraListView: View {
         camera.defaultSortRank
     }
 
-    private func shouldMatchConnectedPeerHeight(
-        at index: Int,
-        in cameras: [DiscoveredCamera]
-    ) -> Bool {
-        guard columnCount > 1,
-              cameras.indices.contains(index),
-              !store.isCameraReadyConnected(cameras[index]) else {
-            return false
-        }
+}
 
-        let rowStart = (index / columnCount) * columnCount
-        let rowEnd = min(rowStart + columnCount, cameras.count)
-        return cameras[rowStart..<rowEnd].contains { store.isCameraReadyConnected($0) }
+private struct CameraGridLayout: Layout {
+    var minimumCardWidth: CGFloat = 330
+    var horizontalSpacing: CGFloat = 10
+    var verticalSpacing: CGFloat = 7
+
+    private struct Measurements {
+        let columns: Int
+        let cardWidth: CGFloat
+        let rowHeights: [CGFloat]
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let width = proposal.width.flatMap { $0.isFinite ? max(0, $0) : nil } ?? minimumCardWidth
+        let grid = measurements(width: width, subviews: subviews)
+        let height = grid.rowHeights.reduce(0, +)
+            + CGFloat(max(0, grid.rowHeights.count - 1)) * verticalSpacing
+        return CGSize(width: width, height: height)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let grid = measurements(width: bounds.width, subviews: subviews)
+        var y = bounds.minY
+        for (row, height) in grid.rowHeights.enumerated() {
+            for column in 0..<grid.columns {
+                let index = row * grid.columns + column
+                guard index < subviews.count else { break }
+                subviews[index].place(
+                    at: CGPoint(x: bounds.minX + CGFloat(column) * (grid.cardWidth + horizontalSpacing), y: y),
+                    anchor: .topLeading,
+                    proposal: ProposedViewSize(width: grid.cardWidth, height: height)
+                )
+            }
+            y += height + verticalSpacing
+        }
+    }
+
+    private func measurements(width: CGFloat, subviews: Subviews) -> Measurements {
+        let columns = max(1, Int((width + horizontalSpacing) / (minimumCardWidth + horizontalSpacing)))
+        let cardWidth = max(0, (width - CGFloat(columns - 1) * horizontalSpacing) / CGFloat(columns))
+        let rowCount = subviews.isEmpty ? 0 : (subviews.count - 1) / columns + 1
+        var rowHeights = Array(repeating: CGFloat.zero, count: rowCount)
+        for index in subviews.indices {
+            let height = subviews[index].sizeThatFits(ProposedViewSize(width: cardWidth, height: nil)).height
+            rowHeights[index / columns] = max(rowHeights[index / columns], height)
+        }
+        return Measurements(columns: columns, cardWidth: cardWidth, rowHeights: rowHeights)
     }
 }
 

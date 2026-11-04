@@ -46,6 +46,13 @@ connects again. Stop delivery or acknowledgement does not establish stopped
 recording; an R SDK status push supplies that state. Nano's separate DUML
 pairing/control protocol is unchanged.
 
+Nano's DUML Stop acknowledgement also means acceptance, not completed Stop.
+Only camera status confirms that recording stopped. An explicit Stop releases
+the prior Start's stale-stopped guard, so even a short recording can confirm
+promptly. Nano keeps its existing 15-second confirmation window, ending as soon
+as trusted stopped status arrives. If that deadline expires, the app shows
+“Stop not confirmed” and permits another explicit action.
+
 Reference: [Osmo Action Remote's verified Action 5 Pro notes](https://github.com/retweakeverything/osmo-action-remote/blob/cc3395455557677333a6acae5eb4a7e380a01eb6/docs/PROTOCOL.md).
 
 ## Insta360
@@ -58,11 +65,22 @@ notification. A backpressured command therefore retains the correct sequence.
 Counters are separate for every camera and reset when its session is replaced.
 After a shutter press, further shutter commands wait for feedback. A trailing recording timer does not reopen Stop during that window: a second Stop toggle could restart recording. Silence returns the state to unknown rather than claiming the camera stopped.
 
-When the Stop feedback window expires, recent timer evidence still blocks Start,
-photo, and toggle requests until that evidence becomes stale. Only a new timer
-after the window ends can permit another Stop. Trailing timers do not publish a
-Recording state during the Stop window, and expiry runs in common run-loop modes
-so scrolling does not suspend the deadline.
+The Stop feedback cooldown lasts three seconds. Trailing timers do not extend it
+or block a new explicit Record/photo/toggle afterward; no stopped-state confirmation
+is required for that next action. A fresh timer after the cooldown can establish
+Recording again and permit another Stop. No shutter action is repeated automatically.
+Expiry runs in common run-loop modes so scrolling does not suspend the deadline.
+When Bluetooth queues Stop, the UI's cooldown starts when the queued command is
+actually transmitted. It uses the same duration as the transport; duplicate or
+superseded delivery callbacks cannot extend the wait. Recording timers while
+Stop is still queued keep Recording visible and cannot cancel its pending UI.
+
+The app's Stop spinner ends after three seconds for GPS Remote. Other cameras
+wait for stopped status, with a 15-second fallback to an advisory “Stop not
+confirmed”; a late trusted stopped status clears it. GPS Remote returns
+to the green connection display because it cannot explicitly confirm Stop, while
+its underlying recording state remains unknown. Missing confirmation adds no new
+recording lockout.
 
 The sequence behavior comes from [physical X4 remote observations](https://github.com/TheAngryRaven/insta360-ble-gps-spec/blob/7964f1133e5d0f2c7eb73aaaaf5d6ebdd2127199/README.md).
 Applicability to other GPS Remote models is inferred from the shared packet

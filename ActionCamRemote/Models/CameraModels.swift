@@ -1721,17 +1721,41 @@ struct CameraStatusUpdate: Equatable {
 
 /// UI progress for Stop requests, separate from the camera's reported state.
 struct CameraStopProgress {
+    static func confirmationTimeout(for camera: DiscoveredCamera) -> TimeInterval {
+        // Only GPS Remote lacks Stop confirmation. Other cameras can still be
+        // finalizing after acceptance and must get time to report Stopped.
+        camera.usesInsta360GPSRemote ? Insta360RemoteProtocol.stopFeedbackCooldown : 15
+    }
+
     private struct Entry {
         var resultID: UUID?
         var expiresAt: TimeInterval
+        var hasSentResult = false
     }
     private var entries: [UUID: Entry] = [:]
+    private var unconfirmedCameraIDs: Set<UUID> = []
     var isEmpty: Bool { entries.isEmpty }
 
     func contains(_ cameraID: UUID) -> Bool { entries[cameraID] != nil }
+    func isUnconfirmed(_ cameraID: UUID) -> Bool { unconfirmedCameraIDs.contains(cameraID) }
+
+    func isUnconfirmed(for camera: DiscoveredCamera) -> Bool {
+        !camera.usesInsta360GPSRemote && isUnconfirmed(camera.id)
+    }
+
+    func showsRecordingStatus(for camera: DiscoveredCamera) -> Bool {
+        // GPS Remote has no explicit Stop confirmation. Show connection status
+        // after its shutter request without synthesizing a stopped camera state.
+        if camera.usesInsta360GPSRemote,
+           entries[camera.id]?.hasSentResult == true || isUnconfirmed(camera.id) {
+            return false
+        }
+        return camera.recordingState == .recording || contains(camera.id)
+    }
 
     mutating func begin(_ cameraID: UUID, at now: TimeInterval, timeout: TimeInterval) {
         guard entries[cameraID] == nil else { return }
+        unconfirmedCameraIDs.remove(cameraID)
         entries[cameraID] = Entry(expiresAt: now + timeout)
     }
 
@@ -1743,11 +1767,47 @@ struct CameraStopProgress {
     }
 
     @discardableResult
-    mutating func finish(_ cameraID: UUID, matching resultID: UUID? = nil) -> Bool {
-        guard let entry = entries[cameraID] else { return false }
-        if let resultID, entry.resultID != resultID { return false }
-        entries.removeValue(forKey: cameraID)
+    mutating func didSend(_ result: CameraCommandResult, for camera: DiscoveredCamera, at now: TimeInterval) -> Bool {
+        guard camera.usesInsta360GPSRemote, result.command == .stopRecording, result.status == .sent,
+              let entry = entries[result.cameraID], entry.resultID == result.id, !entry.hasSentResult else { return false }
+        // Bluetooth backpressure can queue Stop. Its shutter cooldown starts
+        // on actual transmission, and duplicate completions cannot extend it.
+        entries[result.cameraID]?.expiresAt = now + Self.confirmationTimeout(for: camera)
+        entries[result.cameraID]?.hasSentResult = true
         return true
+    }
+
+    @discardableResult
+    mutating func finish(_ cameraID: UUID, matching resultID: UUID? = nil) -> Bool {
+        if let resultID, entries[cameraID]?.resultID != resultID { return false }
+        let removedPending = entries.removeValue(forKey: cameraID) != nil
+        let removedUnconfirmed = unconfirmedCameraIDs.remove(cameraID) != nil
+        return removedPending || removedUnconfirmed
+    }
+
+    @discardableResult
+    mutating func markUnconfirmed(_ cameraID: UUID) -> Bool {
+        guard entries.removeValue(forKey: cameraID) != nil else { return false }
+        unconfirmedCameraIDs.insert(cameraID)
+        return true
+    }
+
+    @discardableResult
+    mutating func observe(_ camera: DiscoveredCamera, state: CameraRecordingState, canClearActiveRecording: Bool) -> Bool {
+        if camera.usesInsta360GPSRemote {
+            if state == .recording {
+                // Timers still arrive normally while Stop is queued. They
+                // cannot cancel a request that has not reached the camera.
+                guard entries[camera.id]?.hasSentResult != false else { return false }
+                // The transport suppresses trailing timers during its Stop
+                // cooldown, so a new Recording update is authoritative.
+                return finish(camera.id)
+            }
+            if state == .unknown {
+                return markUnconfirmed(camera.id)
+            }
+        }
+        return observe(camera.id, state: state, canClearActiveRecording: canClearActiveRecording)
     }
 
     @discardableResult
@@ -1758,7 +1818,7 @@ struct CameraStopProgress {
 
     mutating func expire(at now: TimeInterval) -> [UUID] {
         let expired = entries.filter { now >= $0.value.expiresAt }.map(\.key)
-        for id in expired { entries.removeValue(forKey: id) }
+        for id in expired { markUnconfirmed(id) }
         return expired
     }
 }

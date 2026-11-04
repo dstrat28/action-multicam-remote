@@ -380,6 +380,14 @@ final class CameraStore {
         stopProgress.contains(camera.id)
     }
 
+    func isCameraStopUnconfirmed(_ camera: DiscoveredCamera) -> Bool {
+        stopProgress.isUnconfirmed(for: camera)
+    }
+
+    func showsRecordingStatus(for camera: DiscoveredCamera) -> Bool {
+        stopProgress.showsRecordingStatus(for: camera)
+    }
+
     var canStopMulticamRecording: Bool {
         selectedConnectedCameras.contains { camera in
             camera.supportsBatchRecord
@@ -1266,12 +1274,16 @@ private extension CameraStore {
                 commandResults.insert(result, at: 0)
             }
             recordCommandHistory(result)
+            let camera = cameras.first(where: { $0.id == result.cameraID })
+            if let camera {
+                stopProgress.didSend(result, for: camera, at: ProcessInfo.processInfo.systemUptime)
+            }
             if result.command == .stopRecording, result.status != .sent, result.status != .queued {
                 finishStopping(for: result.cameraID, matching: result.id)
             }
             // A discarded older toggle must not reset a newer user action.
             if commandResults.first(where: { $0.cameraID == result.cameraID })?.id == result.id,
-               let camera = cameras.first(where: { $0.id == result.cameraID }) {
+               let camera {
                 handleCommandResult(result, for: camera)
             }
         case let .log(message):
@@ -1756,7 +1768,7 @@ private extension CameraStore {
 
     func beginStopping(for camera: DiscoveredCamera) {
         stopProgress.begin(camera.id, at: ProcessInfo.processInfo.systemUptime,
-            timeout: camera.behavior.kind == .insta360Direct ? 30 : 15)
+            timeout: CameraStopProgress.confirmationTimeout(for: camera))
         guard stopProgressTimer == nil else { return }
         let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.expireStopProgress() }
@@ -1769,6 +1781,7 @@ private extension CameraStore {
         guard result.command == .stopRecording else { return }
         if result.status == .sent || result.status == .queued { beginStopping(for: camera) }
         stopProgress.attach(result)
+        stopProgress.didSend(result, for: camera, at: ProcessInfo.processInfo.systemUptime)
     }
 
     func finishStopping(for id: UUID, matching resultID: UUID? = nil) {
@@ -1784,7 +1797,7 @@ private extension CameraStore {
 
     func expireStopProgress() {
         for id in stopProgress.expire(at: ProcessInfo.processInfo.systemUptime) {
-            if let camera = cameras.first(where: { $0.id == id }) {
+            if let camera = cameras.first(where: { $0.id == id }), !camera.usesInsta360GPSRemote {
                 setCameraDiagnostic("Stop could not be confirmed. Check the camera before recording again.", for: camera)
             }
         }
@@ -3001,6 +3014,13 @@ private extension CameraStore {
         if wasSent, result.command == .startRecording || result.command == .capturePhoto || result.command == .toggleRecording {
             finishStopping(for: camera.id)
         }
+        if result.status == .sent, result.command == .stopRecording,
+           camera.usesInsta360GPSRemote,
+           let index = cameras.firstIndex(where: { $0.id == camera.id }) {
+            // GPS Remote has no Stopped event. Offer Record after the short
+            // shutter cooldown, without claiming the camera confirmed Stop.
+            cameras[index].recordingState = .unknown
+        }
 
         if !wasSent, camera.brand == .insta360 {
             // GPS Remote toggles and direct capture commands must not be retried
@@ -3270,11 +3290,9 @@ private extension CameraStore {
                 return
             } else {
                 cameras[index].recordingState = recordingState
-                if stopProgress.observe(id, state: recordingState, canClearActiveRecording: update.canClearActiveRecording) {
+                if stopProgress.observe(cameras[index], state: recordingState,
+                    canClearActiveRecording: update.canClearActiveRecording) {
                     stopProgressTimerIfIdle()
-                } else if recordingState == .unknown, cameras[index].usesInsta360GPSRemote {
-                    // GPS Remote reports silence as unknown, never a confirmed Stop.
-                    finishStopping(for: id)
                 }
                 recordingDecision = "applied \(recordingState.rawValue)"
                 if recordingState == .recording,
