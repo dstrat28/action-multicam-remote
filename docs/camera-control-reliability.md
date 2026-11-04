@@ -33,12 +33,16 @@ not when first queued. A response must match both the sequence and command type.
 Expired writes are discarded, late replies cannot revive expired intents, and
 Stop cancels an unsent Start/photo request. A late Start acknowledgement cannot restore Starting after a newer Stop. Failures reach saved command history.
 
-If the latest explicit Stop times out, is rejected, or loses its connection,
-the store retains that Stop, closes the failed link, and issues a new Stop after
-the camera's protocol is ready again. A newer capture request (including Start
-still preparing Video mode) supersedes that recovery. Disconnect pauses it.
-This recovery applies only to DJI's explicit Stop; uncertain Start, photo,
-mode-change, and Insta360 toggle commands are never replayed automatically.
+If the latest explicit GoPro or DJI Stop times out, is rejected, or loses its
+connection before stopped status arrives, the store retains that Stop and issues
+a new Stop after the camera's protocol is ready again. This includes loss after
+command acknowledgement and loss after the advisory confirmation deadline, as
+well as Bluetooth power-off and protocol-staleness disconnects. Reconnect Stop
+gets a fresh confirmation window and repeated readiness does not dispatch it
+twice. Trusted stopped status ends confirmation. A newer capture request
+(including Start still preparing Video mode), Disconnect, or Remove supersedes
+recovery. Uncertain Start, photo, mode-change, and Insta360 capture commands are
+never automatically repeated by this recovery path.
 
 First-time pairing requests camera confirmation and allows 90 seconds for it.
 An explicit camera rejection pauses automatic pairing attempts until a user

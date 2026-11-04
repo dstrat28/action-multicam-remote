@@ -2557,6 +2557,8 @@ private extension CameraStore {
         guard CameraStopReplayPolicy.consumeIfReady(camera: latest, detail: detail, pending: &pendingStopCameraIDs) else { return }
 
         appendLog("\(latest.name): sending queued stop after reconnect.")
+        finishStopping(for: id)
+        protectStopTransition(for: latest)
         send(.stopRecording, to: [latest])
     }
 
@@ -2961,7 +2963,7 @@ private extension CameraStore {
                 } else if command == .capturePhoto {
                     cancelPhotoCaptureReset(for: camera.id)
                     updateCameraStatus(camera.id, update: CameraStatusUpdate(recordingState: .stopped))
-                } else if camera.brand == .dji, command == .stopRecording {
+                } else if camera.brand == .gopro || camera.brand == .dji, command == .stopRecording {
                     queueStopRecording(for: camera, reason: "No active BLE client.")
                     scheduleReconnect(for: camera.id, attemptsRemaining: pendingStopReconnectAttempts(for: camera))
                 }
@@ -3069,15 +3071,13 @@ private extension CameraStore {
             pendingStopCameraIDs.remove(camera.id)
         }
 
-        guard camera.brand == .dji else { return }
-
-        guard wasSent else {
-            if result.command == .stopRecording {
-                queueStopRecording(for: camera, reason: result.message)
-                scheduleReconnect(for: camera.id, attemptsRemaining: pendingStopReconnectAttempts(for: camera))
-            }
+        if !wasSent, result.command == .stopRecording, camera.brand == .gopro || camera.brand == .dji {
+            queueStopRecording(for: camera, reason: result.message)
+            scheduleReconnect(for: camera.id, attemptsRemaining: pendingStopReconnectAttempts(for: camera))
             return
         }
+
+        guard camera.brand == .dji, wasSent else { return }
 
         switch result.command {
         case .startRecording:
@@ -3387,6 +3387,18 @@ private extension CameraStore {
             break
         }
         guard let index = cameras.firstIndex(where: { $0.id == id }) else { return }
+        switch state {
+        case .disconnected, .failed, .reconnecting:
+            if CameraStopReplayPolicy.shouldRetainAfterConnectionLoss(
+                camera: cameras[index], progress: stopProgress,
+                hasPendingExplicitStart: pendingStartCameraIDs.contains(id),
+                userDisconnected: userDisconnectedCameraIDs.contains(id)
+            ) {
+                queueStopRecording(for: cameras[index], reason: "Stop has not been confirmed.")
+            }
+        default:
+            break
+        }
         if cameras[index].brand == .gopro {
             switch state {
             case .connected:
@@ -3549,6 +3561,11 @@ private extension CameraStore {
                     for: id,
                     attemptsRemaining: pendingStartReconnectAttempts(for: cameras[index])
                 )
+            } else if pendingStopCameraIDs.contains(id) {
+                cameras[index].recordingState = .unknown
+                lastConnectionAttemptByID[id] = nil
+                ensureScanning()
+                scheduleReconnect(for: id, attemptsRemaining: pendingStopReconnectAttempts(for: cameras[index]))
             } else if cameras[index].behavior.kind == .djiOsmoNano,
                       explicitNanoWakeCameraIDs.contains(id) {
                 cameras[index].recordingState = .unknown
@@ -3632,6 +3649,11 @@ private extension CameraStore {
                     for: id,
                     attemptsRemaining: pendingStartReconnectAttempts(for: cameras[index])
                 )
+            } else if pendingStopCameraIDs.contains(id) {
+                cameras[index].recordingState = .unknown
+                lastConnectionAttemptByID[id] = nil
+                ensureScanning()
+                scheduleReconnect(for: id, attemptsRemaining: pendingStopReconnectAttempts(for: cameras[index]))
             } else if cameras[index].brand == .dji,
                       cameras[index].behavior.preservesActiveDJIRecordingAcrossReconnect,
                       previousRecordingState == .recording || previousRecordingState == .starting {

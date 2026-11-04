@@ -1209,7 +1209,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     }
 
     var usesInsta360GPSRemote: Bool {
-        brand == .insta360 && behavior.kind != .insta360Direct
+        brand == .insta360 && isSupportedByApp && behavior.kind != .insta360Direct
     }
 
     func resolvedInsta360SDKSelection(preferred: Bool) -> Bool {
@@ -1824,6 +1824,17 @@ struct CameraStopProgress {
 }
 
 enum CameraStopReplayPolicy {
+    static func shouldRetainAfterConnectionLoss(
+        camera: DiscoveredCamera, progress: CameraStopProgress,
+        hasPendingExplicitStart: Bool, userDisconnected: Bool
+    ) -> Bool {
+        // ACK/command acceptance and a UI deadline cannot establish Stopped.
+        // Only GoPro/DJI explicit Stop may be recovered automatically.
+        (camera.brand == .gopro || camera.brand == .dji)
+            && !hasPendingExplicitStart && !userDisconnected
+            && (progress.contains(camera.id) || progress.isUnconfirmed(camera.id))
+    }
+
     static func consumeIfReady(camera: DiscoveredCamera, detail: String?, pending: inout Set<UUID>) -> Bool {
         guard camera.isConnected, pending.contains(camera.id), let detail else { return false }
         let ready: Bool
@@ -1900,9 +1911,9 @@ enum CameraCommandFailurePolicy {
               CameraRecordingStartPolicy.isLatestCaptureResult(result, among: results) else { return .ignore }
         // Start can be waiting for mode selection before it has a command result.
         guard result.command != .stopRecording || !hasPendingExplicitStart else { return .ignore }
-        // DJI Stop is explicit and idempotent. Never replay Start, photos, or
+        // GoPro/DJI Stop is explicit and idempotent. Never replay Start, photos, or
         // Insta360 shutter toggles after an uncertain outcome.
-        return brand == .dji && result.command == .stopRecording && result.status == .failed
+        return (brand == .gopro || brand == .dji) && result.command == .stopRecording && result.status == .failed
             ? .reconnectToStop : .report
     }
 }

@@ -168,6 +168,9 @@ The complete official iOS list is eligible: X6, X5, X4 Air, X4, X3, X2, ONE X,
 ONE R, ONE RS, and ONE RS 1-Inch. Ace and GO models retain GPS Remote control.
 Eligibility is not physical-camera validation. Discovery also recognizes the
 ONE X2 alias and ONE RS 1-Inch 360 Edition name.
+With SDK control off, SDK-only models remain unavailable and never prepare a
+GPS Remote restoration request. X5/X6 retain their existing direct control paths;
+the setting does not change their legacy support.
 
 - Each camera has its own Bluetooth manager, device, command interface,
   connection task, delegate generation, and command confirmation state.

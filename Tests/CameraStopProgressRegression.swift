@@ -210,6 +210,57 @@ enum CameraStopProgressRegression {
             "An older Stop delivery must not change a newer request's deadline")
         precondition(progress.expire(at: 313).isEmpty)
         precondition(progress.expire(at: 315) == [x3.id])
-        print("Stop progress checks passed: confirmation, unknown state, rejected duplicates, late results, failures, independent cameras, deadlines, and cleanup.")
+        checkStopRecoveryAfterConnectionLoss()
+        print("Stop progress checks passed: confirmation, unknown state, rejected duplicates, late results, failures, connection-loss recovery, independent cameras, deadlines, and cleanup.")
+    }
+
+    private static func checkStopRecoveryAfterConnectionLoss() {
+        for model in [CameraModel.goproHero13Black, .djiOsmoAction5Pro, .djiOsmoNano] {
+            var camera = DiscoveredCamera(id: UUID(), name: model.rawValue, brand: model.brand, model: model,
+                rssi: -40, capabilities: [.record, .status], connectionState: .connected,
+                recordingState: .unknown, isPaired: true, isSelected: true, lastSeen: Date())
+            for status in [CameraCommandStatus.queued, .sent] {
+                var progress = CameraStopProgress()
+                progress.begin(camera.id, at: 0, timeout: 15)
+                let stop = CameraCommandResult(cameraID: camera.id, cameraName: camera.name, command: .stopRecording,
+                    status: status, message: "Requested", timestamp: Date())
+                progress.attach(stop)
+                func needsRecovery(pendingStart: Bool = false, disconnected: Bool = false) -> Bool {
+                    CameraStopReplayPolicy.shouldRetainAfterConnectionLoss(camera: camera, progress: progress,
+                        hasPendingExplicitStart: pendingStart, userDisconnected: disconnected)
+                }
+                precondition(needsRecovery(), "Queued and acknowledged Stop both require observed Stopped")
+                precondition(!needsRecovery(pendingStart: true), "A new explicit Start supersedes Stop")
+                precondition(!needsRecovery(disconnected: true), "Manual Disconnect must never trigger recovery")
+                precondition(!progress.observe(camera, state: .stopped, canClearActiveRecording: false))
+                precondition(needsRecovery(), "An advisory Stopped report cannot abandon Stop")
+                precondition(progress.expire(at: 15) == [camera.id])
+                precondition(needsRecovery(), "The UI deadline must not discard recovery intent")
+
+                var pending: Set<UUID> = []
+                if needsRecovery() { pending.insert(camera.id) }
+                progress.finish(camera.id) // The store clears connection-specific UI progress after retaining intent.
+                precondition(!needsRecovery())
+                camera.connectionState = .disconnected
+                let ready = camera.brand == .gopro ? "Open GoPro protocol ready" : "DJI Nano protocol ready"
+                precondition(!CameraStopReplayPolicy.consumeIfReady(camera: camera, detail: ready, pending: &pending))
+                camera.connectionState = .connected
+                precondition(CameraStopReplayPolicy.consumeIfReady(camera: camera, detail: ready, pending: &pending))
+                precondition(!CameraStopReplayPolicy.consumeIfReady(camera: camera, detail: ready, pending: &pending))
+                progress.begin(camera.id, at: 20, timeout: 15)
+                precondition(progress.expire(at: 34.9).isEmpty, "Reconnect Stop gets a fresh confirmation deadline")
+                precondition(progress.observe(camera, state: .stopped, canClearActiveRecording: true))
+                precondition(!needsRecovery(), "Observed Stopped must end recovery")
+            }
+        }
+        for usesSDK in [false, true] {
+            let camera = DiscoveredCamera(id: UUID(), name: "X3", brand: .insta360, model: .insta360X3,
+                rssi: -40, capabilities: [.record, .status], connectionState: .connected,
+                recordingState: .unknown, isPaired: true, isSelected: true, lastSeen: Date(), insta360UsesSDK: usesSDK)
+            var progress = CameraStopProgress()
+            progress.begin(camera.id, at: 0, timeout: 15)
+            precondition(!CameraStopReplayPolicy.shouldRetainAfterConnectionLoss(camera: camera, progress: progress,
+                hasPendingExplicitStart: false, userDisconnected: false), "Uncertain Insta360 capture cannot be replayed")
+        }
     }
 }

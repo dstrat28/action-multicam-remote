@@ -106,8 +106,16 @@ enum DJICommandTrackerRegression {
         precondition(action(failure, results: [otherCamera, failure]) == .reconnectToStop)
         precondition(action(failure, results: []) == .ignore)
 
-        for brand in [CameraBrand.gopro, .insta360, .unknown] {
-            precondition(action(failure, brand: brand) == .report, "Only DJI explicit Stop is eligible for recovery")
+        for brand in [CameraBrand.gopro, .dji] {
+            precondition(action(failure, brand: brand) == .reconnectToStop,
+                "GoPro and DJI explicit Stop must survive transport failure")
+            let oldStart = result(.startRecording, status: .failed)
+            precondition(action(oldStart, brand: brand, results: [failure, oldStart]) == .ignore,
+                "An older Start failure must not overwrite a newer Stop")
+        }
+        for brand in [CameraBrand.insta360, .unknown] {
+            precondition(action(failure, brand: brand) == .report,
+                "Uncertain Insta360 capture must not be replayed")
         }
         for command in [CameraCommand.startRecording, .capturePhoto, .toggleRecording, .setMode(.video)] {
             precondition(action(result(command, status: .failed)) != .reconnectToStop,

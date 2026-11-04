@@ -45,6 +45,8 @@ enum Insta360SDKSessionRegression {
         precondition(first.send(.startRecording, at: 10).status == .skipped)
         let stop = first.send(.stopRecording, at: 10)
         precondition(stop.status == .queued) // Explicit Stop remains safe with unknown status.
+        precondition(first.send(.stopRecording, at: 10).status == .skipped)
+        precondition(first.pendingID == stop.id, "A duplicate Stop must preserve the first request's confirmation")
         first.accepted(stop.id, error: nil, at: 10)
         first.observe(state: .unknown, mode: .video, at: 11, queryCommandID: stop.id, queryToken: first.observationToken)
         precondition(first.pendingID == stop.id)
@@ -121,7 +123,11 @@ enum Insta360SDKSessionRegression {
             var camera = DiscoveredCamera(id: UUID(), name: model.rawValue + " ABC123", brand: .insta360,
                 model: model, rssi: -50, capabilities: [.record, .mode, .status], connectionState: .connected,
                 recordingState: .stopped, isPaired: true, isSelected: true, lastSeen: Date())
-            if model.requiresInsta360SDK { precondition(!camera.isSupportedByApp) }
+            if model.requiresInsta360SDK {
+                precondition(!camera.isSupportedByApp)
+                precondition(!camera.usesInsta360GPSRemote,
+                    "SDK-only models must never prepare GPS Remote restoration when the setting is off")
+            }
             camera.insta360UsesSDK = true
             precondition(camera.resolvedInsta360SDKSelection(preferred: false))
             camera.connectionState = .connecting
