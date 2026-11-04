@@ -15,24 +15,99 @@ public struct CBCharacteristicProperties: OptionSet {
     public static let notify = Self(rawValue: 2)
     public static let indicate = Self(rawValue: 4)
     public static let writeWithoutResponse = Self(rawValue: 8)
+    public static let read = Self(rawValue: 16)
 }
 
 public enum CBCharacteristicWriteType { case withResponse, withoutResponse }
 public enum CBPeripheralState { case disconnected, connecting, connected, disconnecting }
 public protocol CBPeripheralDelegate: AnyObject {}
 
-public final class CBCharacteristic {
+public class CBCharacteristic {
     public let uuid: CBUUID
     public let properties: CBCharacteristicProperties
     public var isNotifying = false
     public var value: Data?
+    public weak var service: CBService?
     public init(uuid: CBUUID, properties: CBCharacteristicProperties) { self.uuid = uuid; self.properties = properties }
 }
 
-public final class CBService {
+public class CBService {
     public let uuid: CBUUID
-    public var characteristics: [CBCharacteristic]?
-    public init(uuid: CBUUID, characteristics: [CBCharacteristic]) { self.uuid = uuid; self.characteristics = characteristics }
+    public var characteristics: [CBCharacteristic]? { didSet { characteristics?.forEach { $0.service = self } } }
+    public init(uuid: CBUUID, characteristics: [CBCharacteristic]) {
+        self.uuid = uuid; self.characteristics = characteristics
+        characteristics.forEach { $0.service = self }
+    }
+}
+
+public enum CBManagerState { case unknown, resetting, unsupported, unauthorized, poweredOff, poweredOn }
+public struct CBAttributePermissions: OptionSet {
+    public let rawValue: Int
+    public init(rawValue: Int) { self.rawValue = rawValue }
+    public static let readable = Self(rawValue: 1)
+    public static let writeable = Self(rawValue: 2)
+}
+public final class CBCentral {
+    public let identifier: UUID
+    public var maximumUpdateValueLength = 20
+    public init(identifier: UUID = UUID()) { self.identifier = identifier }
+}
+public final class CBMutableCharacteristic: CBCharacteristic {
+    public var subscribedCentrals: [CBCentral]?
+    public let permissions: CBAttributePermissions
+    public init(type: CBUUID, properties: CBCharacteristicProperties, value: Data?, permissions: CBAttributePermissions) {
+        self.permissions = permissions
+        super.init(uuid: type, properties: properties)
+        self.value = value
+    }
+}
+public final class CBMutableService: CBService {
+    public let isPrimary: Bool
+    public init(type: CBUUID, primary: Bool) {
+        isPrimary = primary
+        super.init(uuid: type, characteristics: [])
+    }
+}
+public final class CBATTRequest {
+    public let central: CBCentral
+    public let characteristic: CBCharacteristic
+    public var offset: Int
+    public var value: Data?
+    public init(central: CBCentral, characteristic: CBCharacteristic, offset: Int = 0, value: Data?) {
+        self.central = central; self.characteristic = characteristic; self.offset = offset; self.value = value
+    }
+}
+public enum CBATTError {
+    public enum Code { case success, requestNotSupported, invalidOffset }
+}
+public protocol CBPeripheralManagerDelegate: AnyObject {}
+public let CBPeripheralManagerOptionRestoreIdentifierKey = "restoreIdentifier"
+public let CBPeripheralManagerRestoredStateServicesKey = "restoredServices"
+public let CBPeripheralManagerRestoredStateAdvertisementDataKey = "restoredAdvertisement"
+public let CBAdvertisementDataManufacturerDataKey = "manufacturerData"
+public let CBAdvertisementDataLocalNameKey = "localName"
+public let CBAdvertisementDataServiceUUIDsKey = "serviceUUIDs"
+public final class CBPeripheralManager {
+    public struct Response { public let request: CBATTRequest; public let result: CBATTError.Code }
+    public struct Update { public let data: Data; public let centrals: [CBCentral]? }
+    public static var instances: [CBPeripheralManager] = []
+    public var state = CBManagerState.poweredOn
+    public var isAdvertising = false
+    public var acceptsUpdates = true
+    public private(set) var services: [CBMutableService] = []
+    public private(set) var responses: [Response] = []
+    public private(set) var updates: [Update] = []
+    public private(set) var advertisements: [[String: Any]] = []
+    public init(delegate: CBPeripheralManagerDelegate?, queue: DispatchQueue?, options: [String: Any]?) { Self.instances.append(self) }
+    public func add(_ service: CBMutableService) { services.append(service) }
+    public func removeAllServices() { services.removeAll() }
+    public func startAdvertising(_ data: [String: Any]?) { isAdvertising = true; advertisements.append(data ?? [:]) }
+    public func stopAdvertising() { isAdvertising = false }
+    public func respond(to request: CBATTRequest, withResult result: CBATTError.Code) { responses.append(Response(request: request, result: result)) }
+    public func updateValue(_ data: Data, for characteristic: CBMutableCharacteristic, onSubscribedCentrals centrals: [CBCentral]?) -> Bool {
+        guard acceptsUpdates else { return false }
+        updates.append(Update(data: data, centrals: centrals)); return true
+    }
 }
 
 public final class CBPeripheral {

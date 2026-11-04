@@ -1342,6 +1342,14 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
         isPaired && supportsBatchRecord && recordingState == .recording
     }
 
+    var isTargetForStopAll: Bool {
+        guard supportsBatchRecord else { return false }
+        if recordingState == .recording || recordingState == .starting { return true }
+        // SDK Stop is explicit. A stale status must not hide a possibly active
+        // recording from Siri. GPS Remote Stop is a toggle and must stay gated.
+        return insta360UsesSDK == true && isPaired && isConnected && recordingState == .unknown
+    }
+
     var needsKnownStoppedStateForMulticam: Bool {
         behavior.kind == .insta360Direct
     }
@@ -1756,6 +1764,19 @@ struct CameraStopProgress {
 }
 
 enum CameraRecordingStartPolicy {
+    enum SDKModePreparation { case ready, waiting, failed }
+
+    static func sdkModePreparation(
+        result: CameraCommandResult?, currentMode: CaptureMode?, now: Date
+    ) -> SDKModePreparation {
+        guard let result, result.command == .setMode(.video),
+              result.status == .queued || result.status == .sent else { return .failed }
+        if result.status == .sent, currentMode == .video { return .ready }
+        // The SDK has a 25-second confirmation deadline. Give its completion
+        // and status callbacks time to arrive; never resend a mode/capture call.
+        return now.timeIntervalSince(result.timestamp) < 30 ? .waiting : .failed
+    }
+
     static func isLatestCaptureResult(_ result: CameraCommandResult, among results: [CameraCommandResult]) -> Bool {
         results.first {
             guard $0.cameraID == result.cameraID else { return false }

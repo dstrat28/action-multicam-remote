@@ -132,6 +132,53 @@ enum Insta360SDKAdapterRegression {
         precondition(mode.status == .queued)
         waitUntil { partialEvents.results.contains { $0.id == mode.id && $0.status == .sent } }
         partial.disconnectManagedConnection()
+
+        // X3 takes the per-device SDK path, including explicit start/stop. This
+        // exercises our adapter, not the vendor Bluetooth stack or X3 firmware.
+        let (x3, x3Events) = make("X3 ABC123", model: .insta360X3)
+        x3.didConnect()
+        let x3Manager = INSBluetoothManager.instances.last!
+        let x3Commands = x3Manager.commands
+        waitUntil { x3Events.connections.last == .connected }
+        precondition(x3Manager.connectedID == x3.cameraID)
+        let x3Start = x3.send(.startRecording)
+        precondition(x3Start.status == .queued && x3Commands.starts == 1)
+        x3Commands.status.state = .normalCapture
+        waitUntil { x3Events.results.contains { $0.id == x3Start.id && $0.status == .sent } }
+        x3Commands.holdOptions = true
+        waitUntil { !x3Commands.heldOptions.isEmpty }
+        spin(5.6)
+        precondition(x3Events.updates.last?.recordingState == .unknown)
+        let x3Stop = x3.send(.stopRecording)
+        precondition(x3Stop.status == .queued && x3Commands.stops == 1,
+                     "Unknown capture state must still reach explicit SDK Stop")
+        x3Commands.status.state = .notCapture
+        x3Commands.holdOptions = false
+        x3Commands.releaseOptions()
+        waitUntil { x3Events.results.contains { $0.id == x3Stop.id && $0.status == .sent } }
+
+        x3Commands.options.photoSubMode = 0
+        x3Commands.options.videoSubMode = 100
+        waitUntil { x3Events.updates.last?.currentMode == .photo }
+        x3Commands.appliesModeChanges = false
+        let x3Mode = x3.send(.setMode(.video))
+        precondition(x3Mode.status == .queued && x3Commands.modeChanges == 1)
+        spin(1.8)
+        precondition(!x3Events.results.contains { $0.id == x3Mode.id }, "Mode acceptance alone cannot confirm Video")
+        precondition(CameraRecordingStartPolicy.sdkModePreparation(result: x3Mode,
+            currentMode: x3Events.updates.last?.currentMode, now: Date()) == .waiting)
+        precondition(x3Commands.starts == 1 && x3Commands.modeChanges == 1)
+        x3Commands.options.photoSubMode = 100
+        x3Commands.options.videoSubMode = 0
+        waitUntil { x3Events.results.contains { $0.id == x3Mode.id && $0.status == .sent } }
+        let confirmedMode = x3Events.results.first { $0.id == x3Mode.id }!
+        precondition(CameraRecordingStartPolicy.sdkModePreparation(result: confirmedMode,
+            currentMode: x3Events.updates.last?.currentMode, now: Date()) == .ready)
+        let x3SecondStart = x3.send(.startRecording)
+        precondition(x3SecondStart.status == .queued && x3Commands.starts == 2 && x3Commands.modeChanges == 1)
+        x3Commands.status.state = .normalCapture
+        waitUntil { x3Events.results.contains { $0.id == x3SecondStart.id && $0.status == .sent } }
+        x3.disconnectManagedConnection()
         print("Insta360 SDK adapter regressions passed: initialization, per-camera routing, stale replies/delegates, capture supersession, heartbeat and cleanup (SDK double).")
     }
 }

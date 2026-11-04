@@ -23,6 +23,21 @@ final class Insta360RemoteService: NSObject {
     private static let writeCharacteristicUUID = CBUUID(string: "CE81")
     private static let notifyCharacteristicUUID = CBUUID(string: "CE82")
     private static let infoCharacteristicUUID = CBUUID(string: "CE83")
+    // The X3/RS reference remote exposes this companion GATT service as well
+    // as CE80. Add it only for X3 requests; other models keep their profile.
+    // Values are little-endian, matching pchwalek/insta360_ble_esp32.
+    private static let companionServiceUUID = CBUUID(string: "0000D0FF-3C17-D293-8E48-14FE2E4DA212")
+    private static let companionReadValues: [CBUUID: Data] = [
+        CBUUID(string: "FFD2"): Data(),
+        CBUUID(string: "FFD3"): Data([0x01, 0x90, 0x1E, 0x30]),
+        CBUUID(string: "FFD4"): Data([0x01, 0x20, 0x00, 0x18]),
+        CBUUID(string: "FFD5"): Data(),
+        CBUUID(string: "FFF1"): Data(),
+        CBUUID(string: "FFE0"): Data()
+    ]
+    private static let companionWriteUUIDs: Set<CBUUID> = ["FFD1", "FFD8", "FFF2"].reduce(into: []) {
+        $0.insert(CBUUID(string: $1))
+    }
     private static let restoreIdentifier = "com.ds.ActionCamRemote.insta360-gps-remote"
 
     private lazy var peripheralManager = CBPeripheralManager(
@@ -53,6 +68,8 @@ final class Insta360RemoteService: NSObject {
     private var pendingWake: WakeRequest?
     private var activeWake: WakeRequest?
     private var isServicePublished = false
+    private var isCompanionServicePublished = false
+    private var publishingServiceUUIDs: Set<CBUUID> = []
     private var needsServiceRepublish = false
     private var shouldReplaceRestoredWakeAdvertisement = false
 
@@ -288,6 +305,8 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
                 writeCharacteristic = nil
                 notifyCharacteristic = nil
                 infoCharacteristic = nil
+                isCompanionServicePublished = false
+                publishingServiceUUIDs.removeAll()
                 needsServiceRepublish = false
             }
             if shouldReplaceRestoredWakeAdvertisement {
@@ -334,6 +353,15 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
         }
         isServicePublished = true
         needsServiceRepublish = false
+        isCompanionServicePublished = restoredServices.contains { service in
+            guard service.uuid == Self.companionServiceUUID else { return false }
+            let characteristics = service.characteristics ?? []
+            return Self.companionReadValues.keys.allSatisfy { uuid in
+                characteristics.contains { $0.uuid == uuid && $0.properties.contains(.read) }
+            } && Self.companionWriteUUIDs.allSatisfy { uuid in
+                characteristics.contains { $0.uuid == uuid && $0.properties.contains(.write) }
+            }
+        }
 
         let restoredCentrals = notifyCharacteristic.subscribedCentrals ?? []
         let restoredAdvertisement = dict[CBPeripheralManagerRestoredStateAdvertisementDataKey] as? [String: Any]
@@ -358,13 +386,15 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, didAdd service: CBService, error: Error?) {
-        guard service.uuid == Self.serviceUUID else { return }
+        guard service.uuid == Self.serviceUUID || service.uuid == Self.companionServiceUUID else { return }
+        publishingServiceUUIDs.remove(service.uuid)
         if let error {
-            isServicePublished = false
-            onEvent?(.log("Insta360 remote service could not be published: \(error.localizedDescription)"))
+            onEvent?(.log("Insta360 remote service \(service.uuid.uuidString) could not be published: \(error.localizedDescription)"))
             return
         }
-        onEvent?(.log("Insta360 GPS Remote service published."))
+        if service.uuid == Self.serviceUUID { isServicePublished = true }
+        if service.uuid == Self.companionServiceUUID { isCompanionServicePublished = true }
+        onEvent?(.log("Insta360 GPS Remote service \(service.uuid.uuidString) published."))
         if pendingWake != nil {
             beginPendingWakeIfPossible()
         } else {
@@ -446,36 +476,67 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
 
     func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveRead request: CBATTRequest) {
         let peer = peerLabel(request.central.identifier)
-        guard request.characteristic.uuid == Self.infoCharacteristicUUID else {
+        let value: Data?
+        if request.characteristic.uuid == Self.infoCharacteristicUUID {
+            value = Data([0x01, 0x02])
+        } else if isCompanionServicePublished,
+                  request.characteristic.service?.uuid == Self.companionServiceUUID {
+            value = Self.companionReadValues[request.characteristic.uuid]
+        } else {
+            value = nil
+        }
+        guard let value else {
             onEvent?(.log(
                 "Insta360 peer \(peer) requested unsupported read \(request.characteristic.uuid.uuidString)."
             ))
             peripheral.respond(to: request, withResult: .requestNotSupported)
             return
         }
-        onEvent?(.log("Insta360 peer \(peer) read CE83 at offset \(request.offset)."))
-        if let cameraID = assignCameraIfNeeded(request.central, interaction: "CE83 read") {
-            noteSessionActivity(for: request.central, cameraID: cameraID)
-        }
-        let infoValue = Data([0x01, 0x02])
-        guard request.offset <= infoValue.count else {
+        onEvent?(.log("Insta360 peer \(peer) read \(request.characteristic.uuid.uuidString) at offset \(request.offset)."))
+        guard request.offset >= 0, request.offset <= value.count else {
             peripheral.respond(to: request, withResult: .invalidOffset)
             return
         }
-        request.value = Data(infoValue.dropFirst(request.offset))
+        if request.characteristic.uuid == Self.infoCharacteristicUUID,
+           let cameraID = assignCameraIfNeeded(request.central, interaction: "CE83 read") {
+            noteSessionActivity(for: request.central, cameraID: cameraID)
+        }
+        request.value = Data(value.dropFirst(request.offset))
         peripheral.respond(to: request, withResult: .success)
     }
 
     func peripheralManager(_ peripheral: CBPeripheralManager, didReceiveWrite requests: [CBATTRequest]) {
+        guard let firstRequest = requests.first else { return }
+        // CoreBluetooth delivers an ATT write transaction as a batch. Validate
+        // the entire transaction before changing any camera/session state, then
+        // acknowledge it exactly once using the first request. The camera's
+        // CE81 frames require the ATT acknowledgement, not a CE82 auth reply.
+        for request in requests {
+            let isCommandWrite = request.characteristic.uuid == Self.writeCharacteristicUUID
+            let isCompanionWrite = isCompanionServicePublished
+                && request.characteristic.service?.uuid == Self.companionServiceUUID
+                && Self.companionWriteUUIDs.contains(request.characteristic.uuid)
+            guard isCommandWrite || isCompanionWrite, request.value != nil else {
+                onEvent?(.log("Insta360 rejected write batch (\(requests.count) requests): unsupported or empty \(request.characteristic.uuid.uuidString)."))
+                peripheral.respond(to: firstRequest, withResult: .requestNotSupported)
+                return
+            }
+            guard request.offset == 0 else {
+                onEvent?(.log("Insta360 rejected write batch (\(requests.count) requests): invalid offset \(request.offset)."))
+                peripheral.respond(to: firstRequest, withResult: .invalidOffset)
+                return
+            }
+        }
+        if requests.count > 1 {
+            onEvent?(.log("Insta360 accepted ATT write batch with \(requests.count) requests."))
+        }
         for request in requests {
             let peer = peerLabel(request.central.identifier)
-            guard request.characteristic.uuid == Self.writeCharacteristicUUID,
-                  let data = request.value else {
-                onEvent?(.log(
-                    "Insta360 peer \(peer) sent an unsupported or empty write to "
-                        + "\(request.characteristic.uuid.uuidString)."
-                ))
-                peripheral.respond(to: request, withResult: .requestNotSupported)
+            let data = request.value!
+            guard request.characteristic.uuid == Self.writeCharacteristicUUID else {
+                // Match the reference's passive companion write endpoints. No
+                // capture commands or firmware update behavior is implemented.
+                onEvent?(.log("Insta360 peer \(peer) wrote companion \(request.characteristic.uuid.uuidString) (\(data.count) bytes)."))
                 continue
             }
 
@@ -499,8 +560,8 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
                 noteSessionActivity(for: request.central, cameraID: cameraID, now: now)
                 handleStatusPacket(data, from: cameraID)
             }
-            peripheral.respond(to: request, withResult: .success)
         }
+        peripheral.respond(to: firstRequest, withResult: .success)
     }
 
     func peripheralManagerIsReady(toUpdateSubscribers peripheral: CBPeripheralManager) {
@@ -753,6 +814,8 @@ private extension Insta360RemoteService {
         writeCharacteristic = nil
         notifyCharacteristic = nil
         infoCharacteristic = nil
+        isCompanionServicePublished = false
+        publishingServiceUUIDs.removeAll()
     }
 
     func noteSessionActivity(for central: CBCentral, cameraID: UUID, now: Date = Date()) {
@@ -785,10 +848,20 @@ private extension Insta360RemoteService {
         return true
     }
 
+    var needsX3CompanionService: Bool {
+        requestedCameraIDs.contains {
+            Insta360CameraNameClassifier.model(for: cameraNamesByID[$0] ?? "") == .insta360X3
+        }
+    }
+
+    var servicesReady: Bool {
+        isServicePublished && (!needsX3CompanionService || isCompanionServicePublished)
+    }
+
     func publishAndAdvertiseIfPossible() {
         guard peripheralManager.state == .poweredOn, !requestedCameraIDs.isEmpty else { return }
 
-        if isServicePublished {
+        if servicesReady {
             if pendingWake != nil {
                 beginPendingWakeIfPossible()
             } else {
@@ -797,6 +870,27 @@ private extension Insta360RemoteService {
             return
         }
 
+        // A pending add is not a published service. Do not advertise a partial
+        // database, or republish CE80 when an X3 joins another remote session.
+        peripheralManager.stopAdvertising()
+        if !isServicePublished, !publishingServiceUUIDs.contains(Self.serviceUUID) {
+            publishCommandService()
+        }
+        if needsX3CompanionService, !isCompanionServicePublished,
+           !publishingServiceUUIDs.contains(Self.companionServiceUUID) {
+            let companion = CBMutableService(type: Self.companionServiceUUID, primary: true)
+            companion.characteristics = ["FFD1", "FFD2", "FFD3", "FFD4", "FFD5", "FFD8", "FFF1", "FFF2", "FFE0"].map { name in
+                let uuid = CBUUID(string: name)
+                let isWrite = Self.companionWriteUUIDs.contains(uuid)
+                return CBMutableCharacteristic(type: uuid, properties: isWrite ? [.write] : [.read],
+                    value: nil, permissions: isWrite ? [.writeable] : [.readable])
+            }
+            publishingServiceUUIDs.insert(Self.companionServiceUUID)
+            peripheralManager.add(companion)
+        }
+    }
+
+    func publishCommandService() {
         let write = CBMutableCharacteristic(
             type: Self.writeCharacteristicUUID,
             properties: [.write, .writeWithoutResponse],
@@ -820,13 +914,13 @@ private extension Insta360RemoteService {
         writeCharacteristic = write
         notifyCharacteristic = notify
         infoCharacteristic = info
-        isServicePublished = true
+        publishingServiceUUIDs.insert(Self.serviceUUID)
         peripheralManager.add(service)
     }
 
     func startAdvertising() {
         guard peripheralManager.state == .poweredOn,
-              isServicePublished,
+              servicesReady,
               pendingWake == nil,
               activeWake == nil,
               !requestedCameraIDs.isEmpty else {
@@ -842,7 +936,7 @@ private extension Insta360RemoteService {
 
     func beginPendingWakeIfPossible() {
         guard peripheralManager.state == .poweredOn,
-              isServicePublished,
+              servicesReady,
               activeWake == nil,
               let wake = pendingWake else {
             return
