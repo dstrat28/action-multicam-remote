@@ -4,6 +4,60 @@ Multicam's original source code is licensed under [MIT](LICENSE). The notices be
 cover adapted implementations, reused examples, and GPS Remote references. They
 retain the upstream copyright and license text. This file is bundled in the iPhone app.
 
+## Optional Insta360 SDK dependencies
+
+SDK-enabled builds include proprietary Insta360 frameworks under the vendor's
+terms, alongside the supplied SSZipArchive 2.1.2 binary dependency. These vendor
+frameworks are not covered by Multicam's MIT license. The embedded INSCoreMedia
+framework retains its vendor-supplied LICENSE file. The notices below come from
+the public SSZipArchive upstream, not proprietary SDK headers or sample code.
+
+### SSZipArchive
+
+Source: [ZipArchive/ZipArchive 2.1.2](https://github.com/ZipArchive/ZipArchive/tree/2.1.2).
+License: [MIT](https://github.com/ZipArchive/ZipArchive/blob/2.1.2/LICENSE.txt).
+
+Copyright (c) 2010-2015, Sam Soffes, http://soff.es
+
+Permission is hereby granted, free of charge, to any person obtaining
+a copy of this software and associated documentation files (the
+"Software"), to deal in the Software without restriction, including
+without limitation the rights to use, copy, modify, merge, publish,
+distribute, sublicense, and/or sell copies of the Software, and to
+permit persons to whom the Software is furnished to do so, subject to
+the following conditions:
+
+The above copyright notice and this permission notice shall be
+included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+### MiniZip AES support
+
+SSZipArchive's MiniZip dependency includes AES support by Brian Gladman.
+Source: [upstream AES notice](https://github.com/ZipArchive/ZipArchive/blob/2.1.2/SSZipArchive/minizip/aes/aes.h).
+
+Copyright (c) 1998-2013, Brian Gladman, Worcester, UK. All rights reserved.
+
+The redistribution and use of this software (with or without changes)
+is allowed without the payment of fees or royalties provided that:
+
+  source code distributions include the above copyright notice, this
+  list of conditions and the following disclaimer;
+
+  binary distributions include the above copyright notice, this list
+  of conditions and the following disclaimer in their documentation.
+
+This software is provided 'as is' with no explicit or implied warranties
+in respect of its operation, including, but not limited to, correctness
+and fitness for purpose.
+
 ## Insta360 M5Stick Remote
 
 GPS Remote command, recording-status, and multicamera reference.
