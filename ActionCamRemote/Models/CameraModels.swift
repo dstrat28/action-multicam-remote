@@ -1763,6 +1763,30 @@ struct CameraStopProgress {
     }
 }
 
+enum CameraStopReplayPolicy {
+    static func consumeIfReady(camera: DiscoveredCamera, detail: String?, pending: inout Set<UUID>) -> Bool {
+        guard camera.isConnected, pending.contains(camera.id), let detail else { return false }
+        let ready: Bool
+        switch camera.brand {
+        case .gopro:
+            ready = detail.contains("Open GoPro protocol ready")
+        case .dji:
+            ready = detail.contains("DJI record characteristics ready") || detail.contains("DJI R SDK protocol ready")
+                || detail.contains("DJI Nano protocol ready")
+        case .insta360:
+            ready = !camera.usesInsta360GPSRemote && (detail.contains("direct Bluetooth ready")
+                || (camera.insta360UsesSDK == true && detail.contains("SDK Bluetooth ready")))
+        case .unknown:
+            ready = false
+        }
+        guard ready else { return false }
+        // Consume before dispatch: repeated readiness/status callbacks must not
+        // replay the same Stop. An immediate transport failure can requeue it.
+        pending.remove(camera.id)
+        return true
+    }
+}
+
 enum CameraRecordingStartPolicy {
     enum SDKModePreparation { case ready, waiting, failed }
 

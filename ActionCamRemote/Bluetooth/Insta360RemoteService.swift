@@ -69,7 +69,7 @@ final class Insta360RemoteService: NSObject {
     private var activeWake: WakeRequest?
     private var isServicePublished = false
     private var isCompanionServicePublished = false
-    private var publishingServiceUUIDs: Set<CBUUID> = []
+    private var publishingServices: [CBUUID: CBMutableService] = [:]
     private var needsServiceRepublish = false
     private var shouldReplaceRestoredWakeAdvertisement = false
 
@@ -306,7 +306,7 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
                 notifyCharacteristic = nil
                 infoCharacteristic = nil
                 isCompanionServicePublished = false
-                publishingServiceUUIDs.removeAll()
+                publishingServices.removeAll()
                 needsServiceRepublish = false
             }
             if shouldReplaceRestoredWakeAdvertisement {
@@ -323,6 +323,12 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
             // Preserve restored services and subscribers through this transition.
             break
         case .poweredOff:
+            if !publishingServices.isEmpty {
+                // An interrupted add may never complete. Bluetooth is already
+                // disconnected, so rebuild this partial database on power-on.
+                needsServiceRepublish = true
+                publishingServices.removeAll()
+            }
             clearActiveSessions(clearPublishedService: false)
         case .resetting, .unsupported, .unauthorized:
             clearActiveSessions(clearPublishedService: true)
@@ -387,7 +393,8 @@ extension Insta360RemoteService: CBPeripheralManagerDelegate {
 
     func peripheralManager(_ peripheral: CBPeripheralManager, didAdd service: CBService, error: Error?) {
         guard service.uuid == Self.serviceUUID || service.uuid == Self.companionServiceUUID else { return }
-        publishingServiceUUIDs.remove(service.uuid)
+        guard let pendingService = publishingServices[service.uuid], pendingService === service else { return }
+        publishingServices.removeValue(forKey: service.uuid)
         if let error {
             onEvent?(.log("Insta360 remote service \(service.uuid.uuidString) could not be published: \(error.localizedDescription)"))
             return
@@ -815,7 +822,7 @@ private extension Insta360RemoteService {
         notifyCharacteristic = nil
         infoCharacteristic = nil
         isCompanionServicePublished = false
-        publishingServiceUUIDs.removeAll()
+        publishingServices.removeAll()
     }
 
     func noteSessionActivity(for central: CBCentral, cameraID: UUID, now: Date = Date()) {
@@ -873,11 +880,11 @@ private extension Insta360RemoteService {
         // A pending add is not a published service. Do not advertise a partial
         // database, or republish CE80 when an X3 joins another remote session.
         peripheralManager.stopAdvertising()
-        if !isServicePublished, !publishingServiceUUIDs.contains(Self.serviceUUID) {
+        if !isServicePublished, publishingServices[Self.serviceUUID] == nil {
             publishCommandService()
         }
         if needsX3CompanionService, !isCompanionServicePublished,
-           !publishingServiceUUIDs.contains(Self.companionServiceUUID) {
+           publishingServices[Self.companionServiceUUID] == nil {
             let companion = CBMutableService(type: Self.companionServiceUUID, primary: true)
             companion.characteristics = ["FFD1", "FFD2", "FFD3", "FFD4", "FFD5", "FFD8", "FFF1", "FFF2", "FFE0"].map { name in
                 let uuid = CBUUID(string: name)
@@ -885,7 +892,7 @@ private extension Insta360RemoteService {
                 return CBMutableCharacteristic(type: uuid, properties: isWrite ? [.write] : [.read],
                     value: nil, permissions: isWrite ? [.writeable] : [.readable])
             }
-            publishingServiceUUIDs.insert(Self.companionServiceUUID)
+            publishingServices[Self.companionServiceUUID] = companion
             peripheralManager.add(companion)
         }
     }
@@ -914,7 +921,7 @@ private extension Insta360RemoteService {
         writeCharacteristic = write
         notifyCharacteristic = notify
         infoCharacteristic = info
-        publishingServiceUUIDs.insert(Self.serviceUUID)
+        publishingServices[Self.serviceUUID] = service
         peripheralManager.add(service)
     }
 

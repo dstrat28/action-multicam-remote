@@ -59,6 +59,9 @@ Model tests cover the Stop All target policy and bounded mode preparation.
 These tests do not execute Siri, Sena firmware, real Bluetooth, or X3 firmware.
 Native unsigned app builds additionally check real Apple/vendor APIs and linking.
 
+The follow-up review and additional fixes are recorded in
+[camera connection review](camera-connection-review.md).
+
 ## Physical X3 check still required
 
 1. Record the X3 firmware version. Keep the awake camera close and Multicam in

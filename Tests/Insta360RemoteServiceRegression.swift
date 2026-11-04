@@ -127,6 +127,20 @@ enum Insta360RemoteServiceRegression {
         precondition(retryManager.services.count == 3 && retryManager.services.last?.uuid == failedService.uuid)
         retry.peripheralManager(retryManager, didAdd: retryManager.services.last!, error: nil)
         precondition(retryManager.isAdvertising)
+
+        let interrupted = Insta360RemoteService()
+        interrupted.requestConnection(cameraID: cameraID, cameraName: "X3 ABC123")
+        let interruptedManager = CBPeripheralManager.instances.last!
+        let obsoleteServices = interruptedManager.services
+        interruptedManager.state = .poweredOff
+        interrupted.peripheralManagerDidUpdateState(interruptedManager)
+        interruptedManager.state = .poweredOn
+        interrupted.peripheralManagerDidUpdateState(interruptedManager)
+        precondition(interruptedManager.services.count == 2 && !interruptedManager.isAdvertising)
+        for service in obsoleteServices { interrupted.peripheralManager(interruptedManager, didAdd: service, error: nil) }
+        precondition(!interruptedManager.isAdvertising, "Late publication callbacks must not revive an obsolete database")
+        for service in interruptedManager.services { interrupted.peripheralManager(interruptedManager, didAdd: service, error: nil) }
+        precondition(interruptedManager.isAdvertising)
         print("Insta360 remote service regressions passed: atomic ATT batches, X3 companion profile/publication, reads, CE82 readiness and unicast backpressure (CoreBluetooth double).")
     }
 }

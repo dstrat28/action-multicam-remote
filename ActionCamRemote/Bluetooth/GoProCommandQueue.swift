@@ -61,7 +61,7 @@ struct GoProCommandQueue<Write> {
         var command: CameraCommand?
     }
     private var entries: [Entry] = []
-    private var deferredCommand: CameraCommand?
+    private(set) var deferredCommand: CameraCommand?
     private var startRequestedAt: Date?
     static var startLifetime: TimeInterval { 10 }
 

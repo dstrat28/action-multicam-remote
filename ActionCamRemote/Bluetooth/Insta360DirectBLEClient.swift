@@ -20,6 +20,7 @@ final class Insta360DirectBLEClient: NSObject, BLECameraDeviceClient {
     private var writeType: CBCharacteristicWriteType = .withResponse
     private var timer: Timer?
     private var setupBeganAt: TimeInterval?
+    private var hasReportedProtocolReady = false
     private let session: Insta360DirectSession
     private let onStatus: (UUID, CameraConnectionState, String?) -> Void
     private let onCameraStatus: (UUID, CameraStatusUpdate) -> Void
@@ -53,7 +54,14 @@ final class Insta360DirectBLEClient: NSObject, BLECameraDeviceClient {
         session = Insta360DirectSession(cameraID: cameraID, cameraName: cameraName, profile: profile)
         super.init()
         session.onWrite = { [weak self] data, id in self?.write(data, id: id) }
-        session.onStatus = { [weak self] update in self?.onCameraStatus(cameraID, update) }
+        session.onStatus = { [weak self] update in
+            guard let self else { return }
+            if self.session.hasConfirmedProtocol, !self.hasReportedProtocolReady {
+                self.hasReportedProtocolReady = true
+                self.onStatus(cameraID, .connected, "Insta360 \(self.profile.name) direct Bluetooth ready. Use normal Video mode on the camera.")
+            }
+            self.onCameraStatus(cameraID, update)
+        }
         session.onCompletion = { [weak self] result in self?.onCommandCompleted(result) }
         session.onLog = { [weak self] message in self?.onLog("\(cameraName): \(message)") }
         session.onTransportFailure = { [weak self] message in self?.fail(message) }
@@ -79,6 +87,7 @@ final class Insta360DirectBLEClient: NSObject, BLECameraDeviceClient {
         timer?.invalidate()
         timer = nil
         setupBeganAt = nil
+        hasReportedProtocolReady = false
         session.end()
         x6Decoder.reset()
         x5Decoder.reset()
@@ -173,7 +182,7 @@ final class Insta360DirectBLEClient: NSObject, BLECameraDeviceClient {
             return
         }
         guard !session.isReady else { return }
-        onStatus(cameraID, .connected, "Insta360 \(self.profile.name) direct Bluetooth ready. Use normal Video mode on the camera.")
+        onStatus(cameraID, .connecting, "Insta360 \(self.profile.name) command channel open; waiting for a valid capture status.")
         session.begin(at: ProcessInfo.processInfo.systemUptime)
         setupBeganAt = ProcessInfo.processInfo.systemUptime
         let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in

@@ -85,15 +85,16 @@ enum Insta360SDKAdapterRegression {
         // The real adapter's timer must continue while UI tracking uses a common mode.
         let tracking = CFRunLoopMode(rawValue: "Insta360SDKTrackingRegression" as CFString)
         CFRunLoopAddCommonMode(CFRunLoopGetMain(), tracking)
-        let before = commands.heartbeats
-        CFRunLoopRunInMode(tracking, 0.65, false)
-        precondition(commands.heartbeats > before)
+        let before = commands.statusRequests
+        CFRunLoopRunInMode(tracking, 1.65, false)
+        precondition(commands.statusRequests > before)
+        precondition(commands.heartbeats == 0, "Do not apply socket heartbeat instructions to Bluetooth")
         first.disconnectManagedConnection()
         second.disconnectManagedConnection()
         precondition(!INSCameraManager.usb().isSetup)
-        let afterDisconnect = commands.heartbeats
+        let afterDisconnect = commands.statusRequests
         spin(0.6)
-        precondition(commands.heartbeats == afterDisconnect)
+        precondition(commands.statusRequests == afterDisconnect)
 
         // A canceled connection and its delegate belong to their original generation.
         INSBluetoothManager.autoConnect = false
@@ -105,7 +106,7 @@ enum Insta360SDKAdapterRegression {
         precondition(canceled.cancellations == 1)
         INSBluetoothManager.autoConnect = true
         first.didConnect()
-        waitUntil { INSBluetoothManager.instances.last!.commands.heartbeats > 0 }
+        waitUntil { INSBluetoothManager.instances.last!.commands.statusRequests > 0 }
         let current = INSBluetoothManager.instances.last!
         let failuresBefore = events.connections.filter { if case .failed = $0 { true } else { false } }.count
         lateConnection?(nil, INSBluetoothDevice(id: first.cameraID))
@@ -179,6 +180,6 @@ enum Insta360SDKAdapterRegression {
         x3Commands.status.state = .normalCapture
         waitUntil { x3Events.results.contains { $0.id == x3SecondStart.id && $0.status == .sent } }
         x3.disconnectManagedConnection()
-        print("Insta360 SDK adapter regressions passed: initialization, per-camera routing, stale replies/delegates, capture supersession, heartbeat and cleanup (SDK double).")
+        print("Insta360 SDK adapter regressions passed: initialization, per-camera routing, X3 capture, stale replies/delegates, capture supersession, status polling and cleanup (SDK double).")
     }
 }

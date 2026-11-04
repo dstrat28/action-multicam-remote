@@ -178,12 +178,13 @@ ONE X2 alias and ONE RS 1-Inch 360 Edition name.
 - X6 requests `storageStateList` and reports its internal and SD storage
   separately, as documented by the vendor. Capacities are not combined or
   presented as a selected recording volume. Other cameras use `storageStatus`.
-- A common-run-loop timer sends half-second heartbeats as shown in the sample.
-  Capture/mode queries are serial, about once per second. Battery/storage refresh
+- A common-run-loop timer ticks command deadlines every half second.
+  Bluetooth uses per-device capture/mode polling, about once per second; the
+  `sendHeartbeats` API documented for socket use is not called. Battery/storage refresh
   every 30 seconds and expire after 75; only successful fields are applied.
 - Start, Photo, and mode changes require stopped status no older than five seconds.
   Start requires normal Video; Photo requires normal Photo. Explicit Stop remains
-  available with unknown status. Stop can supersede pending Start confirmation.
+  available with unknown status. Stop can supersede pending capture/mode confirmation.
 - SDK acceptance does not confirm Start, Stop, or a mode change. A subsequent
   query must match the command and follow its acceptance. Old/superseded replies
   cannot refresh state or complete another command. Slow mode replies retain
@@ -207,8 +208,8 @@ changes, and return to a remembered X5 route with SDK availability on and off.
 
 `sh ci_scripts/check_insta360_sdk_adapter.sh` exercises the actual adapter against
 our handwritten SDK double: initialization/shutdown, independent cameras,
-commands, pre-command replies, late connection/delegate callbacks, half-second
-heartbeats during UI tracking, X6 storage selection, and disconnect cleanup.
+commands, pre-command replies, late connection/delegate callbacks, status
+polling during UI tracking, X6 storage selection, and disconnect cleanup.
 The double provides no evidence that vendor internals or camera firmware behave
 identically. Native device builds verify the supplied headers and linker inputs.
 

@@ -9,6 +9,20 @@ enum CameraStopProgressRegression {
         precondition(!x3.isTargetForStopAll, "Unknown GPS Remote status cannot authorize a shutter toggle")
         x3.insta360UsesSDK = true
         precondition(x3.isTargetForStopAll, "Siri Stop must reach SDK cameras even after capture status expires")
+        var pendingReplay: Set<UUID> = [x3.id]
+        precondition(!CameraStopReplayPolicy.consumeIfReady(camera: x3, detail: nil, pending: &pendingReplay))
+        precondition(CameraStopReplayPolicy.consumeIfReady(camera: x3, detail: "Insta360 SDK Bluetooth ready", pending: &pendingReplay))
+        precondition(!CameraStopReplayPolicy.consumeIfReady(camera: x3, detail: "Insta360 SDK Bluetooth ready", pending: &pendingReplay))
+        x3.insta360UsesSDK = false
+        pendingReplay.insert(x3.id)
+        precondition(!CameraStopReplayPolicy.consumeIfReady(camera: x3, detail: "Insta360 GPS Remote connected", pending: &pendingReplay))
+        var gopro = x3
+        gopro.brand = .gopro
+        gopro.model = .goproHero13Black
+        precondition(!CameraStopReplayPolicy.consumeIfReady(camera: gopro, detail: "BLE connected", pending: &pendingReplay))
+        precondition(CameraStopReplayPolicy.consumeIfReady(camera: gopro, detail: "Open GoPro protocol ready", pending: &pendingReplay))
+        precondition(!CameraStopReplayPolicy.consumeIfReady(camera: gopro, detail: "Open GoPro protocol ready", pending: &pendingReplay))
+        x3.insta360UsesSDK = true
         x3.connectionState = .disconnected
         precondition(!x3.isTargetForStopAll, "Do not newly reconnect an unknown-state camera to issue Stop")
         x3.connectionState = .connected

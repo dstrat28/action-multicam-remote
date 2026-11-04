@@ -2541,10 +2541,7 @@ private extension CameraStore {
     func replayPendingStopIfReady(for id: UUID, detail: String?) {
         guard pendingStopCameraIDs.contains(id) else { return }
         guard let latest = cameras.first(where: { $0.id == id }), latest.connectionState == .connected else { return }
-        let isReady = isDJIControlReady(detail: detail)
-            || (latest.behavior.kind == .insta360Direct && detail?.contains("direct Bluetooth ready") == true)
-            || (latest.insta360UsesSDK == true && detail?.contains("SDK Bluetooth ready") == true)
-        guard isReady else { return }
+        guard CameraStopReplayPolicy.consumeIfReady(camera: latest, detail: detail, pending: &pendingStopCameraIDs) else { return }
 
         appendLog("\(latest.name): sending queued stop after reconnect.")
         send(.stopRecording, to: [latest])
