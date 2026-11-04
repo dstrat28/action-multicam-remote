@@ -540,6 +540,7 @@ private struct PairingCameraRow: View {
         } message: {
             Text("Leave this blank to use the device name.")
         }
+        .tint(Color.acrInk)
     }
 
     private var connectionStatus: some View {
@@ -716,7 +717,7 @@ private struct PairingCameraRow: View {
                     store.remove(current)
                 }
             )
-            .equatable()
+            .frame(width: 44, height: 44)
         }
         .controlSize(.small)
         .fixedSize()
@@ -734,9 +735,9 @@ private struct PairingCameraRow: View {
     }
 }
 
-// Keep the native menu stable while discovery and telemetry refresh its row.
-// Actions resolve the current camera in the store when the user selects them.
-private struct CameraManagementMenu: View, Equatable {
+// Retain the button and its actions while discovery and telemetry refresh the row.
+// Refresh callbacks separately so menu actions use the latest camera state.
+private struct CameraManagementMenu: UIViewRepresentable {
     struct Configuration: Equatable {
         let cameraID: UUID
         let displayName: String
@@ -748,46 +749,65 @@ private struct CameraManagementMenu: View, Equatable {
     let onDisconnect: () -> Void
     let onUnpair: () -> Void
 
-    static func == (lhs: Self, rhs: Self) -> Bool {
-        lhs.configuration == rhs.configuration
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onRename: onRename, onDisconnect: onDisconnect, onUnpair: onUnpair)
     }
 
-    var body: some View {
-        Menu {
-            Button(action: onRename) {
-                Label("Rename Camera", systemImage: "pencil")
-                    .symbolRenderingMode(.monochrome)
-                    .foregroundStyle(Color.acrInk)
-            }
-            .tint(Color.acrInk)
+    func makeUIView(context: Context) -> UIButton {
+        var appearance = UIButton.Configuration.plain()
+        appearance.image = UIImage(systemName: "ellipsis")
+        appearance.preferredSymbolConfigurationForImage = UIImage.SymbolConfiguration(pointSize: 15, weight: .semibold)
+        appearance.baseForegroundColor = UIColor(Color.acrMutedText)
+        appearance.background.backgroundColor = UIColor(Color.acrAccent.opacity(0.12))
+        appearance.background.backgroundInsets = NSDirectionalEdgeInsets(top: 7, leading: 4, bottom: 7, trailing: 4)
+        appearance.cornerStyle = .capsule
+        let button = UIButton(configuration: appearance)
+        button.showsMenuAsPrimaryAction = true
+        return button
+    }
 
-            if configuration.canDisconnect {
-                Button(action: onDisconnect) {
-                    Label("Disconnect Camera", systemImage: "xmark.circle")
-                        .symbolRenderingMode(.monochrome)
-                        .foregroundStyle(Color.acrInk)
-                }
-                .tint(Color.acrInk)
-            }
+    func updateUIView(_ button: UIButton, context: Context) {
+        let coordinator = context.coordinator
+        coordinator.onRename = onRename
+        coordinator.onDisconnect = onDisconnect
+        coordinator.onUnpair = onUnpair
+        button.accessibilityLabel = "More options for \(configuration.displayName)"
 
-            Button(role: .destructive, action: onUnpair) {
-                Label("Unpair Camera", systemImage: "trash")
-                    .symbolRenderingMode(.monochrome)
-                    .foregroundStyle(.red)
-            }
-            .tint(.red)
-        } label: {
-            Image(systemName: "ellipsis")
-                .font(.subheadline.weight(.semibold))
-                .symbolRenderingMode(.monochrome)
-                .foregroundStyle(Color.acrMutedText)
-                .frame(width: 16, height: 20)
-                .contentShape(Rectangle())
+        guard coordinator.configuration != configuration else { return }
+        coordinator.configuration = configuration
+        var actions = [UIAction(title: "Rename Camera", image: UIImage(systemName: "pencil")) { [weak coordinator] _ in
+            coordinator?.onRename()
+        }]
+        if configuration.canDisconnect {
+            actions.append(UIAction(title: "Disconnect Camera", image: UIImage(systemName: "xmark.circle")) { [weak coordinator] _ in
+                coordinator?.onDisconnect()
+            })
         }
-        .buttonStyle(.bordered)
-        .controlSize(.small)
-        .fixedSize()
-        .accessibilityLabel("More options for \(configuration.displayName)")
+        actions.append(UIAction(
+            title: "Unpair Camera",
+            image: UIImage(systemName: "trash"),
+            attributes: .destructive
+        ) { [weak coordinator] _ in
+            coordinator?.onUnpair()
+        })
+        button.menu = UIMenu(children: actions)
+    }
+
+    final class Coordinator {
+        var configuration: Configuration?
+        var onRename: () -> Void
+        var onDisconnect: () -> Void
+        var onUnpair: () -> Void
+
+        init(
+            onRename: @escaping () -> Void,
+            onDisconnect: @escaping () -> Void,
+            onUnpair: @escaping () -> Void
+        ) {
+            self.onRename = onRename
+            self.onDisconnect = onDisconnect
+            self.onUnpair = onUnpair
+        }
     }
 }
 
