@@ -94,7 +94,22 @@ enum Insta360SDKSessionRegression {
         precondition(Insta360SDKSession.recordingState(rawValue: 1) == .recording)
         precondition(Insta360SDKSession.recordingState(rawValue: 4) == .unknown)
         precondition(Insta360SDKSession.recordingState(rawValue: 999) == .unknown)
-        precondition(CameraModel.insta360X5.supportsInsta360SDKPrototype)
+        let sdkModels: [CameraModel] = [.insta360X6, .insta360X5, .insta360X4Air, .insta360X4,
+            .insta360X3, .insta360X2, .insta360OneX, .insta360OneR, .insta360OneRS, .insta360OneRS1Inch]
+        for model in sdkModels {
+            precondition(model.supportsInsta360SDKPrototype)
+            precondition(model.brand == .insta360)
+            precondition(!model.isOpenGoProCompatible && !model.supportsHighlight)
+            var camera = DiscoveredCamera(id: UUID(), name: model.rawValue + " ABC123", brand: .insta360,
+                model: model, rssi: -50, capabilities: [.record, .mode, .status], connectionState: .connected,
+                recordingState: .stopped, isPaired: true, isSelected: true, lastSeen: Date())
+            if model.requiresInsta360SDK { precondition(!camera.isSupportedByApp) }
+            camera.insta360UsesSDK = true
+            precondition(camera.behavior.kind == .insta360Direct)
+            precondition(!camera.usesInsta360GPSRemote)
+            precondition(camera.availableCaptureModes == [.video, .photo])
+            precondition(camera.isSupportedByApp == (!model.requiresInsta360SDK || FeatureAvailability.insta360SDK))
+        }
         precondition(!CameraModel.insta360AcePro2.supportsInsta360SDKPrototype)
         precondition(!CameraModel.insta360Go3S.supportsInsta360SDKPrototype)
 

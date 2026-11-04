@@ -48,6 +48,10 @@ enum CameraModel: String, Identifiable, Codable {
     case insta360X4Air = "X4 Air"
     case insta360X4 = "X4"
     case insta360X3 = "X3"
+    case insta360X2 = "X2"
+    case insta360OneX = "ONE X"
+    case insta360OneR = "ONE R"
+    case insta360OneRS1Inch = "ONE RS 1-Inch"
     case insta360OneRS = "ONE RS"
     case insta360GoUltra = "GO Ultra"
     case insta360Go3S = "GO 3S"
@@ -58,7 +62,17 @@ enum CameraModel: String, Identifiable, Codable {
 
     var supportsInsta360SDKPrototype: Bool {
         switch self {
-        case .insta360X6, .insta360X5, .insta360X4Air, .insta360X4, .insta360X3, .insta360OneRS:
+        case .insta360X6, .insta360X5, .insta360X4Air, .insta360X4, .insta360X3,
+             .insta360X2, .insta360OneX, .insta360OneR, .insta360OneRS, .insta360OneRS1Inch:
+            true
+        default:
+            false
+        }
+    }
+
+    var requiresInsta360SDK: Bool {
+        switch self {
+        case .insta360X2, .insta360OneX, .insta360OneR, .insta360OneRS1Inch:
             true
         default:
             false
@@ -98,6 +112,10 @@ enum CameraModel: String, Identifiable, Codable {
              .insta360X4Air,
              .insta360X4,
              .insta360X3,
+             .insta360X2,
+             .insta360OneX,
+             .insta360OneR,
+             .insta360OneRS1Inch,
              .insta360OneRS,
              .insta360GoUltra,
              .insta360Go3S,
@@ -295,6 +313,10 @@ extension CameraModel {
              .insta360X4Air,
              .insta360X4,
              .insta360X3,
+             .insta360X2,
+             .insta360OneX,
+             .insta360OneR,
+             .insta360OneRS1Inch,
              .insta360OneRS,
              .insta360GoUltra,
              .insta360Go3S,
@@ -338,6 +360,10 @@ extension CameraModel {
              .insta360X4Air,
              .insta360X4,
              .insta360X3,
+             .insta360X2,
+             .insta360OneX,
+             .insta360OneR,
+             .insta360OneRS1Inch,
              .insta360OneRS,
              .insta360GoUltra,
              .insta360Go3S,
@@ -914,6 +940,7 @@ struct CameraBehaviorProfile: Equatable {
 
 struct DiscoveredCamera: Identifiable, Equatable, Codable {
     static let unsupportedCameraReason = "Unsupported"
+    static let insta360SDKRequiredReason = "Enable Insta360 SDK in Settings and restart Multicam."
 
     let id: UUID
     var name: String
@@ -944,7 +971,9 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     }
 
     var unsupportedReason: String? {
-        Self.unsupportedReason(brand: brand, model: model, name: name)
+        if let reason = Self.unsupportedReason(brand: brand, model: model, name: name) { return reason }
+        if model.requiresInsta360SDK, insta360UsesSDK != true { return Self.insta360SDKRequiredReason }
+        return nil
     }
 
     static func unsupportedReason(
@@ -960,6 +989,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
         model: CameraModel,
         name: String
     ) -> Bool {
+        if model.requiresInsta360SDK { return FeatureAvailability.insta360SDK }
         switch model {
         case .goproLitHero,
              .goproMax2,
@@ -983,6 +1013,10 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
              .insta360X4Air,
              .insta360X4,
              .insta360X3,
+             .insta360X2,
+             .insta360OneX,
+             .insta360OneR,
+             .insta360OneRS1Inch,
              .insta360OneRS,
              .insta360GoUltra,
              .insta360Go3S,
@@ -1055,6 +1089,10 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
                  .insta360X4Air,
                  .insta360X4,
                  .insta360X3,
+                 .insta360X2,
+                 .insta360OneX,
+                 .insta360OneR,
+                 .insta360OneRS1Inch,
                  .insta360OneRS,
                  .insta360GoUltra,
                  .insta360Go3S,

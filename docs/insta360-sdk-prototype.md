@@ -20,7 +20,8 @@ sh ci_scripts/setup_insta360_sdk.sh /path/to/INSCameraSDKSample-bluetooth
 ```
 
 `Vendor/Insta360/` is ignored by Git. Vendor binaries, headers, and sample code
-are not committed or downloaded by CI. Other approved developers must install
+are not committed or downloaded by CI. `check_vendor_sdk_exclusion.sh` rejects
+tracked framework bundles and vendor SDK distribution paths in CI. Other approved developers must install
 their own package. The repository's MIT license does not cover the vendor SDK.
 
 Build with the optional device configuration:
@@ -40,9 +41,10 @@ For installation, configure signing as described in [CONTRIBUTING.md](../CONTRIB
 `INSTA360_SDK_ROOT` can override the installed directory. The optional build links,
 embeds, and signs only `INSCameraServiceSDK.framework`, with `TO_B_SDK=1`.
 The supplied camera framework has only an `ios-arm64` slice. Simulator builds
-exclude the adapter and binary, and keep the Settings switch disabled, including
+exclude the adapter and binary, and hide the Settings switch, including
 when `MULTICAM_INSTA360_SDK_ENABLED=YES` is passed. Ordinary device builds also
-keep the switch disabled and do not link or embed the SDK.
+hide the switch and do not link or embed the SDK. SDK device builds show the
+**Insta360 SDK** switch without explanatory subtext.
 
 In an SDK device build, turn on **Settings > Insta360 SDK**, then restart Multicam.
 Selection is captured at app startup. Changing the preference never switches a
@@ -51,8 +53,13 @@ the existing backend, including a remembered X5 GPS Remote fallback.
 
 ## Implemented scope
 
-- X6, X5, X4 Air, X4, X3, and ONE RS are eligible for the experiment. Ace and GO
-  models retain GPS Remote control. Eligibility is not hardware validation.
+- The complete official iOS SDK list is eligible: X6, X5, X4 Air, X4, X3, X2,
+  ONE X, ONE R, ONE RS, and ONE RS 1-Inch. Ace and GO models retain GPS Remote
+  control. Eligibility is not hardware validation.
+- X2, ONE X, ONE R, and ONE RS 1-Inch require the enabled SDK backend. They are
+  not routed to GPS Remote in ordinary builds or when the SDK preference is off.
+  Discovery recognizes the ONE X2 alias and the ONE RS 1-Inch 360 Edition name;
+  model-specific advertisements and control still require hardware verification.
 - Each camera owns a separate vendor Bluetooth manager, device, command interface,
   connection task, generation token, and command confirmation state. The global
   current-camera singleton is never used.

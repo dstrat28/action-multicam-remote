@@ -398,26 +398,38 @@ struct Insta360CameraNameClassifier {
             return false
         }
 
-        let words = name
+        var words = name
             .split { !$0.isLetter && !$0.isNumber }
             .map { $0.lowercased() }
-        let expectedWordCount: Int
+        if words.first == "insta360" { words.removeFirst() }
+        let modelWords = Array(words.dropLast())
+        let prefixes: [[String]]
         switch model {
         case .insta360AcePro2:
-            expectedWordCount = 4
-        case .insta360AcePro,
-             .insta360X4Air,
-             .insta360OneRS,
-             .insta360GoUltra,
-             .insta360Go3S,
-             .insta360Go3:
-            expectedWordCount = 3
-        case .insta360Ace, .insta360X6, .insta360X5, .insta360X4, .insta360X3:
-            expectedWordCount = 2
+            prefixes = [["ace", "pro", "2"]]
+        case .insta360AcePro:
+            prefixes = [["ace", "pro"]]
+        case .insta360Ace:
+            prefixes = [["ace"]]
+        case .insta360X6: prefixes = [["x6"]]
+        case .insta360X5: prefixes = [["x5"]]
+        case .insta360X4Air: prefixes = [["x4", "air"]]
+        case .insta360X4: prefixes = [["x4"]]
+        case .insta360X3: prefixes = [["x3"]]
+        case .insta360X2: prefixes = [["x2"], ["one", "x2"]]
+        case .insta360OneX: prefixes = [["one", "x"]]
+        case .insta360OneR: prefixes = [["one", "r"]]
+        case .insta360OneRS: prefixes = [["one", "rs"], ["rs"]]
+        case .insta360OneRS1Inch:
+            prefixes = [["one", "rs", "1", "inch"], ["one", "rs", "1", "inch", "360"],
+                        ["one", "rs", "1", "inch", "360", "edition"]]
+        case .insta360GoUltra: prefixes = [["go", "ultra"]]
+        case .insta360Go3S: prefixes = [["go", "3s"]]
+        case .insta360Go3: prefixes = [["go", "3"]]
         default:
             return false
         }
-        return words.count == expectedWordCount
+        return prefixes.contains(modelWords)
     }
 
     static func model(for name: String) -> CameraModel {
@@ -447,8 +459,20 @@ struct Insta360CameraNameClassifier {
         if signature.hasPrefix("x3") {
             return .insta360X3
         }
+        if signature.hasPrefix("x2") || signature.hasPrefix("onex2") {
+            return .insta360X2
+        }
+        if signature.hasPrefix("onex") {
+            return .insta360OneX
+        }
+        if signature.hasPrefix("oners1inch") {
+            return .insta360OneRS1Inch
+        }
         if signature.hasPrefix("oners") || signature.hasPrefix("rs") {
             return .insta360OneRS
+        }
+        if signature.hasPrefix("oner") {
+            return .insta360OneR
         }
         if signature.hasPrefix("goultra") {
             return .insta360GoUltra
@@ -467,7 +491,8 @@ struct Insta360CameraNameClassifier {
         let normalized: String
 
         init(_ name: String) {
-            normalized = name.lowercased().filter { $0.isLetter || $0.isNumber }
+            let value = name.lowercased().filter { $0.isLetter || $0.isNumber }
+            normalized = value.hasPrefix("insta360") ? String(value.dropFirst("insta360".count)) : value
         }
 
         func contains(_ value: String) -> Bool {

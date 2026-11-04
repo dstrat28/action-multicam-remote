@@ -25,6 +25,10 @@ enum Insta360RemoteProtocolRegression {
             ("X4 Air D4E5F6", .insta360X4Air),
             ("X4 G7H8J9", .insta360X4),
             ("X3 K1L2M3", .insta360X3),
+            ("X2 A2B3C4", .insta360X2),
+            ("ONE X D5E6F7", .insta360OneX),
+            ("ONE R G8H9J1", .insta360OneR),
+            ("ONE RS 1-Inch K2L3M4", .insta360OneRS1Inch),
             ("ONE RS N4P5Q6", .insta360OneRS),
             ("GO Ultra R7S8T9", .insta360GoUltra),
             ("GO 3S U1V2W3", .insta360Go3S),
@@ -35,6 +39,21 @@ enum Insta360RemoteProtocolRegression {
             precondition(Insta360CameraNameClassifier.model(for: name) == expectedModel)
             precondition(Insta360CameraNameClassifier.isCredibleCameraName(name))
             precondition(Insta360RemoteProtocol.wakeIdentifier(from: name) == Data(name.suffix(6).utf8))
+        }
+
+        for (name, model) in [
+            ("ONE X2 ABC123", CameraModel.insta360X2),
+            ("Insta360 ONE X ABC123", .insta360OneX),
+            ("Insta360 ONE R ABC123", .insta360OneR),
+            ("ONE RS 1-Inch 360 Edition ABC123", .insta360OneRS1Inch),
+            ("Insta360 ONE RS ABC123", .insta360OneRS)
+        ] {
+            precondition(Insta360CameraNameClassifier.model(for: name) == model, name)
+            precondition(Insta360CameraNameClassifier.isCredibleCameraName(name), name)
+        }
+        for name in ["X2", "X2 Speaker ABC123", "ONE X Speaker ABC123", "ONE R Speaker ABC123",
+                     "ONE RS 1-Inch Speaker ABC123", "Insta360 ONE X Speaker ABC123"] {
+            precondition(!Insta360CameraNameClassifier.isCredibleCameraName(name), name)
         }
 
         precondition(

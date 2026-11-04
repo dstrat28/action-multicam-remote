@@ -21,12 +21,13 @@ Control multiple GoPro, DJI, and Insta360 action cameras over Bluetooth from you
 | GoPro | HERO9–13 Black, HERO11 Black Mini, MAX 2, LIT HERO |
 | DJI | Osmo Action 4, Action 5 Pro, Action 6, Osmo 360, Osmo Nano |
 | Insta360 — experimental | Ace, Ace Pro, Ace Pro 2, X3, X4, X4 Air, X5, X6, ONE RS, GO 3, GO 3S, GO Ultra |
+| Insta360 SDK — experimental, opt-in | X6, X5, X4 Air, X4, X3, X2, ONE X, ONE R, ONE RS, ONE RS 1-Inch |
 
 See the [full compatibility matrix and hardware-testing status](docs/camera-support.md). DJI Osmo Pocket 3 is currently unsupported.
 
 ## Limitations
 
-- Insta360 support is experimental. X5/X6 use direct Bluetooth for normal video; X6 also reports battery/storage. X5 can fall back to GPS Remote during setup. Other models pair through the camera's **Insta360 GPS Remote** menu. Verify the camera mode before group recording; recording status may remain unknown.
+- Insta360 support is experimental. X5/X6 use direct Bluetooth for normal video; X6 also reports battery/storage. X5 can fall back to GPS Remote during setup. Other Insta360 models supported by standard builds pair through the camera's **Insta360 GPS Remote** menu. Verify the camera mode before group recording; recording status may remain unknown.
 - Wake is supported for paired GoPros and Osmo Nano. Insta360 wake remains unverified; other DJI models cannot be woken by this app.
 - Phone GPS writes location into recordings and requires permission and the iPhone app to remain open and connected.
 - Apple Watch controls require the paired iPhone.

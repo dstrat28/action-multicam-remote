@@ -22,23 +22,13 @@ struct SettingsView: View {
                         .foregroundStyle(Color.acrInk)
                 }
                 .listRowBackground(Color.acrSurface)
-                Toggle(isOn: $insta360SDKEnabled) {
-                    HStack(spacing: 12) {
-                        Image(systemName: "camera")
-                            .frame(width: 20)
-                        VStack(alignment: .leading, spacing: 3) {
-                            Text("Insta360 SDK")
-                                Text(FeatureAvailability.insta360SDK
-                                     ? "Experimental · Restart Multicam to apply."
-                                     : "Experimental · Requires SDK device build.")
-                                    .font(.caption)
-                                    .foregroundStyle(Color.acrMutedText)
-                        }
+                if FeatureAvailability.insta360SDK {
+                    Toggle(isOn: $insta360SDKEnabled) {
+                        Label("Insta360 SDK", systemImage: "camera")
+                            .foregroundStyle(Color.acrInk)
                     }
-                    .foregroundStyle(Color.acrInk)
+                    .listRowBackground(Color.acrSurface)
                 }
-                .disabled(!FeatureAvailability.insta360SDK)
-                .listRowBackground(Color.acrSurface)
                 NavigationLink {
                     DiagnosticsView()
                 } label: {

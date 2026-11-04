@@ -3786,7 +3786,10 @@ private extension CameraStore {
         model: CameraModel,
         name: String
     ) -> String? {
-        DiscoveredCamera.unsupportedReason(brand: brand, model: model, name: name)
+        if model.requiresInsta360SDK, FeatureAvailability.insta360SDK, !insta360SDKEnabled {
+            return DiscoveredCamera.insta360SDKRequiredReason
+        }
+        return DiscoveredCamera.unsupportedReason(brand: brand, model: model, name: name)
     }
 
     func discoverNextDemoCamera() {

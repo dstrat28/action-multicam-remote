@@ -14,6 +14,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Keep vendor SDK distributions out of Git
+        run: sh ci_scripts/check_vendor_sdk_exclusion.sh
+
       - name: Select Xcode
         run: xcodebuild -version
 
