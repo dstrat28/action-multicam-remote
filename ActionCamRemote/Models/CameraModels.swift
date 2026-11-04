@@ -1724,12 +1724,13 @@ struct CameraStopProgress {
     static func confirmationTimeout(for camera: DiscoveredCamera) -> TimeInterval {
         // Only GPS Remote lacks Stop confirmation. Other cameras can still be
         // finalizing after acceptance and must get time to report Stopped.
-        camera.usesInsta360GPSRemote ? 3 : 15
+        camera.usesInsta360GPSRemote ? Insta360RemoteProtocol.stopFeedbackCooldown : 15
     }
 
     private struct Entry {
         var resultID: UUID?
         var expiresAt: TimeInterval
+        var hasSentResult = false
     }
     private var entries: [UUID: Entry] = [:]
     private var unconfirmedCameraIDs: Set<UUID> = []
@@ -1746,7 +1747,7 @@ struct CameraStopProgress {
         // GPS Remote has no explicit Stop confirmation. Show connection status
         // after its shutter request without synthesizing a stopped camera state.
         if camera.usesInsta360GPSRemote,
-           contains(camera.id) || isUnconfirmed(camera.id) {
+           entries[camera.id]?.hasSentResult == true || isUnconfirmed(camera.id) {
             return false
         }
         return camera.recordingState == .recording || contains(camera.id)
@@ -1763,6 +1764,17 @@ struct CameraStopProgress {
         // Rejecting a duplicate Stop must not replace the Stop already in flight.
         guard result.status == .sent || result.status == .queued || entry.resultID == nil else { return }
         entries[result.cameraID]?.resultID = result.id
+    }
+
+    @discardableResult
+    mutating func didSend(_ result: CameraCommandResult, for camera: DiscoveredCamera, at now: TimeInterval) -> Bool {
+        guard camera.usesInsta360GPSRemote, result.command == .stopRecording, result.status == .sent,
+              let entry = entries[result.cameraID], entry.resultID == result.id, !entry.hasSentResult else { return false }
+        // Bluetooth backpressure can queue Stop. Its shutter cooldown starts
+        // on actual transmission, and duplicate completions cannot extend it.
+        entries[result.cameraID]?.expiresAt = now + Self.confirmationTimeout(for: camera)
+        entries[result.cameraID]?.hasSentResult = true
+        return true
     }
 
     @discardableResult
@@ -1784,6 +1796,9 @@ struct CameraStopProgress {
     mutating func observe(_ camera: DiscoveredCamera, state: CameraRecordingState, canClearActiveRecording: Bool) -> Bool {
         if camera.usesInsta360GPSRemote {
             if state == .recording {
+                // Timers still arrive normally while Stop is queued. They
+                // cannot cancel a request that has not reached the camera.
+                guard entries[camera.id]?.hasSentResult != false else { return false }
                 // The transport suppresses trailing timers during its Stop
                 // cooldown, so a new Recording update is authoritative.
                 return finish(camera.id)

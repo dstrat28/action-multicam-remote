@@ -11,11 +11,13 @@ enum Insta360RemoteServiceRegression {
         var active: [UUID] = []
         var connected: [UUID] = []
         var statuses: [CameraStatusUpdate] = []
+        var completions: [CameraCommandResult] = []
         remote.onEvent = { event in
             switch event {
             case .cameraSessionActive(let id): active.append(id)
             case .cameraConnected(let id): connected.append(id)
             case .cameraStatus(_, let status): statuses.append(status)
+            case .commandCompleted(let result): completions.append(result)
             default: break
             }
         }
@@ -82,12 +84,18 @@ enum Insta360RemoteServiceRegression {
 
         remote.peripheralManager(manager, central: central, didSubscribeTo: notify)
         precondition(connected == [cameraID])
+        remote.peripheralManager(manager, didReceiveWrite: [request(write, timer)])
         manager.acceptsUpdates = false
-        precondition(remote.send(.toggleRecording, to: cameraID, cameraName: "X3 ABC123").status == .queued)
+        let queuedStop = remote.send(.stopRecording, to: cameraID, cameraName: "X3 ABC123")
+        precondition(queuedStop.status == .queued)
         manager.acceptsUpdates = true
         remote.peripheralManagerIsReady(toUpdateSubscribers: manager)
         precondition(manager.updates.count == 1 && manager.updates[0].centrals?.first === central)
         precondition(manager.updates[0].data == Insta360RemoteProtocol.shutterCommand)
+        precondition(completions.count == 1 && completions[0].id == queuedStop.id && completions[0].status == .sent,
+            "The queued Stop completion must identify when its shutter cooldown starts")
+        precondition(remote.send(.startRecording, to: cameraID, cameraName: "X3 ABC123").status == .skipped,
+            "A queued Stop must receive its full cooldown after actual transmission")
 
         // Other models retain CE80 only. Adding X3 must preserve that CE80 and
         // any existing subscribers rather than replacing their service.

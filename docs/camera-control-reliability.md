@@ -70,6 +70,10 @@ or block a new explicit Record/photo/toggle afterward; no stopped-state confirma
 is required for that next action. A fresh timer after the cooldown can establish
 Recording again and permit another Stop. No shutter action is repeated automatically.
 Expiry runs in common run-loop modes so scrolling does not suspend the deadline.
+When Bluetooth queues Stop, the UI's cooldown starts when the queued command is
+actually transmitted. It uses the same duration as the transport; duplicate or
+superseded delivery callbacks cannot extend the wait. Recording timers while
+Stop is still queued keep Recording visible and cannot cancel its pending UI.
 
 The app's Stop spinner ends after three seconds for GPS Remote. Other cameras
 wait for stopped status, with a 15-second fallback to an advisory “Stop not

@@ -1274,12 +1274,16 @@ private extension CameraStore {
                 commandResults.insert(result, at: 0)
             }
             recordCommandHistory(result)
+            let camera = cameras.first(where: { $0.id == result.cameraID })
+            if let camera {
+                stopProgress.didSend(result, for: camera, at: ProcessInfo.processInfo.systemUptime)
+            }
             if result.command == .stopRecording, result.status != .sent, result.status != .queued {
                 finishStopping(for: result.cameraID, matching: result.id)
             }
             // A discarded older toggle must not reset a newer user action.
             if commandResults.first(where: { $0.cameraID == result.cameraID })?.id == result.id,
-               let camera = cameras.first(where: { $0.id == result.cameraID }) {
+               let camera {
                 handleCommandResult(result, for: camera)
             }
         case let .log(message):
@@ -1777,6 +1781,7 @@ private extension CameraStore {
         guard result.command == .stopRecording else { return }
         if result.status == .sent || result.status == .queued { beginStopping(for: camera) }
         stopProgress.attach(result)
+        stopProgress.didSend(result, for: camera, at: ProcessInfo.processInfo.systemUptime)
     }
 
     func finishStopping(for id: UUID, matching resultID: UUID? = nil) {

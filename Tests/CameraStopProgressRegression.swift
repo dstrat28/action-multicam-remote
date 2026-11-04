@@ -136,6 +136,9 @@ enum CameraStopProgressRegression {
         x3.insta360UsesSDK = false
         x3.recordingState = .recording
         progress.begin(x3.id, at: 210, timeout: 3)
+        let remoteStop = stop(x3.id)
+        progress.attach(remoteStop)
+        precondition(progress.didSend(remoteStop, for: x3, at: 210))
         precondition(!progress.showsRecordingStatus(for: x3))
         x3.recordingState = .unknown
         precondition(progress.markUnconfirmed(x3.id))
@@ -150,6 +153,9 @@ enum CameraStopProgressRegression {
 
         precondition(CameraStopProgress.confirmationTimeout(for: x3) == 3)
         progress.begin(x3.id, at: 215, timeout: CameraStopProgress.confirmationTimeout(for: x3))
+        let freshRemoteStop = stop(x3.id)
+        progress.attach(freshRemoteStop)
+        precondition(progress.didSend(freshRemoteStop, for: x3, at: 215))
         precondition(!progress.showsRecordingStatus(for: x3))
         precondition(progress.observe(x3, state: .recording, canClearActiveRecording: true),
             "Fresh GPS Remote Recording feedback must clear Stop even before the UI expiry timer runs")
@@ -175,6 +181,32 @@ enum CameraStopProgressRegression {
         precondition(progress.observe(nano, state: .stopped, canClearActiveRecording: true))
         precondition(!progress.contains(front), "Confirmed Nano Stop must finish immediately without waiting for the deadline")
         precondition(nano.primaryRecordCommand == .startRecording)
+
+        // A queued GPS Remote Stop must keep its entire shutter cooldown after
+        // Bluetooth accepts it, rather than measuring from the original tap.
+        x3.recordingState = .recording
+        progress.begin(x3.id, at: 300, timeout: CameraStopProgress.confirmationTimeout(for: x3))
+        var queuedStop = stop(x3.id, status: .queued)
+        progress.attach(queuedStop)
+        precondition(progress.showsRecordingStatus(for: x3), "An unsent Stop must not hide an active recording")
+        precondition(!progress.observe(x3, state: .recording, canClearActiveRecording: true))
+        precondition(progress.contains(x3.id), "Recording timers before transmission must not cancel a queued Stop")
+        precondition(!progress.didSend(queuedStop, for: x3, at: 300))
+        queuedStop.status = .sent
+        precondition(progress.didSend(queuedStop, for: x3, at: 301.5))
+        precondition(!progress.showsRecordingStatus(for: x3))
+        precondition(progress.expire(at: 303).isEmpty,
+            "The original tap deadline must not expose Record during the transport cooldown")
+        precondition(!progress.didSend(queuedStop, for: x3, at: 304),
+            "Duplicate delivery callbacks must not prolong the cooldown")
+        precondition(progress.expire(at: 304.49).isEmpty)
+        precondition(progress.expire(at: 304.5) == [x3.id])
+        precondition(progress.finish(x3.id))
+        progress.begin(x3.id, at: 310, timeout: CameraStopProgress.confirmationTimeout(for: x3))
+        progress.attach(stop(x3.id, status: .queued))
+        precondition(!progress.didSend(queuedStop, for: x3, at: 311),
+            "An older Stop delivery must not change a newer request's deadline")
+        precondition(progress.expire(at: 313) == [x3.id])
         print("Stop progress checks passed: confirmation, unknown state, rejected duplicates, late results, failures, independent cameras, deadlines, and cleanup.")
     }
 }
