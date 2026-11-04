@@ -33,6 +33,13 @@ not when first queued. A response must match both the sequence and command type.
 Expired writes are discarded, late replies cannot revive expired intents, and
 Stop cancels an unsent Start/photo request. A late Start acknowledgement cannot restore Starting after a newer Stop. Failures reach saved command history.
 
+If the latest explicit Stop times out, is rejected, or loses its connection,
+the store retains that Stop, closes the failed link, and issues a new Stop after
+the camera's protocol is ready again. A newer capture request (including Start
+still preparing Video mode) supersedes that recovery. Disconnect pauses it.
+This recovery applies only to DJI's explicit Stop; uncertain Start, photo,
+mode-change, and Insta360 toggle commands are never replayed automatically.
+
 First-time pairing requests camera confirmation and allows 90 seconds for it.
 An explicit camera rejection pauses automatic pairing attempts until a user
 connects again. Stop delivery or acknowledgement does not establish stopped
@@ -50,6 +57,12 @@ advance by two, wrap at 256, and advance only after CoreBluetooth accepts a
 notification. A backpressured command therefore retains the correct sequence.
 Counters are separate for every camera and reset when its session is replaced.
 After a shutter press, further shutter commands wait for feedback. A trailing recording timer does not reopen Stop during that window: a second Stop toggle could restart recording. Silence returns the state to unknown rather than claiming the camera stopped.
+
+When the Stop feedback window expires, recent timer evidence still blocks Start,
+photo, and toggle requests until that evidence becomes stale. Only a new timer
+after the window ends can permit another Stop. Trailing timers do not publish a
+Recording state during the Stop window, and expiry runs in common run-loop modes
+so scrolling does not suspend the deadline.
 
 The sequence behavior comes from [physical X4 remote observations](https://github.com/TheAngryRaven/insta360-ble-gps-spec/blob/7964f1133e5d0f2c7eb73aaaaf5d6ebdd2127199/README.md).
 Applicability to other GPS Remote models is inferred from the shared packet

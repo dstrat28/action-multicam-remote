@@ -1729,6 +1729,32 @@ enum CameraRecordingStartPolicy {
     }
 }
 
+enum CameraCommandFailureAction: Equatable {
+    case ignore
+    case report
+    case reconnectToStop
+}
+
+enum CameraCommandFailurePolicy {
+    static func action(
+        for result: CameraCommandResult,
+        brand: CameraBrand,
+        among results: [CameraCommandResult],
+        hasPendingExplicitStart: Bool,
+        userDisconnected: Bool
+    ) -> CameraCommandFailureAction {
+        guard result.status != .sent, result.status != .queued,
+              !userDisconnected,
+              CameraRecordingStartPolicy.isLatestCaptureResult(result, among: results) else { return .ignore }
+        // Start can be waiting for mode selection before it has a command result.
+        guard result.command != .stopRecording || !hasPendingExplicitStart else { return .ignore }
+        // DJI Stop is explicit and idempotent. Never replay Start, photos, or
+        // Insta360 shutter toggles after an uncertain outcome.
+        return brand == .dji && result.command == .stopRecording && result.status == .failed
+            ? .reconnectToStop : .report
+    }
+}
+
 enum CameraCommand: Equatable, Codable {
     case startRecording
     case capturePhoto

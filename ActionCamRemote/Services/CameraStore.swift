@@ -797,6 +797,8 @@ final class CameraStore {
 
     func disconnect(_ camera: DiscoveredCamera) {
         finishStopping(for: camera.id)
+        reconnectTasksByCameraID[camera.id]?.cancel()
+        reconnectTasksByCameraID[camera.id] = nil
         pendingInsta360GPSFallbackIDs.remove(camera.id)
         cancelConnectionTimeout(for: camera.id)
         cancelConnectedStalenessTimeout(for: camera.id)
@@ -2370,7 +2372,7 @@ private extension CameraStore {
             await MainActor.run {
                 guard let self else { return }
                 guard let latest = self.cameras.first(where: { $0.id == id }) else { return }
-                guard latest.isPaired else {
+                guard latest.isPaired, !self.userDisconnectedCameraIDs.contains(id) else {
                     self.reconnectTasksByCameraID[id] = nil
                     return
                 }
@@ -2896,15 +2898,26 @@ private extension CameraStore {
         if result.command == .stopRecording, result.status != .sent, result.status != .queued {
             finishStopping(for: result.cameraID, matching: result.id)
         }
-        guard result.status != .sent, result.status != .queued,
-              CameraRecordingStartPolicy.isLatestCaptureResult(result, among: commandResults),
-              let camera = cameras.first(where: { $0.id == result.cameraID }) else { return }
+        guard let camera = cameras.first(where: { $0.id == result.cameraID }) else { return }
+        let action = CameraCommandFailurePolicy.action(
+            for: result, brand: camera.brand, among: commandResults,
+            hasPendingExplicitStart: pendingStartCameraIDs.contains(camera.id),
+            userDisconnected: userDisconnectedCameraIDs.contains(camera.id)
+        )
+        guard action != .ignore else { return }
         pendingStartCameraIDs.remove(camera.id)
         cancelStartRecording(for: camera.id)
         cancelWakeRetry(for: camera.id)
-        // An expired capture intent must not enter reconnect-and-retry logic.
         updateCameraStatus(camera.id, update: CameraStatusUpdate(recordingState: .unknown))
         setCameraDiagnostic(result.message, for: camera)
+        if action == .reconnectToStop, !isDemoMode {
+            queueStopRecording(for: camera, reason: result.message)
+            // Close the stalled link so the existing protocol-ready path can
+            // issue a fresh Stop after reconnect. The transport never replays it.
+            scanner.disconnect(from: camera.id)
+            clients[camera.id] = nil
+            updateCamera(camera.id, state: .disconnected, detail: result.message)
+        }
     }
 
     func handleCommandResult(_ result: CameraCommandResult, for camera: DiscoveredCamera) {
