@@ -7,7 +7,6 @@ struct CameraRowView: View {
     @State private var pendingCaptureMode: CaptureMode?
     @State private var captureSettingsTimestampBeforeModeChange: Date?
     var camera: DiscoveredCamera
-    var matchesConnectedPeerHeight: Bool = false
     var onShowDetails: () -> Void = {}
 
     var body: some View {
@@ -27,6 +26,8 @@ struct CameraRowView: View {
             .padding(.top, 8)
             .padding(.bottom, 12)
 
+            Spacer(minLength: 0)
+
             if showsCaptureBar {
                 Divider()
                     .overlay(Color.acrLine.opacity(0.58))
@@ -44,7 +45,8 @@ struct CameraRowView: View {
             }
         }
         .frame(
-            minHeight: matchesConnectedPeerHeight ? 168 : nil,
+            maxWidth: .infinity,
+            maxHeight: .infinity,
             alignment: .top
         )
         .clipShape(RoundedRectangle(cornerRadius: ACRDesign.cardCornerRadius, style: .continuous))
