@@ -63,6 +63,7 @@ public final class SDKTestCommands: INSCameraBasicCommands {
     public var options = INSCameraOptions()
     public var holdOptions = false
     public var acceptCapture = true
+    public var appliesModeChanges = true
     public var includeSuccessTypes = false
     public var optionsError: Error?
     public var successTypesOverride: [NSNumber]?
@@ -70,6 +71,8 @@ public final class SDKTestCommands: INSCameraBasicCommands {
     public private(set) var starts = 0
     public private(set) var stops = 0
     public private(set) var heartbeats = 0
+    public private(set) var statusRequests = 0
+    public private(set) var modeChanges = 0
     public private(set) var optionRequests: [[NSNumber]] = []
     public var startCompletion: ((Error?) -> Void)?
     public init() {}
@@ -84,6 +87,8 @@ public final class SDKTestCommands: INSCameraBasicCommands {
     }
     public func takePicture(with options: INSTakePictureOptions?, completion: @escaping (Error?, Any?) -> Void) { completion(nil, nil) }
     public func setOptions(_ options: INSCameraOptions, forTypes: [NSNumber], completion: @escaping (Error?, [NSNumber]?) -> Void) {
+        modeChanges += 1
+        if !appliesModeChanges { completion(nil, nil); return }
         if forTypes.contains(NSNumber(value: INSCameraOptionsType.photoSubMode.rawValue)) {
             self.options.photoSubMode = options.photoSubMode; self.options.videoSubMode = 100
         } else {
@@ -92,6 +97,7 @@ public final class SDKTestCommands: INSCameraBasicCommands {
         completion(nil, includeSuccessTypes ? forTypes : nil)
     }
     public func getCurrentCaptureStatus(completion: @escaping (Error?, INSCameraCaptureStatus?) -> Void) {
+        statusRequests += 1
         let snapshot = INSCameraCaptureStatus()
         snapshot.state = status.state; snapshot.captureTime = status.captureTime
         completion(nil, snapshot)

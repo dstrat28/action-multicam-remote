@@ -97,8 +97,10 @@ final class Insta360SDKClient: NSObject, BLECameraDeviceClient {
                 self.pump()
             }
         }
-        // Match the sample's half-second heartbeat. Common modes keep it active
-        // while menus and scrolling track touches.
+        // Tick command deadlines and poll per-device capture status. The
+        // vendor's sendHeartbeats API is documented for socket connections;
+        // its Bluetooth sample polls capture status instead. Common modes
+        // keep our polling active while menus and scrolling track touches.
         let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in self?.pump() }
         self.timer = timer
         RunLoop.main.add(timer, forMode: .common)
@@ -201,7 +203,6 @@ final class Insta360SDKClient: NSObject, BLECameraDeviceClient {
             }
             return
         }
-        commands?.sendHeartbeats(with: nil)
         guard now - (lastStatusAt ?? beganAt) < 30 else {
             fail("SDK has not returned a capture status for 30 seconds.")
             return

@@ -24,6 +24,7 @@ final class Insta360DirectSession {
     let cameraID: UUID
     let cameraName: String
     var onWrite: ((Data, UInt32) -> Void)?
+    var onProtocolReady: (() -> Void)?
     var onStatus: ((CameraStatusUpdate) -> Void)?
     var onCompletion: ((CameraCommandResult) -> Void)?
     var onLog: ((String) -> Void)?
@@ -31,7 +32,7 @@ final class Insta360DirectSession {
 
     private(set) var isReady = false
     private(set) var recordingState = Insta360DirectRecordingState.unknown
-    private var hasConfirmedProtocol = false
+    private(set) var hasConfirmedProtocol = false
     private var hasSentCapture = false
     var mayUseGPSRemoteFallback: Bool { profile == .x5 && !hasConfirmedProtocol && !hasSentCapture }
     private var request: Request?
@@ -44,6 +45,8 @@ final class Insta360DirectSession {
     private var nextStatusAt: TimeInterval = 0
     private var nextTelemetryAt: TimeInterval = 0
     private var statusAt: TimeInterval?
+    private var beganAt: TimeInterval = 0
+    private var lastValidStatusAt: TimeInterval?
     private var elapsed: UInt32?
     private var telemetry: Insta360X6Telemetry?
     private var telemetryAt: TimeInterval?
@@ -63,6 +66,8 @@ final class Insta360DirectSession {
         isReady = true
         hasConfirmedProtocol = false
         hasSentCapture = false
+        beganAt = now
+        lastValidStatusAt = nil
         needsSync = profile == .x5
         nextHeartbeatAt = now + 2
         nextStatusAt = now
@@ -79,6 +84,7 @@ final class Insta360DirectSession {
         finishCapture(status: .failed, message: "\(profile.name) disconnected before the recording state was confirmed.")
         recordingState = .unknown
         statusAt = nil
+        lastValidStatusAt = nil
         elapsed = nil
         telemetry = nil
         telemetryAt = nil
@@ -217,15 +223,21 @@ final class Insta360DirectSession {
             switch active.command {
             case .status:
                 let status = try Insta360DirectCaptureStatus.decodeResponse(message.body)
+                let shouldReportReady = !hasConfirmedProtocol
                 hasConfirmedProtocol = true
                 recordingState = status.recording
                 statusAt = now
+                lastValidStatusAt = now
                 elapsed = status.elapsed.flatMap(UInt32.init(exactly:))
                 if let capture, capture.sent, capture.target == recordingState {
                     finishCapture(status: .sent, message: recordingState == .recording
                         ? "\(profile.name) confirmed recording started." : "\(profile.name) confirmed recording stopped.")
                 }
                 nextStatusAt = now + 1
+                // Protocol establishment is an event even if the first valid
+                // status is Unknown, equal to the already-published initial
+                // state. Do not route readiness through status deduplication.
+                if shouldReportReady { onProtocolReady?() }
             case .telemetry:
                 telemetry = try Insta360X6Telemetry.decodeResponse(message.body)
                 telemetryAt = now
@@ -248,6 +260,10 @@ final class Insta360DirectSession {
     }
 
     private func expire(at now: TimeInterval) {
+        if now - (lastValidStatusAt ?? beganAt) >= 30 {
+            transportFailed("\(profile.name) has not returned a valid capture status for 30 seconds; reconnect to restore control.")
+            return
+        }
         if let auxiliaryWrite, now >= auxiliaryWrite.expiresAt {
             transportFailed("\(profile.name) Bluetooth heartbeat/sync write timed out; reconnect to restore the stream.")
             return

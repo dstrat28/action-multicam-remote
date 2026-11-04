@@ -38,7 +38,7 @@ private final class Harness {
         client.peripheral(peripheral, didUpdateValueFor: characteristic, error: nil)
     }
 
-    @discardableResult func respondNext(hardwareStatus: UInt8 = 0) -> Data {
+    @discardableResult func respondNext(hardwareStatus: UInt8 = 0, commandStatus: UInt8 = 0) -> Data {
         var parser = GoProPacketReassembler()
         var payload: Data?
         var characteristic: CBCharacteristic!
@@ -67,7 +67,7 @@ private final class Harness {
         } else {
             response = commandResponse
             body = request[0] >= 0xF0 ? Data([request[0], request[1] | 0x80, 8, 0])
-                : Data([request[0], request[0] == 0x3C ? hardwareStatus : 0])
+                : Data([request[0], request[0] == 0x3C ? hardwareStatus : commandStatus])
         }
         notify(body, on: response)
         return request
@@ -145,6 +145,53 @@ enum GoProTransportRegression {
             let h = Harness(initialPairing: true)
             RunLoop.current.run(until: Date().addingTimeInterval(5.2))
             precondition(h.disconnects == 0, "The normal write watchdog must allow time for first-pairing approval")
+            h.close()
+        }
+        for command in [CameraCommand.capturePhoto, .setMode(.photo), .applySetting(CameraSetting(id: 2, value: 1, label: "Test"))] {
+            let h = Harness()
+            h.drain()
+            h.notify(Data([0x93, 0, 8, 1, 1, 10, 1, 0]), on: h.queryResponse)
+            let deferred = h.client.send(command)
+            precondition(deferred.status == .queued)
+            h.drain() // A fresh idle response releases the deferred command.
+            precondition(h.completions.filter { $0.id == deferred.id }.count == 1)
+            precondition(h.completions.first { $0.id == deferred.id }?.status == .sent,
+                         "A deferred command must complete its original history entry")
+            h.close()
+        }
+        do {
+            let h = Harness()
+            h.drain()
+            h.notify(Data([0x93, 0, 8, 1, 1, 10, 1, 0]), on: h.queryResponse)
+            let photo = h.client.send(.capturePhoto)
+            let mode = h.client.send(.setMode(.photo))
+            precondition(h.completions.filter { $0.id == photo.id && $0.status == .skipped }.count == 1)
+            h.drain()
+            precondition(h.completions.first { $0.id == mode.id }?.status == .sent)
+            precondition(!h.peripheral.writes.contains { $0.data == Data([0x20, 3, 1, 1, 1]) })
+            h.close()
+        }
+        do {
+            let h = Harness()
+            h.drain()
+            h.notify(Data([0x93, 0, 8, 1, 1, 10, 1, 0]), on: h.queryResponse)
+            let photo = h.client.send(.capturePhoto)
+            h.close()
+            precondition(h.completions.filter { $0.id == photo.id && $0.status == .failed }.count == 1)
+        }
+        do {
+            let h = Harness()
+            h.drain()
+            h.notify(Data([0x93, 0, 8, 1, 1, 10, 1, 0]), on: h.queryResponse)
+            let photo = h.client.send(.capturePhoto)
+            var count = 0
+            while h.nextWrite < h.peripheral.writes.count {
+                h.respondNext(commandStatus: 1)
+                count += 1
+                precondition(count < 50)
+            }
+            precondition(h.completions.filter { $0.id == photo.id && $0.status == .failed }.count == 1,
+                         "A camera rejection must resolve the original deferred command")
             h.close()
         }
         print("GoPro transport checks passed: reply ordering, fragmentation, early notifications, startup recovery, capture timeout, Stop cancellation, and pairing approval time.")

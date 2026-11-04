@@ -53,6 +53,10 @@ final class Insta360DirectBLEClient: NSObject, BLECameraDeviceClient {
         session = Insta360DirectSession(cameraID: cameraID, cameraName: cameraName, profile: profile)
         super.init()
         session.onWrite = { [weak self] data, id in self?.write(data, id: id) }
+        session.onProtocolReady = { [weak self] in
+            guard let self else { return }
+            self.onStatus(cameraID, .connected, "Insta360 \(self.profile.name) direct Bluetooth ready. Use normal Video mode on the camera.")
+        }
         session.onStatus = { [weak self] update in self?.onCameraStatus(cameraID, update) }
         session.onCompletion = { [weak self] result in self?.onCommandCompleted(result) }
         session.onLog = { [weak self] message in self?.onLog("\(cameraName): \(message)") }
@@ -173,7 +177,7 @@ final class Insta360DirectBLEClient: NSObject, BLECameraDeviceClient {
             return
         }
         guard !session.isReady else { return }
-        onStatus(cameraID, .connected, "Insta360 \(self.profile.name) direct Bluetooth ready. Use normal Video mode on the camera.")
+        onStatus(cameraID, .connecting, "Insta360 \(self.profile.name) command channel open; waiting for a valid capture status.")
         session.begin(at: ProcessInfo.processInfo.systemUptime)
         setupBeganAt = ProcessInfo.processInfo.systemUptime
         let timer = Timer(timeInterval: 1, repeats: true) { [weak self] _ in

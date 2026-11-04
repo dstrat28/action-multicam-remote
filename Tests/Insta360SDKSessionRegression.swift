@@ -30,6 +30,8 @@ enum Insta360SDKSessionRegression {
         first.observe(state: .recording, mode: .video, at: 3, queryCommandID: start.id, queryToken: first.observationToken)
         precondition(results.count == 1) // No confirmation until SDK accepts the command.
         first.accepted(start.id, error: nil, at: 3)
+        first.observe(state: .recording, mode: nil, at: 3.5, queryCommandID: start.id, queryToken: first.observationToken)
+        precondition(first.pendingID == start.id, "An advanced/unknown video mode cannot confirm normal Video Start")
         first.observe(state: .recording, mode: .video, at: 2.5, queryCommandID: start.id, queryToken: first.observationToken)
         precondition(results.count == 1) // A reply observed before acceptance cannot confirm it.
         first.observe(state: .recording, mode: .video, at: 4, queryCommandID: start.id, queryToken: first.observationToken)
@@ -60,6 +62,20 @@ enum Insta360SDKSessionRegression {
         first.observe(state: .stopped, mode: .video, at: 15, queryCommandID: supersedingStop.id, queryToken: first.observationToken)
         precondition(results.last?.id == supersedingStop.id && results.last?.status == .sent)
 
+        let pendingMode = first.send(.setMode(.video), at: 15.1)
+        first.accepted(pendingMode.id, error: nil, at: 15.1)
+        first.observe(state: .recording, mode: .video, at: 15.2, queryCommandID: pendingMode.id,
+            queryToken: first.observationToken)
+        let stopDuringMode = first.send(.stopRecording, at: 15.3)
+        precondition(stopDuringMode.status == .queued && first.pendingID == stopDuringMode.id)
+        precondition(results.last?.id == pendingMode.id && results.last?.status == .failed)
+        first.accepted(pendingMode.id, error: nil, at: 15.4)
+        precondition(first.pendingID == stopDuringMode.id, "A late mode callback cannot consume explicit Stop")
+        first.accepted(stopDuringMode.id, error: nil, at: 15.4)
+        first.observe(state: .stopped, mode: .video, at: 15.5, queryCommandID: stopDuringMode.id,
+            queryToken: first.observationToken)
+        precondition(results.last?.id == stopDuringMode.id && results.last?.status == .sent)
+
         let timeout = first.send(.startRecording, at: 16)
         first.accepted(timeout.id, error: nil, at: 16)
         first.tick(at: 41)
@@ -76,6 +92,8 @@ enum Insta360SDKSessionRegression {
         let failedPhoto = first.send(.capturePhoto, at: 44)
         first.accepted(failedPhoto.id, error: NSError(domain: "Camera", code: 1), at: 44)
         precondition(results.last?.id == failedPhoto.id && results.last?.status == .failed)
+        precondition(first.recordingState == .unknown && first.statusAt == nil,
+                     "A capture error must not preserve a fresh stopped state that could authorize another capture")
 
         let disconnected = first.send(.stopRecording, at: 45)
         first.end()

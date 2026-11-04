@@ -43,8 +43,8 @@ final class Insta360SDKSession {
 
     func send(_ command: CameraCommand, at now: TimeInterval) -> CameraCommandResult {
         tick(at: now)
-        if command == .stopRecording, pending?.result.command == .startRecording {
-            finish(.failed, "Start confirmation was superseded by explicit Stop; Start will not be repeated.")
+        if command == .stopRecording, let previous = pending?.result.command, previous != .stopRecording {
+            finish(.failed, "\(previous.label) confirmation was superseded by explicit Stop; the command will not be repeated.")
         }
         let reason: String?
         if isBusy {
@@ -82,7 +82,19 @@ final class Insta360SDKSession {
         tick(at: now)
         guard pendingID == id else { return }
         if let error {
-            finish(.failed, "SDK command failed: \(error.localizedDescription)")
+            let isCapture: Bool
+            switch pending?.result.command {
+            case .startRecording, .stopRecording, .capturePhoto: isCapture = true
+            default: isCapture = false
+            }
+            if isCapture {
+                recordingState = .unknown
+                currentMode = nil
+                statusAt = nil
+            }
+            finish(.failed, isCapture
+                ? "SDK capture outcome is unconfirmed: \(error.localizedDescription). Check the camera; no retry was sent."
+                : "SDK command failed: \(error.localizedDescription)")
         } else if pending?.result.command == .capturePhoto {
             finish(.sent, "SDK photo request completed. Verify the photo on the camera.")
         } else {
@@ -104,7 +116,7 @@ final class Insta360SDKSession {
               pending.result.id == queryCommandID else { return true }
         let confirmed: Bool
         switch pending.result.command {
-        case .startRecording: confirmed = state == .recording
+        case .startRecording: confirmed = state == .recording && mode == .video
         case .stopRecording: confirmed = state == .stopped
         case .setMode(let target): confirmed = mode == target && state == .stopped
         default: confirmed = false

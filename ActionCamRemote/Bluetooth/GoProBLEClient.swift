@@ -46,6 +46,8 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
     private var settingRefreshTimer: Timer?
     private var startExpiryTimer: Timer?
     private var pendingStartResult: CameraCommandResult?
+    private var deferredCommandResult: CameraCommandResult?
+    private var resumedDeferredResult: CameraCommandResult?
     private var pendingWrites = GoProCommandQueue<PendingWrite>()
     private var activeWrite: PendingWrite?
     private var replyWaiter: GoProReplyWaiter?
@@ -133,6 +135,7 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
         hasConfirmedHardwareInfo = false
         let pendingStartID = pendingStartResult?.id
         completePendingStart(status: .failed, message: "GoPro disconnected before the queued Start was delivered.")
+        completeDeferredCommand(status: .failed, message: "GoPro disconnected before the deferred command was delivered.", excluding: pendingStartID)
         if let activeWrite { completeWrite(activeWrite, status: .failed, message: "GoPro disconnected before its response arrived.") }
         while !pendingWrites.isEmpty {
             let write = pendingWrites.removeFirst()
@@ -192,6 +195,9 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
         for write in pendingWrites.prepare(for: command) where write.result?.id != replacedStartID {
             completeWrite(write, status: .skipped, message: "A newer GoPro command replaced this unsent command.")
         }
+        if let deferredCommandResult, pendingWrites.deferredCommand != deferredCommandResult.command {
+            completeDeferredCommand(status: .skipped, message: "A newer GoPro command replaced the deferred command.", excluding: replacedStartID)
+        }
         let result = sendPreparedCommand(command)
         if command == .startRecording, pendingWrites.hasPendingStart {
             pendingStartResult = result
@@ -208,13 +214,20 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
         }
 
         if isCameraBusy, shouldDeferWhileBusy(command) {
+            let replacedStartID = pendingStartResult?.id
+            if deferredCommandResult?.command == .startRecording {
+                completePendingStart(status: .skipped, message: "A newer GoPro command replaced the deferred Start.")
+            }
+            completeDeferredCommand(status: .skipped, message: "A newer GoPro command replaced the deferred command.", excluding: replacedStartID)
             pendingWrites.deferUntilIdle(command)
             requestStatusValues(shouldLog: false)
-            return result(
+            let commandResult = result(
                 for: command,
                 status: .queued,
                 message: "Waiting for the GoPro to finish its current operation."
             )
+            deferredCommandResult = commandResult
+            return commandResult
         }
 
         switch command {
@@ -275,12 +288,14 @@ final class GoProBLEClient: NSObject, BLECameraDeviceClient {
                 return result(for: command, status: .skipped, message: "Settings characteristic is not ready yet.")
             }
             let payload = GoProPacket.commandPayload(id: setting.id, parameters: [setting.value])
+            let commandResult = result(for: command, status: .sent, message: "Queued GoPro setting \(setting.id).")
             enqueueWrite(
                 GoProPacket.packetize(payload),
                 to: settingsCharacteristic,
-                logMessage: "\(cameraName): GoPro set \(setting.label) -> settings \(payload.hexString)"
+                logMessage: "\(cameraName): GoPro set \(setting.label) -> settings \(payload.hexString)",
+                command: command, commandResult: commandResult
             )
-            return result(for: command, status: .sent, message: "Queued GoPro setting \(setting.id).")
+            return commandResult
         case .keepAlive:
             return writeSettingCommand(.keepAlive, label: command)
         }
@@ -1166,9 +1181,14 @@ private extension GoProBLEClient {
         expirePendingStart()
         guard let command = pendingWrites.takeDeferredCommand(isBusy: isCameraBusy) else { return }
         // Moving from busy deferral to the write queue preserves the deadline.
+        resumedDeferredResult = deferredCommandResult
+        deferredCommandResult = nil
         let commandResult = sendPreparedCommand(command)
+        resumedDeferredResult = nil
         if command == .startRecording, commandResult.status != .sent, commandResult.status != .queued {
             completePendingStart(status: commandResult.status, message: commandResult.message)
+        } else if commandResult.status != .sent, commandResult.status != .queued {
+            onCommandCompleted(commandResult)
         }
         scheduleStartExpiry()
         onLog("\(cameraName): deferred GoPro \(command.label.lowercased()) \(commandResult.status.rawValue.lowercased()).")
@@ -1186,6 +1206,7 @@ private extension GoProBLEClient {
 
     func expirePendingStart() {
         guard pendingWrites.expireUnsentStart(at: .now) else { return }
+        if deferredCommandResult?.command == .startRecording { deferredCommandResult = nil }
         completePendingStart(status: .skipped, message: "GoPro start expired before BLE delivery; no delayed shutter was sent.")
         startExpiryTimer?.invalidate()
         startExpiryTimer = nil
@@ -1199,6 +1220,22 @@ private extension GoProBLEClient {
         result.timestamp = .now
         onCommandCompleted(result)
         onLog("\(cameraName): \(message)")
+    }
+
+    private func completeDeferredCommand(status: CameraCommandStatus, message: String, excluding id: UUID?) {
+        guard var result = deferredCommandResult else { return }
+        deferredCommandResult = nil
+        guard result.id != id else { return }
+        result.status = status
+        result.message = message
+        result.timestamp = .now
+        onCommandCompleted(result)
+    }
+
+    private func result(for command: CameraCommand, status: CameraCommandStatus, message: String) -> CameraCommandResult {
+        let original = resumedDeferredResult.flatMap { $0.command == command ? $0 : nil }
+        return CameraCommandResult(id: original?.id ?? UUID(), cameraID: cameraID, cameraName: cameraName,
+            command: command, status: status, message: message, timestamp: .now)
     }
 
     func goProTelemetry(fromStatusValues values: [UInt8: Data]) -> CameraTelemetry {

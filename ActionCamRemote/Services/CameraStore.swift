@@ -1079,10 +1079,7 @@ final class CameraStore {
 
     @discardableResult
     func stopAllRecording() -> Bool {
-        let targets = cameras.filter {
-            $0.supportsBatchRecord
-                && ($0.recordingState == .recording || $0.recordingState == .starting)
-        }
+        let targets = cameras.filter(\.isTargetForStopAll)
         guard !targets.isEmpty else {
             appendLog("No cameras are recording.")
             return false
@@ -2544,10 +2541,7 @@ private extension CameraStore {
     func replayPendingStopIfReady(for id: UUID, detail: String?) {
         guard pendingStopCameraIDs.contains(id) else { return }
         guard let latest = cameras.first(where: { $0.id == id }), latest.connectionState == .connected else { return }
-        let isReady = isDJIControlReady(detail: detail)
-            || (latest.behavior.kind == .insta360Direct && detail?.contains("direct Bluetooth ready") == true)
-            || (latest.insta360UsesSDK == true && detail?.contains("SDK Bluetooth ready") == true)
-        guard isReady else { return }
+        guard CameraStopReplayPolicy.consumeIfReady(camera: latest, detail: detail, pending: &pendingStopCameraIDs) else { return }
 
         appendLog("\(latest.name): sending queued stop after reconnect.")
         send(.stopRecording, to: [latest])
@@ -2710,6 +2704,28 @@ private extension CameraStore {
 
                     let isSleepingActionWakeAttempt = latest.supportsExperimentalDJISleepWake
                         && self.sleepingDJICameraIDs.contains(latest.id)
+                    if latest.insta360UsesSDK == true,
+                       (self.modeSwitchAttemptsByCameraID[id] ?? 0) > 0 {
+                        let modeResult = self.commandResults.first {
+                            $0.cameraID == id && $0.command == .setMode(.video)
+                        }
+                        switch CameraRecordingStartPolicy.sdkModePreparation(
+                            result: modeResult, currentMode: latest.currentMode, now: Date()
+                        ) {
+                        case .waiting:
+                            self.scheduleRecordAfterModeSwitch(for: [id])
+                            return
+                        case .failed:
+                            self.appendLog("\(latest.name): SDK Video mode did not confirm; recording was not started.")
+                            self.setCameraDiagnostic("Switch this camera to Video mode, then try recording again.", for: latest)
+                            self.pendingStartCameraIDs.remove(id)
+                            self.clearStateGuards(for: id)
+                            self.cancelStartRecording(for: id)
+                            return
+                        case .ready:
+                            break
+                        }
+                    }
                     if !isSleepingActionWakeAttempt,
                        latest.currentMode != .video,
                        latest.canSwitchToVideoMode {
@@ -2885,7 +2901,8 @@ private extension CameraStore {
 
     func pendingStartStatusUpdate(for camera: DiscoveredCamera) -> CameraStatusUpdate {
         CameraStatusUpdate(
-            recordingState: .starting
+            recordingState: .starting,
+            currentMode: camera.insta360UsesSDK == true ? camera.currentMode : nil
         )
     }
 

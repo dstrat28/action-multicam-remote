@@ -189,12 +189,30 @@ enum Insta360X6ProtocolRegression {
         readings.reply(bytes("0a06080010005000"), at: 0.01)
         readings.reply(bytes("120f5a021064a2010810a0c21e18c0843d"), at: 0.02)
         precondition(readings.updates.last?.telemetry?.storageTotalMB == 1)
+        for time in [25.0, 50.0, 70.0] {
+            readings.session.tick(at: time)
+            readings.reply(bytes("0a06080010005000"), at: time + 0.01)
+            if readings.writes.last?.command == 8 { readings.reply([0xFF], at: time + 0.02) }
+        }
         readings.session.receive(Insta360DirectMessage(code: 8195, id: 999,
-            body: bytes("0a0408001064"), type: 4), at: 70)
+            body: bytes("0a0408001064"), type: 4), at: 70.03)
         readings.session.tick(at: 76)
         precondition(readings.updates.last?.telemetry?.batteryPercent == 100)
         precondition(readings.updates.last?.telemetry?.storageTotalMB == nil)
         precondition(readings.updates.last?.replacesTelemetry == true, "A battery event must not keep old storage readings fresh")
+
+        let neverReady = SessionHarness()
+        precondition(!neverReady.session.hasConfirmedProtocol)
+        neverReady.session.didWrite(id: neverReady.writes.last!.id, at: 0.01)
+        for time in stride(from: 4.1, through: 28.7, by: 4.1) {
+            neverReady.session.tick(at: time)
+            neverReady.session.didWrite(id: neverReady.writes.last!.id, at: time + 0.01)
+        }
+        neverReady.session.tick(at: 30)
+        precondition(!neverReady.session.isReady && neverReady.failures.count == 1,
+                     "ATT acknowledgements alone cannot keep an unresponsive X6 connected forever")
+        neverReady.session.tick(at: 35)
+        precondition(neverReady.failures.count == 1)
 
         let lostWrite = SessionHarness()
         let oldID = lostWrite.writes[0].id
