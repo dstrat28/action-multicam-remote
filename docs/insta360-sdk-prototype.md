@@ -115,10 +115,10 @@ flag unset or setting `NO` removes any generated override and builds the existin
 routes. Simulator builds always omit the vendor SDK. The in-app switch remains
 off by default even when the release includes the SDK.
 
-The hooks and a local reproduction are checked in this PR. A private hosting
-location and the live Xcode Cloud workflow variables still need to be configured;
-no SDK has been uploaded by this work. Run a Cloud archive on this branch and verify
-the result before distributing the first SDK-enabled release. The post-build hook
+The hooks and a local reproduction are checked in this PR. Provision the private
+archive and workflow variables separately for your release environment; the public
+repository contains no private endpoint or credentials. Run a signed Cloud archive
+and verify the result before distributing the first SDK-enabled release. The post-build hook
 checks the actual archive for all four linked/embedded frameworks, their signatures,
 and the two supplied privacy manifests. It fails if an SDK-enabled archive omits them.
 This verifies Cloud download/signing, which local unsigned builds cannot establish.
