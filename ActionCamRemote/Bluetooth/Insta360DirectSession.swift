@@ -24,6 +24,7 @@ final class Insta360DirectSession {
     let cameraID: UUID
     let cameraName: String
     var onWrite: ((Data, UInt32) -> Void)?
+    var onProtocolReady: (() -> Void)?
     var onStatus: ((CameraStatusUpdate) -> Void)?
     var onCompletion: ((CameraCommandResult) -> Void)?
     var onLog: ((String) -> Void)?
@@ -222,6 +223,7 @@ final class Insta360DirectSession {
             switch active.command {
             case .status:
                 let status = try Insta360DirectCaptureStatus.decodeResponse(message.body)
+                let shouldReportReady = !hasConfirmedProtocol
                 hasConfirmedProtocol = true
                 recordingState = status.recording
                 statusAt = now
@@ -232,6 +234,10 @@ final class Insta360DirectSession {
                         ? "\(profile.name) confirmed recording started." : "\(profile.name) confirmed recording stopped.")
                 }
                 nextStatusAt = now + 1
+                // Protocol establishment is an event even if the first valid
+                // status is Unknown, equal to the already-published initial
+                // state. Do not route readiness through status deduplication.
+                if shouldReportReady { onProtocolReady?() }
             case .telemetry:
                 telemetry = try Insta360X6Telemetry.decodeResponse(message.body)
                 telemetryAt = now

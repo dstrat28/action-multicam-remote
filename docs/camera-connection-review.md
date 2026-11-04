@@ -39,6 +39,10 @@ pure session/policy tests. None establishes physical camera compatibility.
   remains; capture commands are never automatically repeated or converted to
   GPS Remote toggles. Session tests simulate a permanently silent X6 and verify
   one failure/cleanup; transport tests verify no premature Connected event.
+  A final regression reproduced a valid first X5 Unknown status being hidden
+  by status deduplication. Protocol readiness now has a separate one-time event;
+  `0A 00` and `0A 02 08 02` both establish Connected while keeping recording
+  Unknown and Start blocked until a known stopped state arrives.
 
 ## SDK contract details checked
 
