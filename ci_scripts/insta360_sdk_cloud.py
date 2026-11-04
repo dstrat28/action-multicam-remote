@@ -12,6 +12,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -67,7 +68,7 @@ def download(url, token, destination):
     parts = urllib.parse.urlsplit(url)
     if parts.scheme != "https" or not parts.hostname or parts.username or parts.password:
         raise ValueError("INSTA360_SDK_URL must be a private HTTPS URL without embedded credentials.")
-    headers = {"Accept": "application/octet-stream"}
+    headers = {"Accept": "application/octet-stream", "Cache-Control": "no-cache", "User-Agent": "Multicam-XcodeCloud-SDK"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     try:
@@ -120,9 +121,15 @@ def configure(repo_root, environ):
     with tempfile.TemporaryDirectory(prefix="multicam-private-sdk-") as temporary:
         staging = Path(temporary)
         archive = staging / "sdk.zip"
-        download(url, environ.get("INSTA360_SDK_AUTH_TOKEN", ""), archive)
-        if sha256(archive) != expected.lower():
-            raise ValueError("Private SDK checksum mismatch; refusing to enable the SDK build.")
+        for attempt in range(1, 4):
+            download(url, environ.get("INSTA360_SDK_AUTH_TOKEN", ""), archive)
+            actual = sha256(archive)
+            if actual == expected.lower():
+                break
+            if attempt == 3:
+                raise ValueError(f"Private SDK checksum mismatch after 3 downloads: {archive.stat().st_size} bytes, SHA-256 {actual}; refusing to enable the SDK build.")
+            print(f"Private SDK response checksum mismatch (attempt {attempt}/3); retrying the authenticated download.", file=sys.stderr)
+            time.sleep(attempt)
         unpack(archive, staging / "unpacked")
         root.mkdir(parents=True, exist_ok=True)
         shutil.rmtree(root / "Frameworks", ignore_errors=True)

@@ -115,6 +115,10 @@ app configurations include it through `ci_scripts/Insta360SDK.xcconfig`. Merely
 exporting an environment variable would not override a target's project setting;
 the generated configuration makes the workflow flag effective. Credentials are
 never written to the generated configuration or the app bundle.
+Downloads request uncached binary content. If a response fails the pinned checksum,
+the download is attempted up to three times with short delays; only a matching response can be
+installed. A final mismatch reports byte count and SHA-256 without logging private
+URLs, tokens, or response contents.
 
 If the workflow opts in but its URL, checksum, or frameworks are missing/invalid,
 the build fails instead of silently producing an SDK-free release. Leaving the

@@ -71,9 +71,19 @@ class SDKCloudTests(unittest.TestCase):
         self.vendor.mkdir(parents=True)
         self.override.write_text("MULTICAM_INSTA360_SDK_ENABLED = YES")
         self.environment["INSTA360_SDK_SHA256"] = "0" * 64
-        with self.assertRaisesRegex(ValueError, "checksum mismatch"):
+        with self.assertRaisesRegex(ValueError, "checksum mismatch"), mock.patch.object(sdk.time, "sleep"):
             self.configure_with_archive()
         self.assertFalse(self.override.exists())
+
+    def test_transient_download_requires_a_matching_retry_before_enabling(self):
+        attempts = []
+        def download_fixture(url, token, destination):
+            attempts.append(url)
+            destination.write_bytes(b"unexpected response" if len(attempts) == 1 else self.archive.read_bytes())
+        with mock.patch.object(sdk, "download", side_effect=download_fixture), mock.patch.object(sdk.time, "sleep"):
+            sdk.configure(self.root, self.environment)
+        self.assertEqual(len(attempts), 2)
+        self.assertIn("MULTICAM_INSTA360_SDK_ENABLED = YES", self.override.read_text())
 
     def test_missing_framework_fails_before_install(self):
         with zipfile.ZipFile(self.archive, "w") as archive:
