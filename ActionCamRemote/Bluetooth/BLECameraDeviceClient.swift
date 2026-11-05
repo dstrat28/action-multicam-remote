@@ -10,11 +10,13 @@ protocol BLECameraDeviceClient: AnyObject, CBPeripheralDelegate {
     func didConnect()
     func didDisconnect(error: Error?)
     func send(_ command: CameraCommand) -> CameraCommandResult
+    func setRecordingElapsedVisible(_ visible: Bool)
 }
 
 extension BLECameraDeviceClient {
     var managesOwnConnection: Bool { false }
     func disconnectManagedConnection() {}
+    func setRecordingElapsedVisible(_ visible: Bool) {}
 
     func result(
         for command: CameraCommand,

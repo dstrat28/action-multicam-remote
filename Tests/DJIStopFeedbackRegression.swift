@@ -103,8 +103,84 @@ enum DJIStopFeedbackRegression {
         receive(pollReply(compact))
         precondition(updates.last?.telemetry?.batteryPercent == nil)
         client.didDisconnect(error: nil)
+        await checkNanoPolling()
         await checkPairingRejection()
         print("DJI checks passed: Nano Stop acceptance/confirmation and connection-scoped pairing rejection.")
+    }
+
+    private static func checkNanoPolling() async {
+        let peripheral = CBPeripheral()
+        let notify = CBCharacteristic(uuid: CBUUID(string: "FFF4"), properties: [.notify])
+        let writer = CBCharacteristic(uuid: CBUUID(string: "FFF5"), properties: [.writeWithoutResponse])
+        let service = CBService(uuid: CBUUID(string: "FFF0"), characteristics: [notify, writer])
+        var clock: TimeInterval = 100
+        var activityCount = 0
+        var updates: [CameraStatusUpdate] = []
+        let client = DJIExperimentalBLEClient(cameraID: UUID(), cameraName: "Osmo Nano",
+            cameraModel: .djiOsmoNano, peripheral: peripheral, onStatus: { _, _, _ in },
+            onCameraStatus: { _, update in updates.append(update) }, onProtocolActivity: { _ in activityCount += 1 },
+            onNanoPairingStatus: { _, _ in }, hasConfirmedAwakeNanoAdvertisement: true, onLog: { _ in },
+            onPairingRejected: { _, _ in preconditionFailure("Unexpected rejection") }, metadataTime: { clock })
+        client.peripheral(peripheral, didDiscoverCharacteristicsFor: service, error: nil)
+        var payload = Data(repeating: 0, count: 60)
+        payload[0] = 0x40; payload[4] = 1; payload[57] = 1
+        func receiveState() {
+            notify.value = DJINanoProtocol.frame(sequenceNumber: 100, source: 1, destination: 2,
+                flags: 0, commandSet: 2, commandID: 0x80, payload: payload)
+            client.peripheral(peripheral, didUpdateValueFor: notify, error: nil)
+        }
+        func polls() -> Int { peripheral.writes.filter { $0.data[9] == 2 && $0.data[10] == 0x70 }.count }
+        func heartbeats() -> Int {
+            let keepAlive = DJINanoProtocol.keepAliveCommand
+            return peripheral.writes.filter { $0.data[9] == keepAlive.commandSet && $0.data[10] == keepAlive.commandID }.count
+        }
+        // A session heartbeat is valid DUML activity, but does not establish
+        // camera readiness. Lost startup probes must still be retried.
+        notify.value = DJINanoProtocol.frame(sequenceNumber: 99, source: DJINanoProtocol.sessionAddress,
+            destination: 2, flags: 0x80, commandSet: 0, commandID: 0x2B, payload: Data([0]))
+        client.peripheral(peripheral, didUpdateValueFor: notify, error: nil)
+        try? await Task.sleep(for: .seconds(3.5))
+        precondition(polls() >= 2, "Nano startup polling must retry before protocol readiness")
+        receiveState()
+        try? await Task.sleep(for: .seconds(3.5))
+        let firstPolls = polls()
+        let firstHeartbeats = heartbeats()
+        precondition(firstPolls >= 1 && firstHeartbeats >= 2)
+        try? await Task.sleep(for: .seconds(2.6))
+        precondition(polls() == firstPolls, "Metadata must not poll on every 2.5-second tick")
+        precondition(heartbeats() > firstHeartbeats, "One-second keepalives must continue independently")
+
+        // Queue metadata behind ATT backpressure, then supersede it with Stop.
+        peripheral.canSendWriteWithoutResponse = false
+        clock = 130
+        try? await Task.sleep(for: .seconds(2.6))
+        precondition(client.send(.stopRecording).status == .sent)
+        peripheral.canSendWriteWithoutResponse = true
+        client.peripheralIsReady(toSendWriteWithoutResponse: peripheral)
+        try? await Task.sleep(for: .seconds(1.8))
+        precondition(polls() == firstPolls, "Capture must discard queued optional polls")
+        clock = 144
+        try? await Task.sleep(for: .seconds(2.6))
+        precondition(polls() == firstPolls)
+        let activityBefore = activityCount
+        receiveState()
+        precondition(activityCount > activityBefore && updates.last?.recordingState == .recording,
+            "Live capture and health notifications must continue during the metadata pause")
+        // A later mode command has a shorter metadata window. It must not
+        // shorten the still-active Stop confirmation window (155 + 15).
+        clock = 155
+        precondition(client.send(.stopRecording).status == .sent)
+        clock = 156
+        precondition(client.send(.setMode(.photo)).status == .sent)
+        clock = 162
+        try? await Task.sleep(for: .seconds(2.6))
+        precondition(polls() == firstPolls,
+            "A mode command must not shorten the pending Stop metadata pause")
+        clock = 170
+        try? await Task.sleep(for: .seconds(2.8))
+        precondition(polls() == firstPolls + 1,
+            "Metadata must resume after its bounded capture window without confirming capture")
+        client.didDisconnect(error: nil)
     }
 
     private static func checkPairingRejection() async {

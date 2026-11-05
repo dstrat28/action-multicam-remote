@@ -959,10 +959,12 @@ struct CameraDetailView: View {
 
 private struct CameraDetailContent: View {
     @Environment(CameraStore.self) private var store
+    @Environment(\.scenePhase) private var scenePhase
 
     var camera: DiscoveredCamera
     @State private var isRenaming = false
     @State private var proposedName = ""
+    @State private var elapsedVisibilityID = UUID()
 
     var body: some View {
         ScrollView {
@@ -987,6 +989,15 @@ private struct CameraDetailContent: View {
         .background(Color.acrAppBackground)
         .navigationTitle("Camera Info")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear {
+            store.setCameraDetailVisible(scenePhase == .active, for: camera.id, source: elapsedVisibilityID)
+        }
+        .onChange(of: scenePhase) { _, phase in
+            store.setCameraDetailVisible(phase == .active, for: camera.id, source: elapsedVisibilityID)
+        }
+        .onDisappear {
+            store.setCameraDetailVisible(false, for: camera.id, source: elapsedVisibilityID)
+        }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {

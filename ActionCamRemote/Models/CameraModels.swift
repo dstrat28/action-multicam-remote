@@ -1716,6 +1716,19 @@ struct GoProPreset: Identifiable, Equatable, Codable {
     let isCustom: Bool
 }
 
+enum CameraDiscoveryPolicy {
+    static func shouldPause(
+        cameras: [DiscoveredCamera], pairingRequested: Bool, hasPendingCommands: Bool
+    ) -> Bool {
+        let paired = cameras.filter(\.isPaired)
+        return !pairingRequested && !hasPendingCommands
+            && paired.contains { $0.recordingState == .recording }
+            && paired.allSatisfy { $0.isConnected && $0.recordingState != .starting }
+            // Nano sleep advertisements can invalidate an apparently live link.
+            && !cameras.contains { $0.isConnected && $0.model == .djiOsmoNano }
+    }
+}
+
 struct CameraStatusUpdate: Equatable {
     var recordingState: CameraRecordingState? = nil
     var currentMode: CaptureMode? = nil

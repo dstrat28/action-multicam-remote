@@ -16,6 +16,7 @@ final class CameraStore {
     var cameras: [DiscoveredCamera] = [] {
         didSet {
             recordingLiveActivityController.reconcile(cameras: cameras)
+            refreshCameraDiscoveryActivity()
         }
     }
     var commandResults: [CameraCommandResult] = []
@@ -29,7 +30,9 @@ final class CameraStore {
     var cameraDiagnosticsByID: [UUID: String] = [:]
     var nanoPairingConfirmation: NanoPairingConfirmation?
     private(set) var djiPhoneGPSCameraIDs: Set<UUID> = []
-    private var stopState = CameraStopState()
+    private var stopState = CameraStopState() {
+        didSet { refreshCameraDiscoveryActivity() }
+    }
     @ObservationIgnored private var stopProgressTimer: Timer?
 
     @ObservationIgnored private let scanner: BLECameraScanner
@@ -43,6 +46,7 @@ final class CameraStore {
     @ObservationIgnored private var liveActivityStopObserver: NSObjectProtocol?
     @ObservationIgnored private var liveActivityHighlightObserver: NSObjectProtocol?
     @ObservationIgnored private var clients: [UUID: any BLECameraDeviceClient] = [:]
+    @ObservationIgnored private var visibleCameraDetailSources: [UUID: Set<UUID>] = [:]
     @ObservationIgnored private var pendingInsta360GPSFallbackIDs: Set<UUID> = []
     @ObservationIgnored private var clientEventSessions: [UUID: CameraClientEventSession] = [:]
     @ObservationIgnored private var demoDiscoveryIndex = 0
@@ -95,8 +99,12 @@ final class CameraStore {
     @ObservationIgnored private var nanoAwakeCandidateSinceByCameraID: [UUID: Date] = [:]
     @ObservationIgnored private var ignoreStoppedUntilByCameraID: [UUID: Date] = [:]
     @ObservationIgnored private var ignoreRecordingUntilByCameraID: [UUID: Date] = [:]
-    @ObservationIgnored private var pendingStartCameraIDs: Set<UUID> = []
-    @ObservationIgnored private var pendingManualPairCameraIDs: Set<UUID> = []
+    @ObservationIgnored private var pendingStartCameraIDs: Set<UUID> = [] {
+        didSet { refreshCameraDiscoveryActivity() }
+    }
+    @ObservationIgnored private var pendingManualPairCameraIDs: Set<UUID> = [] {
+        didSet { refreshCameraDiscoveryActivity() }
+    }
     @ObservationIgnored private var userDisconnectedCameraIDs: Set<UUID> = []
     @ObservationIgnored private var passiveDJIProbeCameraIDs: Set<UUID> = []
     @ObservationIgnored private var sleepingDJICameraIDs: Set<UUID> = []
@@ -464,6 +472,30 @@ final class CameraStore {
 
         scanner.start()
         connectRememberedCamerasIfResolvable()
+        refreshCameraDiscoveryActivity()
+    }
+
+    private var cameraDiscoveryPausedForRecording: Bool {
+        CameraDiscoveryPolicy.shouldPause(cameras: cameras,
+            pairingRequested: isPairingModeActive || !pendingManualPairCameraIDs.isEmpty,
+            hasPendingCommands: !pendingStartCameraIDs.isEmpty
+                || cameras.contains { stopState.hasIntent($0.id) })
+    }
+
+    private func refreshCameraDiscoveryActivity() {
+        guard !isDemoMode else { return }
+        let paused = cameraDiscoveryPausedForRecording
+        scanner.setDiscoveryPaused(paused)
+        let scanning = scanner.isScanningRequested && !paused && scanner.bluetoothState == .poweredOn
+        if isScanning != scanning { isScanning = scanning }
+    }
+
+    func setCameraDetailVisible(_ visible: Bool, for id: UUID, source: UUID) {
+        var sources = visibleCameraDetailSources[id] ?? []
+        if visible { sources.insert(source) }
+        else { sources.remove(source) }
+        visibleCameraDetailSources[id] = sources.isEmpty ? nil : sources
+        clients[id]?.setRecordingElapsedVisible(!sources.isEmpty)
     }
 
     func resumeCameraConnections() {
@@ -502,6 +534,7 @@ final class CameraStore {
         if !isActive {
             cancelManualPairRetries()
         }
+        refreshCameraDiscoveryActivity()
     }
 
     func toggleScanning() {
@@ -638,6 +671,7 @@ final class CameraStore {
                 }
             )
             clients[camera.id] = client
+            client.setRecordingElapsedVisible(visibleCameraDetailSources[camera.id]?.isEmpty == false)
             lastConnectionAttemptByID[camera.id] = Date()
             scheduleConnectionTimeout(for: camera.id)
             setCameraDiagnostic("Experimental Insta360 SDK Bluetooth session selected.", for: camera)
@@ -1188,6 +1222,7 @@ private extension CameraStore {
     }
 
     func handle(_ event: BLEScannerEvent) {
+        defer { refreshCameraDiscoveryActivity() }
         switch event {
         case let .bluetoothStateChanged(state):
             guard !isDemoMode else {
@@ -1274,6 +1309,8 @@ private extension CameraStore {
     }
 
     func merge(_ candidate: DiscoveredCameraCandidate) {
+        // Ignore advertisements queued before the scanner paused.
+        guard !cameraDiscoveryPausedForRecording else { return }
         var shouldAutoConnect = false
         var shouldSort = false
         let now = Date()
@@ -3290,10 +3327,15 @@ private extension CameraStore {
                 }
                 recordingDecision = "applied \(recordingState.rawValue)"
                 if recordingState == .recording,
-                   (ignoreStoppedUntilByCameraID[id] ?? .distantPast) <= Date() {
+                   cameras[index].insta360UsesSDK == true
+                    || (ignoreStoppedUntilByCameraID[id] ?? .distantPast) <= Date() {
+                    // SDK observations already reject pre-command responses.
+                    // Once confirmed, a quick camera-side Stop must not rely
+                    // on a duplicate publication after this guard expires.
                     ignoreStoppedUntilByCameraID.removeValue(forKey: id)
                 } else if recordingState == .stopped,
-                          (ignoreRecordingUntilByCameraID[id] ?? .distantPast) <= Date() {
+                          cameras[index].insta360UsesSDK == true
+                            || (ignoreRecordingUntilByCameraID[id] ?? .distantPast) <= Date() {
                     ignoreRecordingUntilByCameraID.removeValue(forKey: id)
                 }
                 if recordingState != .unknown {
