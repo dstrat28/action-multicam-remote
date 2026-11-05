@@ -21,3 +21,23 @@ photo with its white background removed using the built-in image generator.
 The source and exact edit prompt are retained in Trackside's
 `docs/design-qa/camera-control-sdk/one-x-background-edit.md` and
 `one-x-front-source.png` at commit `0ef786c44ab5ac397731af97e0f556ab23c4b5b2`.
+
+## Watch handoff follow-up
+
+The existing host has no watchOS simulator/runtime. The Release watchOS target
+and SDK-enabled Release iPhone target were compiled, and the actual
+`WatchCameraDetailView` was rendered in the shared iPhone simulator through a
+DEBUG-only preview. These screenshots show that component at a 208-point width,
+magnified 1.5×; they are not native watchOS screenshots or a WatchConnectivity
+radio test.
+
+- [X6, two volumes](watch/x6-two-volumes.png): both labeled free-space rows, SD Card ring using the SD capacity.
+- [No optional metadata](watch/no-metadata.png): no stale readings or rings; connected camera/mode remain.
+
+Launch `--demo-watch-metadata`, adding `--demo-watch-nano`, `--demo-watch-gopro`,
+`--demo-watch-no-sd` or `--demo-watch-empty` for each state. The fixture uses the
+production Watch camera decoder and detail view, without a live WCSession.
+`sh ci_scripts/check_watch_camera_telemetry.sh` exercises the production phone
+snapshot producer and Watch context consumer with only the system boundary and
+camera store replaced. It covers all three brands, legacy GPS Remote, stable
+snapshot equality, old/new compatibility and full/missing/partial/cleared volumes.

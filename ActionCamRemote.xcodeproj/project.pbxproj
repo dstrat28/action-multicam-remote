@@ -57,6 +57,10 @@
 		ACR000000000000000000148 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000049 /* PrivacyInfo.xcprivacy */; };
 		ACR000000000000000000150 /* Insta360SDKSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000050 /* Insta360SDKSession.swift */; };
 		ACR000000000000000000151 /* Insta360SDKClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000051 /* Insta360SDKClient.swift */; };
+		ACR000000000000000000152 /* CameraStorageVolume.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000053 /* CameraStorageVolume.swift */; };
+		ACR000000000000000000153 /* CameraStorageVolume.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000053 /* CameraStorageVolume.swift */; };
+		ACR000000000000000000154 /* WatchSessionModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000017 /* WatchSessionModel.swift */; };
+		ACR000000000000000000155 /* WatchRemoteView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACR000000000000000000018 /* WatchRemoteView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -154,6 +158,7 @@
 		ACR000000000000000000050 /* Insta360SDKSession.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Insta360SDKSession.swift; sourceTree = "<group>"; };
 		ACR000000000000000000051 /* Insta360SDKClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Insta360SDKClient.swift; sourceTree = "<group>"; };
 		ACR000000000000000000052 /* Insta360SDK.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = ci_scripts/Insta360SDK.xcconfig; sourceTree = SOURCE_ROOT; };
+		ACR000000000000000000053 /* CameraStorageVolume.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CameraStorageVolume.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -225,6 +230,7 @@
 			isa = PBXGroup;
 			children = (
 				ACR000000000000000000002 /* CameraModels.swift */,
+				ACR000000000000000000053 /* CameraStorageVolume.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -478,6 +484,9 @@
 			files = (
 				ACR000000000000000000101 /* ActionCamRemoteApp.swift in Sources */,
 				ACR000000000000000000102 /* CameraModels.swift in Sources */,
+				ACR000000000000000000152 /* CameraStorageVolume.swift in Sources */,
+				ACR000000000000000000154 /* WatchSessionModel.swift in Sources */,
+				ACR000000000000000000155 /* WatchRemoteView.swift in Sources */,
 				ACR000000000000000000103 /* BLECameraDeviceClient.swift in Sources */,
 				ACR000000000000000000104 /* BLECameraScanner.swift in Sources */,
 				ACR000000000000000000105 /* GoProBLEClient.swift in Sources */,
@@ -522,6 +531,7 @@
 			files = (
 				ACR000000000000000000114 /* MulticamWatchApp.swift in Sources */,
 				ACR000000000000000000115 /* WatchSessionModel.swift in Sources */,
+				ACR000000000000000000153 /* CameraStorageVolume.swift in Sources */,
 				ACR000000000000000000116 /* WatchRemoteView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

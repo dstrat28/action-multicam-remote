@@ -4026,6 +4026,7 @@ private extension ProcessInfo {
             || arguments.contains("--demo-dji-pairing")
             || arguments.contains("--demo-nano-pairing")
             || arguments.contains("--demo-camera-artwork")
+            || arguments.contains("--demo-watch-metadata")
     }
 #endif
 

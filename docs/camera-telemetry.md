@@ -18,6 +18,14 @@ cards retain a valid zero-free reading; invalid capacities are unavailable. Miss
 or ambiguous volume entries are omitted. A new SDK storage snapshot replaces the
 previous one, so a partial response cannot retain a stale second volume.
 
+Apple Watch receives the same individual volumes, including X6 internal/SD and
+Nano internal storage. Single-capacity GoPro/DJI readings and battery/power retain
+their existing handoff. Watch rows use compact free-space-only values. The storage
+ring prefers SD when present and falls back to internal when SD is absent; its
+label identifies which volume it describes. Older Watch
+apps receive a labeled summary, and newer Watch apps still accept older iPhone
+snapshots. Missing metadata clears stale readings without removing the camera.
+
 Battery/storage queries do not confirm capture, change readiness, or gate Start
 and Stop. Insta360 metadata keeps its independent five-second display deadline,
 one outstanding request and 30-second cadence. A Nano status-poll response can

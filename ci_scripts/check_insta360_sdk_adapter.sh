@@ -15,6 +15,7 @@ done
 xcrun swiftc -parse-as-library -D INSTA360_SDK -module-cache-path "$task_test_dir/ModuleCache" \
   -I "$task_test_dir" -L "$task_test_dir" -lCoreBluetooth -lINSCameraServiceSDK \
   -Xlinker -rpath -Xlinker "$task_test_dir" \
+  ActionCamRemote/Models/CameraStorageVolume.swift \
   ActionCamRemote/Models/CameraModels.swift \
   ActionCamRemote/Bluetooth/Insta360RemoteProtocol.swift \
   ActionCamRemote/Bluetooth/BLECameraDeviceClient.swift \

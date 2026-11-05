@@ -23,6 +23,7 @@ The host regression check runs without a CarPlay entitlement or simulator:
 
 ```sh
 xcrun swiftc -parse-as-library \
+  ActionCamRemote/Models/CameraStorageVolume.swift \
   ActionCamRemote/Models/CameraModels.swift \
   ActionCamRemote/Bluetooth/Insta360RemoteProtocol.swift \
   ActionCamRemote/CarPlay/CarPlayCameraState.swift \

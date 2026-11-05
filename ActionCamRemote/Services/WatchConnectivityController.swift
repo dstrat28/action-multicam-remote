@@ -28,6 +28,7 @@ final class WatchConnectivityController: NSObject {
         static let storageTotalMB = "storageTotalMB"
         static let sdCardCapacityMB = "sdCardCapacityMB"
         static let storageState = "storageState"
+        static let storageVolumes = "storageVolumes"
         static let remainingVideoSeconds = "remainingVideoSeconds"
         static let remainingPhotos = "remainingPhotos"
         static let recording = "recording"
@@ -117,6 +118,19 @@ final class WatchConnectivityController: NSObject {
                     }
                     if let storageState = telemetry.storageState {
                         snapshot[Key.storageState] = storageState
+                    }
+                    if let volumes = telemetry.storageVolumes {
+                        let encoder = JSONEncoder()
+                        // Snapshot equality suppresses redundant Watch traffic.
+                        encoder.outputFormatting = .sortedKeys
+                        snapshot[Key.storageVolumes] = try? encoder.encode(volumes)
+                        // Older Watch apps only understand the legacy summary.
+                        // Keep both labels without inventing a primary volume.
+                        if !volumes.isEmpty {
+                            snapshot[Key.storageState] = volumes.map {
+                                "\($0.location.label): \($0.valueDescription)"
+                            }.joined(separator: " · ")
+                        }
                     }
                     if let remainingVideoSeconds = telemetry.remainingVideoSeconds {
                         snapshot[Key.remainingVideoSeconds] = Int(remainingVideoSeconds)

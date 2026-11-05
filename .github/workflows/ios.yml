@@ -34,6 +34,7 @@ jobs:
       - name: Check Insta360 remote protocol
         run: |
           xcrun swiftc -parse-as-library \
+            ActionCamRemote/Models/CameraStorageVolume.swift \
             ActionCamRemote/Models/CameraModels.swift \
             ActionCamRemote/Bluetooth/Insta360RemoteProtocol.swift \
             Tests/Insta360RemoteProtocolRegression.swift \
@@ -45,6 +46,7 @@ jobs:
         # X6 captures and synthetic edge cases are identified separately in tests.
         run: |
           xcrun swiftc -parse-as-library \
+            ActionCamRemote/Models/CameraStorageVolume.swift \
             ActionCamRemote/Models/CameraModels.swift \
             ActionCamRemote/Bluetooth/Insta360RemoteProtocol.swift \
             ActionCamRemote/Bluetooth/Insta360DirectProtocol.swift \
@@ -53,6 +55,7 @@ jobs:
             -o "$RUNNER_TEMP/insta360-x6-regression"
           "$RUNNER_TEMP/insta360-x6-regression"
           xcrun swiftc -parse-as-library \
+            ActionCamRemote/Models/CameraStorageVolume.swift \
             ActionCamRemote/Models/CameraModels.swift \
             ActionCamRemote/Bluetooth/Insta360RemoteProtocol.swift \
             ActionCamRemote/Bluetooth/Insta360DirectProtocol.swift \
@@ -76,9 +79,13 @@ jobs:
       - name: Check camera storage telemetry
         run: sh ci_scripts/check_camera_telemetry.sh
 
+      - name: Check Watch camera telemetry handoff
+        run: sh ci_scripts/check_watch_camera_telemetry.sh
+
       - name: Check DJI command deadlines
         run: |
           xcrun swiftc -parse-as-library \
+            ActionCamRemote/Models/CameraStorageVolume.swift \
             ActionCamRemote/Models/CameraModels.swift \
             ActionCamRemote/Bluetooth/Insta360RemoteProtocol.swift \
             ActionCamRemote/Bluetooth/DJICommandTracker.swift \
@@ -95,6 +102,7 @@ jobs:
       - name: Check recording Stop progress
         run: |
           xcrun swiftc -parse-as-library \
+            ActionCamRemote/Models/CameraStorageVolume.swift \
             ActionCamRemote/Models/CameraModels.swift \
             ActionCamRemote/Bluetooth/Insta360RemoteProtocol.swift \
             Tests/CameraStopProgressRegression.swift \
@@ -104,6 +112,7 @@ jobs:
       - name: Check saved command history and support attachment
         run: |
           xcrun swiftc -parse-as-library \
+            ActionCamRemote/Models/CameraStorageVolume.swift \
             ActionCamRemote/Models/CameraModels.swift \
             ActionCamRemote/Bluetooth/Insta360RemoteProtocol.swift \
             ActionCamRemote/Services/DiagnosticLogArchive.swift \
@@ -116,6 +125,7 @@ jobs:
       - name: Check GoPro stop ordering
         run: |
           xcrun swiftc -parse-as-library \
+            ActionCamRemote/Models/CameraStorageVolume.swift \
             ActionCamRemote/Models/CameraModels.swift \
             ActionCamRemote/Bluetooth/Insta360RemoteProtocol.swift \
             ActionCamRemote/Bluetooth/GoProCommandQueue.swift \
@@ -126,6 +136,7 @@ jobs:
       - name: Check GoPro preset discovery and selection
         run: |
           xcrun swiftc -parse-as-library \
+            ActionCamRemote/Models/CameraStorageVolume.swift \
             ActionCamRemote/Models/CameraModels.swift \
             ActionCamRemote/Bluetooth/Insta360RemoteProtocol.swift \
             ActionCamRemote/Bluetooth/BLECameraDeviceClient.swift \
@@ -139,6 +150,7 @@ jobs:
       - name: Check CarPlay camera controls
         run: |
           xcrun swiftc -parse-as-library \
+            ActionCamRemote/Models/CameraStorageVolume.swift \
             ActionCamRemote/Models/CameraModels.swift \
             ActionCamRemote/Bluetooth/Insta360RemoteProtocol.swift \
             ActionCamRemote/CarPlay/CarPlayCameraState.swift \
