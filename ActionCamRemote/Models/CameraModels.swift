@@ -446,6 +446,39 @@ enum CameraPowerState: Equatable {
     case sleeping
 }
 
+/// A reported volume, without claiming that it is the selected recording destination.
+struct CameraStorageVolume: Equatable, Codable, Identifiable {
+    enum Location: String, Codable {
+        case internalStorage, sdCard
+        var label: String { self == .internalStorage ? "Internal Storage" : "SD Card" }
+    }
+    enum State: String, Codable { case available, notInserted, unavailable }
+    var location: Location
+    var state: State = .available
+    var freeMB: UInt32? = nil
+    var totalMB: UInt32? = nil
+    var id: Location { location }
+
+    var valueDescription: String {
+        switch state {
+        case .notInserted: return "Not inserted"
+        case .unavailable: return "Unavailable"
+        case .available:
+            guard let freeMB, freeMB != .max else { return "Unavailable" }
+            if let totalMB {
+                guard totalMB > 0, totalMB != .max, freeMB <= totalMB else { return "Unavailable" }
+            }
+            return "\(Self.capacityText(mb: freeMB)) free"
+        }
+    }
+
+    static func capacityText(mb: UInt32) -> String {
+        guard mb >= 1024 else { return "\(mb)MB" }
+        let gb = Double(mb) / 1024
+        return gb >= 100 || gb.rounded() == gb ? "\(Int(gb.rounded()))GB" : String(format: "%.1fGB", gb)
+    }
+}
+
 struct CameraTelemetry: Equatable, Codable {
     var batteryPercent: Int? = nil
     var batteryBars: Int? = nil
@@ -460,6 +493,7 @@ struct CameraTelemetry: Equatable, Codable {
     var sdCardCapacityMB: UInt32? = nil
     var storageFreeMB: UInt32? = nil
     var storageTotalMB: UInt32? = nil
+    var storageVolumes: [CameraStorageVolume]? = nil
     var videoResolution: String? = nil
     var frameRate: String? = nil
     var framing: String? = nil
@@ -492,6 +526,7 @@ struct CameraTelemetry: Equatable, Codable {
             && sdCardCapacityMB == nil
             && storageFreeMB == nil
             && storageTotalMB == nil
+            && storageVolumes == nil
             && videoResolution == nil
             && frameRate == nil
             && framing == nil
@@ -582,7 +617,15 @@ struct CameraTelemetry: Equatable, Codable {
         if let recordingElapsedSeconds = update.recordingElapsedSeconds {
             self.recordingElapsedSeconds = recordingElapsedSeconds
         }
-        if let storageState = update.storageState { self.storageState = storageState }
+        if let volumes = update.storageVolumes {
+            // A volume response is a complete storage snapshot, including clears.
+            storageVolumes = volumes
+            storageState = update.storageState
+            storageFreeMB = update.storageFreeMB
+            storageTotalMB = update.storageTotalMB
+        } else if let storageState = update.storageState {
+            self.storageState = storageState
+        }
         if let remainingVideoSeconds = update.remainingVideoSeconds { self.remainingVideoSeconds = remainingVideoSeconds }
         if let remainingPhotos = update.remainingPhotos { self.remainingPhotos = remainingPhotos }
         if let sdCardCapacityMB = update.sdCardCapacityMB { self.sdCardCapacityMB = sdCardCapacityMB }
@@ -667,8 +710,11 @@ struct CameraTelemetry: Equatable, Codable {
     }
 
     private var storageSummary: String? {
-        if let storageFreeMB, let storageTotalMB, storageTotalMB > 0 {
-            return "Storage \(Self.storageLabel(mb: storageFreeMB))/\(Self.storageLabel(mb: storageTotalMB))"
+        if let volumes = storageVolumes, !volumes.isEmpty {
+            return volumes.map { "\($0.location.label): \($0.valueDescription)" }.joined(separator: " · ")
+        }
+        if let storageFreeMB {
+            return "\(Self.storageLabel(mb: storageFreeMB)) free"
         }
 
         if let sdCardCapacityMB, sdCardCapacityMB > 0 {
@@ -723,12 +769,7 @@ struct CameraTelemetry: Equatable, Codable {
     }
 
     private static func storageLabel(mb: UInt32) -> String {
-        guard mb >= 1024 else { return "\(mb) MB" }
-        let gb = Double(mb) / 1024.0
-        if gb >= 10 {
-            return "\(Int(gb.rounded())) GB"
-        }
-        return String(format: "%.1f GB", gb)
+        CameraStorageVolume.capacityText(mb: mb)
     }
 }
 

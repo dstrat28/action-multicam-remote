@@ -180,7 +180,10 @@ final class CameraStore {
         if resolvedDemoMode {
             bluetoothStateLabel = "Simulator Demo"
 #if DEBUG
-            if ProcessInfo.processInfo.shouldLoadConnectedCameraDemo {
+            if ProcessInfo.processInfo.arguments.contains("--demo-telemetry-info")
+                || ProcessInfo.processInfo.arguments.contains("--demo-camera-artwork") {
+                loadPairingDemo()
+            } else if ProcessInfo.processInfo.shouldLoadConnectedCameraDemo {
                 loadDemoCameras()
                 appendLog("Simulator demo mode loaded connected sample cameras.")
             } else {
@@ -4022,6 +4025,7 @@ private extension ProcessInfo {
             || arguments.contains("--demo-gopro-pairing")
             || arguments.contains("--demo-dji-pairing")
             || arguments.contains("--demo-nano-pairing")
+            || arguments.contains("--demo-camera-artwork")
     }
 #endif
 

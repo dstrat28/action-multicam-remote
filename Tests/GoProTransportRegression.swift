@@ -5,6 +5,7 @@ private final class Harness {
     let peripheral = CBPeripheral()
     var client: GoProBLEClient!
     var completions: [CameraCommandResult] = []
+    var updates: [CameraStatusUpdate] = []
     var states: [CameraConnectionState] = []
     var connectionState: CameraConnectionState = .connecting
     var disconnects = 0
@@ -30,7 +31,7 @@ private final class Harness {
                 self?.states.append(state)
                 self?.connectionState = state
             },
-            onCameraStatus: { _, _ in }, onLog: { _ in },
+            onCameraStatus: { [weak self] _, update in self?.updates.append(update) }, onLog: { _ in },
             onCommandCompleted: { [weak self] in self?.completions.append($0) },
             onDisconnectRequested: { [weak self] _ in self?.disconnects += 1 })
         client.didConnect()
@@ -90,6 +91,25 @@ private final class Harness {
 @main
 enum GoProTransportRegression {
     static func main() {
+        do {
+            let h = Harness(); h.drain()
+            for (bytes, expected) in [(Data([0]), UInt32(0)), (Data([0x03, 0xFF]), 0),
+                                      (Data([0, 0, 0x10, 0]), 4)] {
+                h.updates.removeAll()
+                h.notify(Data([0x93, 0, 0x36, UInt8(bytes.count)]) + bytes, on: h.queryResponse)
+                precondition(h.updates.last?.telemetry?.storageFreeMB == expected,
+                    "GoPro capacity is KiB even below 1024 KiB")
+            }
+            for bytes in [Data([1, 2, 3]), Data(repeating: 255, count: 4),
+                          Data([0, 0, 3, 255, 255, 255, 252, 0]),
+                          Data([0x80, 0, 0, 0, 0, 0, 0, 0])] {
+                h.updates.removeAll()
+                h.notify(Data([0x93, 0, 0x36, UInt8(bytes.count)]) + bytes, on: h.queryResponse)
+                precondition(!h.updates.contains { $0.telemetry?.storageFreeMB != nil },
+                    "Malformed, sentinel and overflowing capacity must not be displayed")
+            }
+            h.close()
+        }
         do {
             let h = Harness(maximumLength: 8)
             precondition(h.connectionState == .connecting, "The open link alone must not mark the GoPro ready")

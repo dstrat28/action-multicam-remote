@@ -315,31 +315,30 @@ final class Insta360SDKClient: NSObject, BLECameraDeviceClient {
                 self.telemetry.storageState = nil
                 self.telemetry.storageFreeMB = nil
                 self.telemetry.storageTotalMB = nil
+                self.telemetry.storageVolumes = []
                 if successful.contains(battery), let value = options.batteryStatus,
                    value.batteryScale > 0, (0...value.batteryScale).contains(value.batteryLevel) {
                     self.telemetry.batteryPercent = Int((Double(value.batteryLevel) / Double(value.batteryScale) * 100).rounded())
                     self.telemetry.isExternalPowerConnected = value.powerType == .adapter
                 }
                 if self.cameraModel == .insta360X6 {
-                    // The vendor documents separate X6 internal/SD responses.
-                    // Do not sum them or claim either is the selected recording volume.
-                    var descriptions: [String] = []
+                    // Preserve each reported volume; neither is asserted as primary.
                     if successful.contains(storage), let value = options.cameraStorageStatus {
-                        descriptions.append(self.storageDescription(value, name: "Internal"))
+                        self.telemetry.storageVolumes?.append(self.storageVolume(value, location: .internalStorage))
                     }
                     if successful.contains(storageList),
-                       let values = options.storageStateList as? [INSCameraStorageStatus],
-                       let value = values.first(where: { $0.cardLocation == .SD }) {
-                        descriptions.append(self.storageDescription(value, name: "SD card"))
+                       let values = options.storageStateList as? [INSCameraStorageStatus] {
+                        let sd = values.filter { $0.cardLocation == .SD }
+                        if sd.count == 1 {
+                            self.telemetry.storageVolumes?.append(self.storageVolume(sd[0], location: .sdCard))
+                        }
                     }
-                    self.telemetry.storageState = descriptions.isEmpty ? nil : descriptions.joined(separator: " · ")
                 } else if successful.contains(storage), let value = options.storageStatus {
+                    let volume = self.storageVolume(value, location: .sdCard)
+                    self.telemetry.storageVolumes = [volume]
                     self.telemetry.storageState = value.cardState == .normal ? "Ready" : "Storage unavailable"
-                    if value.cardState == .normal, value.freeSpace >= 0, value.totalSpace > 0,
-                       value.freeSpace <= value.totalSpace {
-                        self.telemetry.storageFreeMB = UInt32(clamping: value.freeSpace / 1_048_576)
-                        self.telemetry.storageTotalMB = UInt32(clamping: value.totalSpace / 1_048_576)
-                    }
+                    self.telemetry.storageFreeMB = volume.freeMB
+                    self.telemetry.storageTotalMB = volume.totalMB
                 }
                 self.telemetryAt = self.now
                 self.publish()
@@ -347,12 +346,18 @@ final class Insta360SDKClient: NSObject, BLECameraDeviceClient {
         }
     }
 
-    private func storageDescription(_ value: INSCameraStorageStatus, name: String) -> String {
-        if value.cardState == .normal, value.freeSpace >= 0, value.totalSpace > 0, value.freeSpace <= value.totalSpace {
-            let free = ByteCountFormatter.string(fromByteCount: value.freeSpace, countStyle: .file)
-            return "\(name): \(free) free"
+    private func storageVolume(_ value: INSCameraStorageStatus, location: CameraStorageVolume.Location) -> CameraStorageVolume {
+        if value.cardState == .noCard {
+            return .init(location: location, state: location == .sdCard ? .notInserted : .unavailable)
         }
-        return "\(name): storage unavailable"
+        let readable = value.cardState == .normal || (value.cardState == .noSpace && value.freeSpace == 0)
+        if readable, value.freeSpace >= 0, value.totalSpace > 0, value.freeSpace <= value.totalSpace,
+           let free = UInt32(exactly: value.freeSpace / 1_048_576),
+           let total = UInt32(exactly: value.totalSpace / 1_048_576), total > 0,
+           free != .max, total != .max {
+            return .init(location: location, freeMB: free, totalMB: total)
+        }
+        return .init(location: location, state: .unavailable)
     }
 
     private func publish() {

@@ -1571,21 +1571,11 @@ private extension Data {
     }
 
     var storageMegabytes: UInt32? {
-        let value: UInt64
-        if count >= 8 {
-            value = prefix(8).reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
-        } else if let unsignedInteger {
-            value = UInt64(unsignedInteger)
-        } else {
-            return nil
-        }
-
-        // Recent GoPro storage statuses are reported in KiB.
-        if value >= 1024 {
-            return UInt32(Swift.min(value / 1024, UInt64(UInt32.max)))
-        }
-
-        return UInt32(value)
+        guard [1, 2, 4, 8].contains(count), !allSatisfy({ $0 == 0xFF }) else { return nil }
+        let kibibytes = reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
+        // Status 54/117 use KiB even when less than one MiB remains.
+        guard let megabytes = UInt32(exactly: kibibytes / 1024), megabytes != .max else { return nil }
+        return megabytes
     }
 
     var goProModel: CameraModel? {

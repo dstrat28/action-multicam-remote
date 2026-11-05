@@ -14,6 +14,9 @@ Control multiple GoPro, DJI, and Insta360 action cameras over Bluetooth from you
 - Send optional iPhone GPS telemetry to compatible DJI cameras.
 - Manage cameras and nicknames, enable larger controls, and send feedback with diagnostics from Settings.
 
+Camera details show separate internal-storage and SD-card readings when reported;
+see [battery and storage behavior](docs/camera-telemetry.md).
+
 ## Camera Support
 
 | Brand | Cameras |

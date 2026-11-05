@@ -4,6 +4,14 @@ extension CameraStore {
 #if DEBUG
     func loadPairingDemo() {
         let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("--demo-camera-artwork") {
+            cameras = [CameraModel.insta360X6, .insta360X2, .insta360OneX, .insta360OneR, .insta360OneRS1Inch].map { model in
+                DiscoveredCamera(id: UUID(), name: "Insta360 \(model.rawValue)", brand: .insta360, model: model,
+                    rssi: -48, capabilities: [.record, .status], connectionState: .disconnected,
+                    recordingState: .unknown, isPaired: true, isSelected: false, lastSeen: Date())
+            }
+            return
+        }
         let brand: CameraBrand
         let model: CameraModel
         let name: String
@@ -48,6 +56,17 @@ extension CameraStore {
             isPairingAdvertisement: brand == .gopro ? !arguments.contains("--demo-gopro-not-pairing") : nil,
             insta360UsesGPSRemoteFallback: model == .insta360X5 && arguments.contains("--demo-insta360-gps-fallback")
         )]
+        if arguments.contains("--demo-telemetry-info") {
+            cameras[0].currentMode = .video
+            var volumes = [CameraStorageVolume(location: .internalStorage, freeMB: 32_768, totalMB: 65_536)]
+            if arguments.contains("--demo-no-sd") {
+                volumes.append(CameraStorageVolume(location: .sdCard, state: .notInserted))
+            } else if !arguments.contains("--demo-partial-storage") {
+                volumes.append(CameraStorageVolume(location: .sdCard, freeMB: 51_200, totalMB: 131_072))
+            }
+            cameras[0].telemetry = CameraTelemetry(batteryPercent: 84,
+                isExternalPowerConnected: false, storageVolumes: volumes, lastUpdated: Date())
+        }
     }
 #endif
 
