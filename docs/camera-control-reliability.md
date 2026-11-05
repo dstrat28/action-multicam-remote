@@ -123,17 +123,9 @@ packets and exercise parser boundaries, command correlation, timeouts, fallback
 eligibility, independent camera state, and superseded capture intents. These
 checks do not establish radio behavior or compatibility with every firmware.
 
-## Alignment with Trackside
+## Insta360 SDK
 
-Both apps share the GoPro transaction and readiness rules, first-pair approval
-window, rejected-pairing pause, explicit GoPro/DJI Stop recovery, stale-client
-callback rejection and SDK capture safety rules. SDK Start needs stopped status
-no older than five seconds in normal Video; confirmation lasts up to 25 seconds,
-and 30 seconds without valid status closes the session. ACK means acceptance,
-not confirmed recording state. SDK preference changes apply on the next connection.
-
-Trackside owns capture for a telemetry session and retains recent GPS Remote timer
-evidence to block an unsafe automatic Start. Multicam permits a new manual shutter
-action after its five-second cooldown, without confirming Stop. Multicam retains
-its X5/X6 direct BLE and manual photo/mode/preset controls; Trackside keeps its
-existing GPS Remote model coverage alongside the optional SDK backend.
+SDK Start needs stopped status no older than five seconds in normal Video;
+confirmation lasts up to 25 seconds, and 30 seconds without valid status closes
+the session. ACK means acceptance, not confirmed recording state. SDK preference
+changes apply on the next connection.

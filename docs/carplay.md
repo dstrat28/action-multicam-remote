@@ -16,7 +16,7 @@ Signing and testing:
 
 1. Ensure development and distribution provisioning profiles include the approved **CarPlay Driving Task App** capability for this App ID.
 2. Build normally: `MULTICAM_CARPLAY_ENABLED` defaults to `YES` and selects `ActionCamRemote/CarPlay/MulticamCarPlay.entitlements` for the iPhone target. Pass `MULTICAM_CARPLAY_ENABLED=NO` only for builds that should omit CarPlay.
-3. Use Apple's CarPlay Simulator with a physical iPhone to validate Bluetooth camera control. Xcode's iOS Simulator can validate templates with `--demo-connected-cameras`, but cannot connect to real cameras. Reuse the existing local simulator pool and hold `/tmp/trackside-ios-<UDID>.lock` for the entire install/UI session.
+3. Use Apple's CarPlay Simulator with a physical iPhone to validate Bluetooth camera control. Xcode's iOS Simulator can validate templates with `--demo-connected-cameras`, but cannot connect to real cameras. Reuse the existing local simulator pool and hold the shared per-device simulator lock for the entire install/UI session.
 4. Verify CarPlay-first launch with iPhone locked, concurrent phone/CarPlay selection, selected-only Start/Stop, disabled Starting... followed by enabled Stop after confirmation, camera disconnect/reconnect during recording, empty/unsupported/photo/unknown-status states, CarPlay disconnect/reconnect, and each supported camera brand on a real head unit. Check that selecting/deselecting cameras never sends a shutter command and that Stop does not affect deselected cameras.
 
 The host regression check runs without a CarPlay entitlement or simulator:
