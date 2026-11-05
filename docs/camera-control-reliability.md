@@ -10,9 +10,10 @@ live link. Pausing preserves explicit scan intent and every camera connection;
 advertisements queued before the pause are ignored.
 
 Battery and storage remain available to the iPhone, Apple Watch and CarPlay.
-Insta360 SDK elapsed time is published only while that camera's iPhone details
-are visible and the app is active. Health and recording confirmation continue
-regardless of display visibility.
+Insta360 SDK elapsed time is published only while that camera's details are
+visible in an active iPhone/iPad scene. Each detail view owns its visibility
+request, so hiding one window cannot suppress another. Health and recording
+confirmation continue regardless of display visibility.
 
 ## GoPro
 
@@ -96,7 +97,8 @@ as trusted stopped status arrives. If that deadline expires, the app shows
 “Stop not confirmed” and permits another explicit action.
 
 Nano's recurring metadata query runs at most once every 30 seconds after protocol
-readiness. It no longer asks for the work-mode field that Nano ignores. Capture
+readiness; startup retains its 2.5-second retries when a probe is lost. It no
+longer asks for the work-mode field that Nano ignores. Capture
 discards queued metadata and defers new polls for the 15-second recording
 confirmation window (five seconds for photo/mode commands). Polling resumes
 after the bounded window even without confirmation. One-second keepalives,
@@ -162,4 +164,7 @@ Established SDK recording continues capture-status polling without rereading
 Photo/Video mode on every cycle. Transitions, stale/unknown state and pending
 commands refresh mode. Identical display values do not republish store updates;
 internal freshness and command deadlines continue advancing. Command completion
-permits an unchanged status to republish so temporary progress can settle.
+and rejected requests permit an unchanged status to republish so temporary
+progress can settle. Confirmed SDK capture states release the store's temporal
+transition guards, allowing a subsequent quick camera-side change to apply
+without waiting for a duplicate status publication.

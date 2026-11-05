@@ -99,6 +99,9 @@ jobs:
       - name: Check discovery during recording
         run: sh ci_scripts/check_camera_discovery.sh
 
+      - name: Check camera store recording work
+        run: sh ci_scripts/check_camera_recording_work.sh
+
       - name: Check GoPro transport and client lifecycle
         run: sh ci_scripts/check_gopro_transport.sh
 

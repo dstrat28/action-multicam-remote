@@ -23,8 +23,7 @@ struct ActionCamRemoteApp: App {
 #endif
             }
                 .environment(store)
-                .onChange(of: scenePhase, initial: true) { _, phase in
-                    store.setAppActive(phase == .active)
+                .onChange(of: scenePhase) { _, phase in
                     switch phase {
                     case .active:
                         store.resumeCameraConnections()

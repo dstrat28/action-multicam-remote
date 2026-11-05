@@ -162,6 +162,8 @@ final class Insta360SDKClient: NSObject, BLECameraDeviceClient {
     }
 
     func send(_ command: CameraCommand) -> CameraCommandResult {
+        // Even a rejected command can change the store's progress state.
+        lastPublishedStatus = nil
         guard ready, let commands else {
             return result(for: command, status: .skipped, message: "SDK Bluetooth is not ready.")
         }

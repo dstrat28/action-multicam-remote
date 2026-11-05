@@ -1601,8 +1601,10 @@ private extension DJIExperimentalBLEClient {
     ) {
         if cameraBehavior.kind == .djiOsmoNano {
             guard metadataTime() >= nanoMetadataDeferredUntil else { return }
-            if !shouldLog {
-                guard hasReportedLegacyDumlReady, metadataTime() >= nextNanoMetadataAt else { return }
+            if !shouldLog, hasReportedLegacyDumlReady {
+                // Before readiness, retain startup retries if the first probe
+                // or response was lost. Only optional steady polling slows.
+                guard metadataTime() >= nextNanoMetadataAt else { return }
                 nextNanoMetadataAt = metadataTime() + 30
             }
         }

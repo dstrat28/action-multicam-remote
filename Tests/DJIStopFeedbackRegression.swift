@@ -134,6 +134,13 @@ enum DJIStopFeedbackRegression {
             let keepAlive = DJINanoProtocol.keepAliveCommand
             return peripheral.writes.filter { $0.data[9] == keepAlive.commandSet && $0.data[10] == keepAlive.commandID }.count
         }
+        // A session heartbeat is valid DUML activity, but does not establish
+        // camera readiness. Lost startup probes must still be retried.
+        notify.value = DJINanoProtocol.frame(sequenceNumber: 99, source: DJINanoProtocol.sessionAddress,
+            destination: 2, flags: 0x80, commandSet: 0, commandID: 0x2B, payload: Data([0]))
+        client.peripheral(peripheral, didUpdateValueFor: notify, error: nil)
+        try? await Task.sleep(for: .seconds(3.5))
+        precondition(polls() >= 2, "Nano startup polling must retry before protocol readiness")
         receiveState()
         try? await Task.sleep(for: .seconds(3.5))
         let firstPolls = polls()

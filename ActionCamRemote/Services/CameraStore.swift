@@ -46,8 +46,7 @@ final class CameraStore {
     @ObservationIgnored private var liveActivityStopObserver: NSObjectProtocol?
     @ObservationIgnored private var liveActivityHighlightObserver: NSObjectProtocol?
     @ObservationIgnored private var clients: [UUID: any BLECameraDeviceClient] = [:]
-    @ObservationIgnored private var visibleCameraDetailIDs: Set<UUID> = []
-    @ObservationIgnored private var isAppActive = false
+    @ObservationIgnored private var visibleCameraDetailSources: [UUID: Set<UUID>] = [:]
     @ObservationIgnored private var pendingInsta360GPSFallbackIDs: Set<UUID> = []
     @ObservationIgnored private var clientEventSessions: [UUID: CameraClientEventSession] = [:]
     @ObservationIgnored private var demoDiscoveryIndex = 0
@@ -491,17 +490,12 @@ final class CameraStore {
         if isScanning != scanning { isScanning = scanning }
     }
 
-    func setAppActive(_ active: Bool) {
-        isAppActive = active
-        for (id, client) in clients {
-            client.setRecordingElapsedVisible(active && visibleCameraDetailIDs.contains(id))
-        }
-    }
-
-    func setCameraDetailVisible(_ visible: Bool, for id: UUID) {
-        if visible { visibleCameraDetailIDs.insert(id) }
-        else { visibleCameraDetailIDs.remove(id) }
-        clients[id]?.setRecordingElapsedVisible(isAppActive && visible)
+    func setCameraDetailVisible(_ visible: Bool, for id: UUID, source: UUID) {
+        var sources = visibleCameraDetailSources[id] ?? []
+        if visible { sources.insert(source) }
+        else { sources.remove(source) }
+        visibleCameraDetailSources[id] = sources.isEmpty ? nil : sources
+        clients[id]?.setRecordingElapsedVisible(!sources.isEmpty)
     }
 
     func resumeCameraConnections() {
@@ -677,7 +671,7 @@ final class CameraStore {
                 }
             )
             clients[camera.id] = client
-            client.setRecordingElapsedVisible(isAppActive && visibleCameraDetailIDs.contains(camera.id))
+            client.setRecordingElapsedVisible(visibleCameraDetailSources[camera.id]?.isEmpty == false)
             lastConnectionAttemptByID[camera.id] = Date()
             scheduleConnectionTimeout(for: camera.id)
             setCameraDiagnostic("Experimental Insta360 SDK Bluetooth session selected.", for: camera)
@@ -3333,10 +3327,15 @@ private extension CameraStore {
                 }
                 recordingDecision = "applied \(recordingState.rawValue)"
                 if recordingState == .recording,
-                   (ignoreStoppedUntilByCameraID[id] ?? .distantPast) <= Date() {
+                   cameras[index].insta360UsesSDK == true
+                    || (ignoreStoppedUntilByCameraID[id] ?? .distantPast) <= Date() {
+                    // SDK observations already reject pre-command responses.
+                    // Once confirmed, a quick camera-side Stop must not rely
+                    // on a duplicate publication after this guard expires.
                     ignoreStoppedUntilByCameraID.removeValue(forKey: id)
                 } else if recordingState == .stopped,
-                          (ignoreRecordingUntilByCameraID[id] ?? .distantPast) <= Date() {
+                          cameras[index].insta360UsesSDK == true
+                            || (ignoreRecordingUntilByCameraID[id] ?? .distantPast) <= Date() {
                     ignoreRecordingUntilByCameraID.removeValue(forKey: id)
                 }
                 if recordingState != .unknown {
