@@ -81,6 +81,11 @@ promptly. Nano keeps its existing 15-second confirmation window, ending as soon
 as trusted stopped status arrives. If that deadline expires, the app shows
 “Stop not confirmed” and permits another explicit action.
 
+Nano's successful DUML status-poll replies update battery/storage only on the
+camera-to-app route. They cannot confirm capture state/mode or advance the
+recording timer used as capture evidence. Live status pushes keep that role.
+See [battery and storage behavior](camera-telemetry.md).
+
 Reference: [Osmo Action Remote's verified Action 5 Pro notes](https://github.com/retweakeverything/osmo-action-remote/blob/cc3395455557677333a6acae5eb4a7e380a01eb6/docs/PROTOCOL.md).
 
 ## Insta360

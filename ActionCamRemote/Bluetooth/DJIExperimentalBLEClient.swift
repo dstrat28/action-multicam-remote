@@ -1852,12 +1852,15 @@ private extension DJIExperimentalBLEClient {
             return "mode \(Self.cameraStateModeLabel(mode))\(authority)"
         case 0x70:
             if let state = DJICameraStateSummary(payload: statusPayload) {
-                if shouldApplyLegacyDumlRecordingStatus {
-                    var update = cameraStatusUpdate(from: state)
-                    if cameraBehavior.kind == .djiOsmoNano {
-                        update.currentMode = nil
-                    }
-                    onCameraStatus(cameraID, update)
+                if cameraBehavior.kind == .djiOsmoNano {
+                    // Poll replies can refresh optional metadata, but only live
+                    // state pushes can confirm Nano capture state or mode.
+                    guard packet.commandSet == 0x02,
+                          packet.senderType == 0x01,
+                          packet.receiver == dumlRouting.appAddress else { return nil }
+                    onCameraStatus(cameraID, CameraStatusUpdate(telemetry: cameraTelemetry(from: state)))
+                } else if shouldApplyLegacyDumlRecordingStatus {
+                    onCameraStatus(cameraID, cameraStatusUpdate(from: state))
                 }
                 return state.debugLabel
             }
@@ -2021,6 +2024,13 @@ private extension DJIExperimentalBLEClient {
 
     func cameraTelemetry(from state: DJICameraStateSummary) -> CameraTelemetry? {
         var telemetry = state.telemetry ?? CameraTelemetry()
+        if cameraBehavior.kind == .djiOsmoNano, case .full = state.format {
+            // Nano records internally; its dock's SD card is for export.
+            telemetry.storageVolumes = []
+            if let free = telemetry.storageFreeMB, let total = telemetry.storageTotalMB {
+                telemetry.storageVolumes = [.init(location: .internalStorage, freeMB: free, totalMB: total)]
+            }
+        }
 
         switch cameraBehavior.kind {
         case .djiOsmoAction4, .djiOsmoAction5Pro, .djiOsmoAction6, .djiOsmo360:
@@ -2497,7 +2507,8 @@ private struct DJICameraStateSummary {
             telemetry.batteryPercent = Int(batteryPercent)
         }
 
-        if sdCardTotalSize > 0 {
+        if sdCardTotalSize > 0, sdCardTotalSize != .max,
+           sdCardFreeSize != .max, sdCardFreeSize <= sdCardTotalSize {
             telemetry.storageTotalMB = sdCardTotalSize
             telemetry.storageFreeMB = sdCardFreeSize
         }
@@ -2800,7 +2811,7 @@ private struct DJIRSDKStatusPush {
         telemetry.userMode = userModeLabel
         telemetry.fieldOfViewType = fieldOfViewType
 
-        telemetry.storageFreeMB = remainingCapacityMB
+        telemetry.storageFreeMB = remainingCapacityMB == .max ? nil : remainingCapacityMB
         if remainingRecordTime > 0 {
             telemetry.remainingVideoSeconds = remainingRecordTime
         }

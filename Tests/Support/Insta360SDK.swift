@@ -6,7 +6,7 @@ import Foundation
 public enum INSCameraCaptureState: UInt { case notCapture = 0, normalCapture = 1 }
 public enum INSCameraOptionsType: UInt16 { case batteryStatus = 11, storageState = 20, photoSubMode = 40, videoSubMode = 41, storageStateList = 176 }
 public enum INSCameraPowerType { case battery, adapter }
-public enum INSCameraCardState { case normal, noCard }
+public enum INSCameraCardState { case normal, noCard, noSpace, invalidFormat, unknownError }
 public enum INSStorageCardLocation: UInt { case camera = 0, reader = 1, inner = 2, SD = 3 }
 public final class INSCameraCaptureStatus: NSObject {
     public var state = INSCameraCaptureState.notCapture
@@ -62,6 +62,7 @@ public final class SDKTestCommands: INSCameraBasicCommands {
     public var status = INSCameraCaptureStatus()
     public var options = INSCameraOptions()
     public var holdOptions = false
+    public var holdTelemetry = false
     public var acceptCapture = true
     public var appliesModeChanges = true
     public var includeSuccessTypes = false
@@ -104,7 +105,9 @@ public final class SDKTestCommands: INSCameraBasicCommands {
     }
     public func getOptionsWithTypes(_ types: [NSNumber], completion: @escaping (Error?, INSCameraOptions?, [NSNumber]?) -> Void) {
         optionRequests.append(types)
-        if holdOptions { heldOptions.append((types, completion)) }
+        if holdOptions || (holdTelemetry && types.contains(NSNumber(value: INSCameraOptionsType.batteryStatus.rawValue))) {
+            heldOptions.append((types, completion))
+        }
         else { completion(optionsError, options, successTypesOverride ?? (includeSuccessTypes ? types : nil)) }
     }
     public func releaseOptions() {

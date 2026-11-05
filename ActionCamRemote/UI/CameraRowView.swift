@@ -194,10 +194,14 @@ struct CameraRowView: View {
                 .controlSize(.mini)
                 .accessibilityHint("Connects to this available camera")
             } else if isReadyConnected {
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(Color.acrMutedText.opacity(0.7))
-                    .frame(width: 18, height: 30)
+                Button(action: onShowDetails) {
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(Color.acrMutedText.opacity(0.7))
+                        .frame(width: 18, height: 30)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Show details for \(camera.displayName)")
             }
         }
     }
@@ -762,7 +766,7 @@ struct CameraProductThumbnail: View {
 
     private var assetScale: CGFloat {
         switch model {
-        case .djiOsmoAction5Pro:
+        case .djiOsmoAction5Pro, .insta360OneX:
             0.9
         case .djiOsmoAction6,
              .djiOsmoNano,
@@ -790,6 +794,8 @@ struct CameraProductThumbnail: View {
             1.05
         case .insta360AcePro2:
             0.95
+        case .insta360OneR:
+            0.8
         case .insta360AcePro,
              .insta360Ace,
              .insta360OneRS,
@@ -803,7 +809,7 @@ struct CameraProductThumbnail: View {
              .insta360X4,
              .insta360X3:
             1.05
-        case .insta360X2, .insta360OneX, .insta360OneR, .insta360OneRS1Inch,
+        case .insta360X2, .insta360OneRS1Inch,
              .djiOsmoPocket3, .djiRSDKCamera, .unknown:
             1
         }
@@ -903,6 +909,14 @@ struct CameraProductThumbnail: View {
             "CameraInsta360X4"
         case .insta360X3:
             "CameraInsta360X3"
+        case .insta360X2:
+            "CameraInsta360X2"
+        case .insta360OneX:
+            "CameraInsta360OneX"
+        case .insta360OneR:
+            "CameraInsta360OneR"
+        case .insta360OneRS1Inch:
+            "CameraInsta360OneRS1Inch"
         case .insta360OneRS:
             "CameraInsta360OneRS"
         case .insta360GoUltra:
@@ -911,8 +925,7 @@ struct CameraProductThumbnail: View {
             "CameraInsta360Go3S"
         case .insta360Go3:
             "CameraInsta360Go3"
-        case .insta360X2, .insta360OneX, .insta360OneR, .insta360OneRS1Inch,
-             .djiOsmoPocket3, .djiRSDKCamera, .unknown:
+        case .djiOsmoPocket3, .djiRSDKCamera, .unknown:
             nil
         }
     }
@@ -1036,7 +1049,7 @@ private struct CameraDetailHeader: View {
                     .foregroundStyle(Color.acrInk)
                     .lineLimit(2)
 
-                Text("\(camera.brand.rawValue) · \(camera.model.rawValue)")
+                Text("\(camera.brand.rawValue) \(camera.model.rawValue)")
                     .font(.subheadline)
                     .foregroundStyle(Color.acrMutedText)
                     .lineLimit(2)
@@ -1255,13 +1268,15 @@ private struct CameraTelemetryDetailSection: View {
                     )
                 }
 
-                if let storageFreeMB = telemetry.storageFreeMB, let storageTotalMB = telemetry.storageTotalMB {
+                if let volumes = telemetry.storageVolumes, !volumes.isEmpty {
+                    ForEach(volumes) { volume in
+                        CameraInfoRow(label: volume.location.label, value: volume.valueDescription)
+                    }
+                } else if let storageFreeMB = telemetry.storageFreeMB {
                     CameraInfoRow(
                         label: "Storage",
-                        value: "\(CameraDetailFormat.storage(mb: storageFreeMB)) / \(CameraDetailFormat.storage(mb: storageTotalMB))"
+                        value: "\(CameraDetailFormat.storage(mb: storageFreeMB)) free"
                     )
-                } else if let storageFreeMB = telemetry.storageFreeMB {
-                    CameraInfoRow(label: "Available Storage", value: CameraDetailFormat.storage(mb: storageFreeMB))
                 } else if let sdCardCapacityMB = telemetry.sdCardCapacityMB {
                     CameraInfoRow(label: "SD Card", value: CameraDetailFormat.storage(mb: sdCardCapacityMB))
                 } else if let storageState = telemetry.storageState {
@@ -1292,6 +1307,7 @@ private struct CameraTelemetryDetailSection: View {
             || telemetry.sdCardCapacityMB != nil
             || telemetry.storageFreeMB != nil
             || telemetry.storageTotalMB != nil
+            || telemetry.storageVolumes?.isEmpty == false
     }
 }
 
@@ -1373,12 +1389,7 @@ private enum CameraDetailFormat {
     }
 
     static func storage(mb: UInt32) -> String {
-        if mb >= 1024 {
-            let gb = Double(mb) / 1024.0
-            return gb >= 100 ? "\(Int(gb.rounded())) GB" : String(format: "%.1f GB", gb)
-        }
-
-        return "\(mb) MB"
+        CameraStorageVolume.capacityText(mb: mb)
     }
 
     static func elapsed(seconds: UInt32) -> String {

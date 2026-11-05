@@ -1,3 +1,4 @@
+#if os(watchOS) || DEBUG
 import SwiftUI
 
 struct WatchRemoteView: View {
@@ -277,7 +278,7 @@ struct WatchRemoteView: View {
     }
 }
 
-private struct WatchCameraDetailView: View {
+struct WatchCameraDetailView: View {
     var camera: WatchCamera
 
     var body: some View {
@@ -332,7 +333,7 @@ private struct WatchCameraDetailView: View {
 
             if let storageProgress {
                 WatchMetricRing(
-                    title: "Storage",
+                    title: camera.storageRingTitle,
                     value: "\(Int((storageProgress * 100).rounded()))%",
                     progress: storageProgress,
                     color: .cyan,
@@ -351,8 +352,13 @@ private struct WatchCameraDetailView: View {
                 detailRow(label: "Details", value: camera.modeDetails.joined(separator: " · "))
             }
 
-            if let storageFreeMB = camera.storageFreeMB {
-                detailRow(label: "Available", value: Self.storage(mb: storageFreeMB))
+            if let volumes = camera.storageVolumes {
+                ForEach(volumes) { volume in
+                    detailRow(label: volume.location == .internalStorage ? "Internal" : "SD Card",
+                              value: volume.valueDescription)
+                }
+            } else if let storageFreeMB = camera.storageFreeMB {
+                detailRow(label: "Available", value: Self.storage(mb: storageFreeMB) + " free")
             } else if let sdCardCapacityMB = camera.sdCardCapacityMB {
                 detailRow(label: "SD Card", value: Self.storage(mb: sdCardCapacityMB))
             } else if let storageState = camera.storageState {
@@ -415,13 +421,7 @@ private struct WatchCameraDetailView: View {
     }
 
     private var storageProgress: Double? {
-        guard let free = camera.storageFreeMB,
-              let total = camera.storageTotalMB ?? camera.sdCardCapacityMB,
-              total > 0 else {
-            return nil
-        }
-        let freeFraction = min(max(Double(free) / Double(total), 0), 1)
-        return 1 - freeFraction
+        camera.storageProgress
     }
 
     private var hasRingMetrics: Bool {
@@ -429,14 +429,8 @@ private struct WatchCameraDetailView: View {
     }
 
     private static func storage(mb: Int) -> String {
-        if mb >= 1024 {
-            return "\(wholeGB(mb: mb)) GB"
-        }
-        return "\(mb) MB"
-    }
-
-    private static func wholeGB(mb: Int) -> Int {
-        Int((Double(mb) / 1024).rounded())
+        guard let value = UInt32(exactly: mb), value != .max else { return "Unavailable" }
+        return CameraStorageVolume.capacityText(mb: value)
     }
 
     private static func duration(seconds: Int) -> String {
@@ -491,3 +485,4 @@ private struct WatchMetricRing: View {
         .accessibilityLabel("\(title), \(value)")
     }
 }
+#endif

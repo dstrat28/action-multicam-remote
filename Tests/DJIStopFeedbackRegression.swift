@@ -65,6 +65,43 @@ enum DJIStopFeedbackRegression {
         precondition(updates.last?.recordingState == .stopped)
         precondition(updates.last?.canClearActiveRecording == true,
             "An explicit Stop must release the prior Start's stale-stopped guard")
+        var capacity = Data(repeating: 0, count: 60)
+        capacity[4] = 1; capacity[6] = 0x10; capacity[10] = 0x08; capacity[57] = 1
+        func pollReply(_ payload: Data, source: UInt8 = 1, result: UInt8 = 0) -> Data {
+            DJINanoProtocol.frame(sequenceNumber: 101, source: source, destination: 2,
+                flags: 0x80, commandSet: 2, commandID: 0x70, payload: Data([result]) + payload)
+        }
+        updates.removeAll()
+        receive(pollReply(capacity))
+        precondition(updates.last?.recordingState == nil,
+            "Nano poll replies may refresh metadata but must not confirm capture")
+        precondition(updates.last?.currentMode == nil)
+        precondition(updates.last?.telemetry?.storageVolumes?.first?.location == .internalStorage)
+        precondition(updates.last?.telemetry?.storageFreeMB == 2048)
+        let countBeforeUnrelated = updates.count
+        receive(pollReply(capacity, source: 2))
+        receive(pollReply(capacity, result: 1))
+        precondition(updates.count == countBeforeUnrelated)
+        for total in [UInt32.max, 1000] {
+            var invalid = capacity
+            for offset in 0..<4 { invalid[5 + offset] = UInt8(truncatingIfNeeded: total >> (offset * 8)) }
+            receive(pollReply(invalid))
+            precondition(updates.last?.telemetry?.storageFreeMB == nil)
+            precondition(updates.last?.telemetry?.storageVolumes == [])
+        }
+        capacity[9] = 0; capacity[10] = 0; capacity[11] = 0; capacity[12] = 0
+        receive(pollReply(capacity))
+        precondition(updates.last?.telemetry?.storageFreeMB == 0)
+        var compact = Data(repeating: 0, count: 34)
+        compact[20] = 87
+        receive(pollReply(compact))
+        precondition(updates.last?.telemetry?.batteryPercent == 87)
+        precondition(updates.last?.telemetry?.storageVolumes == nil,
+            "Compact battery replies must preserve the independently reported internal volume")
+        precondition(updates.last?.recordingState == nil && updates.last?.currentMode == nil)
+        compact[20] = 255
+        receive(pollReply(compact))
+        precondition(updates.last?.telemetry?.batteryPercent == nil)
         client.didDisconnect(error: nil)
         await checkPairingRejection()
         print("DJI checks passed: Nano Stop acceptance/confirmation and connection-scoped pairing rejection.")

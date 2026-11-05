@@ -50,11 +50,11 @@ enum Insta360SDKAdapterRegression {
         managers[1].commands.options.storageStateList = NSMutableArray(array: [sdStorage])
         precondition(commands !== managers[1].commands)
         waitUntil { events.updates.last?.telemetry?.batteryPercent == 50
-            && otherEvents.updates.last?.telemetry?.storageState?.contains("SD card:") == true }
+            && otherEvents.updates.last?.telemetry?.storageVolumes?.count == 2 }
         precondition(events.updates.last?.telemetry?.batteryPercent == 50)
         precondition(events.updates.last?.telemetry?.storageFreeMB == 10)
-        precondition(otherEvents.updates.last?.telemetry?.storageState?.contains("Internal:") == true)
-        precondition(otherEvents.updates.last?.telemetry?.storageState?.contains("SD card:") == true)
+        precondition(otherEvents.updates.last?.telemetry?.storageVolumes?.map(\.location) == [.internalStorage, .sdCard])
+        precondition(otherEvents.updates.last?.telemetry?.storageVolumes?.map(\.freeMB) == [10, 10])
         precondition(otherEvents.updates.last?.telemetry?.storageFreeMB == nil)
         precondition(managers[1].commands.optionRequests.contains { $0.contains(NSNumber(value: INSCameraOptionsType.storageStateList.rawValue)) })
 
@@ -95,6 +95,58 @@ enum Insta360SDKAdapterRegression {
         let afterDisconnect = commands.statusRequests
         spin(0.6)
         precondition(commands.statusRequests == afterDisconnect)
+
+        for scenario in ["both", "no-card", "full", "invalid-card", "invalid-capacity", "duplicate-card",
+                         "partial", "sd-only", "battery-scale-zero", "battery-zero", "empty-list", "bad-internal"] {
+            let (camera, collected) = make("X6 " + scenario, model: .insta360X6)
+            camera.didConnect()
+            let c = INSBluetoothManager.instances.last!.commands
+            let inner = INSCameraStorageStatus(); inner.cardLocation = .inner
+            let sd = INSCameraStorageStatus(); sd.cardLocation = .SD; sd.freeSpace = 5 * 1_048_576
+            if scenario == "no-card" { sd.cardState = .noCard }
+            if scenario == "full" { sd.cardState = .noSpace; sd.freeSpace = 0 }
+            if scenario == "invalid-card" { sd.cardState = .invalidFormat }
+            if scenario == "invalid-capacity" { sd.freeSpace = sd.totalSpace + 1 }
+            if scenario == "bad-internal" { inner.cardState = .unknownError }
+            var list = scenario == "empty-list" ? [] : [sd]
+            if scenario == "duplicate-card" { list.append(sd) }
+            c.options.cameraStorageStatus = inner
+            c.options.storageStateList = NSMutableArray(array: list)
+            if scenario == "battery-scale-zero" { c.options.batteryStatus?.batteryScale = 0 }
+            if scenario == "battery-zero" { c.options.batteryStatus?.batteryLevel = 0 }
+            if scenario == "partial" || scenario == "sd-only" {
+                c.optionsError = NSError(domain: "SDKTest", code: 206)
+                c.successTypesOverride = [NSNumber(value: INSCameraOptionsType.batteryStatus.rawValue),
+                    NSNumber(value: (scenario == "partial" ? INSCameraOptionsType.storageState : .storageStateList).rawValue)]
+            }
+            waitUntil { collected.updates.last?.telemetry?.storageVolumes != nil }
+            let t = collected.updates.last!.telemetry!
+            let volumes = t.storageVolumes!
+            let hasSD = !["partial", "duplicate-card", "empty-list"].contains(scenario)
+            precondition(volumes.count == ((scenario == "sd-only" ? 0 : 1) + (hasSD ? 1 : 0)), scenario)
+            if let value = volumes.first(where: { $0.location == .sdCard }) {
+                precondition(value.state == (scenario == "no-card" ? .notInserted
+                    : ["invalid-card", "invalid-capacity"].contains(scenario) ? .unavailable : .available), scenario)
+                if scenario == "full" { precondition(value.freeMB == 0) }
+                if scenario == "both" { precondition(value.freeMB == 5) }
+            }
+            precondition(t.batteryPercent == (scenario == "battery-scale-zero" ? nil : scenario == "battery-zero" ? 0 : 50), scenario)
+            precondition(t.storageFreeMB == nil, "Do not aggregate X6 volumes or imply a primary destination")
+            camera.disconnectManagedConnection()
+        }
+
+        let (singleVolume, singleEvents) = make("ONE X metadata", model: .insta360OneX)
+        singleVolume.didConnect()
+        let singleCommands = INSBluetoothManager.instances.last!.commands
+        singleCommands.options.batteryStatus?.batteryLevel = 0
+        singleCommands.options.storageStatus?.cardState = .noSpace
+        singleCommands.options.storageStatus?.freeSpace = 0
+        waitUntil { singleEvents.updates.last?.telemetry?.storageVolumes != nil }
+        let singleTelemetry = singleEvents.updates.last!.telemetry!
+        precondition(singleTelemetry.batteryPercent == 0)
+        precondition(singleTelemetry.storageVolumes?.map(\.location) == [.sdCard])
+        precondition(singleTelemetry.storageFreeMB == 0)
+        singleVolume.disconnectManagedConnection()
 
         // A canceled connection and its delegate belong to their original generation.
         INSBluetoothManager.autoConnect = false
@@ -180,6 +232,34 @@ enum Insta360SDKAdapterRegression {
         x3Commands.status.state = .normalCapture
         waitUntil { x3Events.results.contains { $0.id == x3SecondStart.id && $0.status == .sent } }
         x3.disconnectManagedConnection()
+        let (optional, optionalEvents) = make("X3 metadata", model: .insta360X3)
+        optional.didConnect()
+        waitUntil { optionalEvents.connections.last == .connected }
+        let optionalCommands = INSBluetoothManager.instances.last!.commands
+        let batteryType = NSNumber(value: INSCameraOptionsType.batteryStatus.rawValue)
+        optionalCommands.holdTelemetry = true
+        waitUntil { optionalCommands.heldOptions.contains { $0.0.contains(batteryType) } }
+        let statusBeforeDelay = optionalCommands.statusRequests
+        spin(5.6)
+        precondition(optionalCommands.statusRequests > statusBeforeDelay)
+        precondition(optionalEvents.updates.last?.recordingState == .stopped,
+            "Delayed optional metadata must not make capture status unknown")
+        let metadataStart = optional.send(.startRecording)
+        precondition(metadataStart.status == .queued)
+        optionalCommands.status.state = .normalCapture
+        waitUntil { optionalEvents.results.contains { $0.id == metadataStart.id && $0.status == .sent } }
+        let metadataStop = optional.send(.stopRecording)
+        optionalCommands.status.state = .notCapture
+        waitUntil { optionalEvents.results.contains { $0.id == metadataStop.id && $0.status == .sent } }
+        optionalCommands.options.batteryStatus?.batteryLevel = 17
+        optionalCommands.releaseOptions()
+        spin(0.1)
+        precondition(optionalEvents.updates.last?.telemetry?.batteryPercent == nil,
+            "Expired telemetry must not publish a late reading")
+        precondition(optionalCommands.optionRequests.filter { $0.contains(batteryType) }.count == 1,
+            "Only one optional request may be outstanding; retain the 30-second cadence")
+        optional.disconnectManagedConnection()
+
         print("Insta360 SDK adapter regressions passed: initialization, per-camera routing, X3 capture, stale replies/delegates, capture supersession, status polling and cleanup (SDK double).")
     }
 }

@@ -1,3 +1,5 @@
+#if os(watchOS) || DEBUG
+import Combine
 import Foundation
 import WatchConnectivity
 
@@ -15,8 +17,71 @@ struct WatchCamera: Identifiable, Equatable {
     let storageTotalMB: Int?
     let sdCardCapacityMB: Int?
     let storageState: String?
+    let storageVolumes: [CameraStorageVolume]?
     let remainingVideoSeconds: Int?
     let remainingPhotos: Int?
+
+    init?(snapshot: [String: Any]) {
+        guard let id = snapshot["id"] as? String,
+              let name = snapshot["name"] as? String,
+              let model = snapshot["model"] as? String else { return nil }
+        self.id = id
+        self.name = name
+        self.model = model
+        isRecording = snapshot["isRecording"] as? Bool ?? false
+        modeName = snapshot["modeName"] as? String
+        modeDetails = snapshot["modeDetails"] as? [String] ?? []
+        batteryPercent = snapshot["batteryPercent"] as? Int
+        batteryBars = snapshot["batteryBars"] as? Int
+        isExternalPowerConnected = snapshot["isExternalPowerConnected"] as? Bool
+        storageFreeMB = snapshot["storageFreeMB"] as? Int
+        storageTotalMB = snapshot["storageTotalMB"] as? Int
+        sdCardCapacityMB = snapshot["sdCardCapacityMB"] as? Int
+        storageState = snapshot["storageState"] as? String
+        storageVolumes = (snapshot["storageVolumes"] as? Data).flatMap {
+            try? JSONDecoder().decode([CameraStorageVolume].self, from: $0)
+        }
+        remainingVideoSeconds = snapshot["remainingVideoSeconds"] as? Int
+        remainingPhotos = snapshot["remainingPhotos"] as? Int
+    }
+
+    var storageVolumeForRing: CameraStorageVolume? {
+        guard let storageVolumes else { return nil }
+        if let sd = storageVolumes.first(where: { $0.location == .sdCard }), sd.state != .notInserted {
+            return sd
+        }
+        return storageVolumes.first(where: { $0.location == .internalStorage })
+    }
+
+    var storageRingTitle: String {
+        switch storageVolumeForRing?.location {
+        case .sdCard: "SD Card"
+        case .internalStorage: "Internal"
+        case nil: "Storage"
+        }
+    }
+
+    var storageProgress: Double? {
+        let free: Double
+        let total: Double
+        if storageVolumes != nil {
+            // Prefer SD for this display; it does not assert the recording target.
+            guard let volume = storageVolumeForRing,
+                  volume.state == .available,
+                  let freeMB = volume.freeMB, let totalMB = volume.totalMB,
+                  freeMB != .max, totalMB != .max, totalMB > 0, freeMB <= totalMB else { return nil }
+            free = Double(freeMB)
+            total = Double(totalMB)
+        } else {
+            guard let freeMB = storageFreeMB,
+                  let totalMB = storageTotalMB ?? sdCardCapacityMB,
+                  freeMB >= 0, totalMB > 0, freeMB <= totalMB,
+                  let totalValue = UInt32(exactly: totalMB), totalValue != .max else { return nil }
+            free = Double(freeMB)
+            total = Double(totalMB)
+        }
+        return 1 - free / total
+    }
 }
 
 @MainActor
@@ -26,21 +91,6 @@ final class WatchSessionModel: NSObject, ObservableObject {
         static let commandID = "commandID"
         static let commandAccepted = "commandAccepted"
         static let cameras = "cameras"
-        static let id = "id"
-        static let name = "name"
-        static let model = "model"
-        static let isRecording = "isRecording"
-        static let modeName = "modeName"
-        static let modeDetails = "modeDetails"
-        static let batteryPercent = "batteryPercent"
-        static let batteryBars = "batteryBars"
-        static let isExternalPowerConnected = "isExternalPowerConnected"
-        static let storageFreeMB = "storageFreeMB"
-        static let storageTotalMB = "storageTotalMB"
-        static let sdCardCapacityMB = "sdCardCapacityMB"
-        static let storageState = "storageState"
-        static let remainingVideoSeconds = "remainingVideoSeconds"
-        static let remainingPhotos = "remainingPhotos"
         static let recording = "recording"
         static let highlightAvailable = "highlightAvailable"
         static let stateVersion = "stateVersion"
@@ -176,31 +226,7 @@ final class WatchSessionModel: NSObject, ObservableObject {
 
         hasReceivedState = true
         let cameraDictionaries = context[Key.cameras] as? [[String: Any]] ?? []
-        cameras = cameraDictionaries.compactMap { dictionary in
-            guard let id = dictionary[Key.id] as? String,
-                  let name = dictionary[Key.name] as? String,
-                  let model = dictionary[Key.model] as? String else {
-                return nil
-            }
-
-            return WatchCamera(
-                id: id,
-                name: name,
-                model: model,
-                isRecording: dictionary[Key.isRecording] as? Bool ?? false,
-                modeName: dictionary[Key.modeName] as? String,
-                modeDetails: dictionary[Key.modeDetails] as? [String] ?? [],
-                batteryPercent: dictionary[Key.batteryPercent] as? Int,
-                batteryBars: dictionary[Key.batteryBars] as? Int,
-                isExternalPowerConnected: dictionary[Key.isExternalPowerConnected] as? Bool,
-                storageFreeMB: dictionary[Key.storageFreeMB] as? Int,
-                storageTotalMB: dictionary[Key.storageTotalMB] as? Int,
-                sdCardCapacityMB: dictionary[Key.sdCardCapacityMB] as? Int,
-                storageState: dictionary[Key.storageState] as? String,
-                remainingVideoSeconds: dictionary[Key.remainingVideoSeconds] as? Int,
-                remainingPhotos: dictionary[Key.remainingPhotos] as? Int
-            )
-        }
+        cameras = cameraDictionaries.compactMap(WatchCamera.init(snapshot:))
         isRecording = context[Key.recording] as? Bool
             ?? cameras.contains(where: \.isRecording)
         canAddHighlight = context[Key.highlightAvailable] as? Bool ?? false
@@ -288,3 +314,4 @@ extension WatchSessionModel: WCSessionDelegate {
         }
     }
 }
+#endif

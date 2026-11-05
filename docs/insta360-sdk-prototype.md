@@ -192,7 +192,7 @@ automatic routing does not remove those legacy implementations.
   successful `photoSubMode`/`videoSubMode` options: normal capture is 0 and the
   inactive family is 100. Legacy EVO sync-mode commands are not used.
 - X6 requests `storageStateList` and reports its internal and SD storage
-  separately, as documented by the vendor. Capacities are not combined or
+  in separate Camera Info rows, with free-space-only values. Capacities are not combined or
   presented as a selected recording volume. Other cameras use `storageStatus`.
 - A common-run-loop timer ticks command deadlines every half second.
   Bluetooth uses per-device capture/mode polling, about once per second; the
@@ -241,3 +241,5 @@ without observing it physically.
 References: supplied v1.11.3 headers and Bluetooth sample;
 [iOS SDK overview](https://github.com/Insta360Develop/Insta360-Developer_Docs/blob/main/docs/en/sdk/x-ace-go/ios/guide.md),
 [API reference](https://github.com/Insta360Develop/Insta360-Developer_Docs/blob/main/docs/en/sdk/x-ace-go/ios/api.md).
+
+Optional battery/storage queries have independent request identities and a five-second display deadline. Capture-status polling takes priority and continues while optional metadata is delayed. An expired response is ignored and only one vendor telemetry request remains outstanding until it completes or the connection ends; capture commands are never repeated because of metadata failure. Metadata retains its 30-second refresh cadence.

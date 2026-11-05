@@ -8,6 +8,7 @@ for task_sdk_build in NO YES; do
   set --
   if [ "$task_sdk_build" = YES ]; then set -- -D INSTA360_SDK; fi
   xcrun swiftc -parse-as-library -module-cache-path "$task_test_dir/ModuleCache" "$@" \
+    ActionCamRemote/Models/CameraStorageVolume.swift \
     ActionCamRemote/Models/CameraModels.swift \
     ActionCamRemote/Bluetooth/Insta360RemoteProtocol.swift \
     ActionCamRemote/Bluetooth/Insta360SDKSession.swift \
