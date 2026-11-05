@@ -44,6 +44,12 @@ final class Insta360SDKClient: NSObject, BLECameraDeviceClient {
     private var nextStatusAt: TimeInterval = 0
     private var nextTelemetryAt: TimeInterval = 0
     private var queryBeganAt: TimeInterval?
+    private struct TelemetryRequest {
+        let id = UUID()
+        let beganAt: TimeInterval
+        var expired = false
+    }
+    private var telemetryRequest: TelemetryRequest?
     private var ready = false
     private var telemetry = CameraTelemetry()
     private var telemetryAt: TimeInterval?
@@ -126,6 +132,7 @@ final class Insta360SDKClient: NSObject, BLECameraDeviceClient {
         device = nil
         commands = nil
         queryBeganAt = nil
+        telemetryRequest = nil
         nextStatusAt = 0
         nextTelemetryAt = 0
         ready = false
@@ -208,14 +215,20 @@ final class Insta360SDKClient: NSObject, BLECameraDeviceClient {
             return
         }
         publish()
+        if let request = telemetryRequest, !request.expired, now - request.beganAt >= 5 {
+            // Keep one outstanding vendor request until it returns. Expiry
+            // discards its result without queuing more optional work behind it.
+            telemetryRequest?.expired = true
+            log("SDK battery/storage request expired; capture polling continues.")
+        }
         if let queryBeganAt {
             if now - queryBeganAt >= 30 { fail("SDK status request timed out; closing the session.") }
             return
         }
-        if now >= nextTelemetryAt, ready, !session.isBusy {
-            readTelemetry()
-        } else if now >= nextStatusAt {
+        if now >= nextStatusAt {
             readStatus()
+        } else if telemetryRequest == nil, now >= nextTelemetryAt, ready, !session.isBusy {
+            readTelemetry()
         }
     }
 
@@ -277,7 +290,8 @@ final class Insta360SDKClient: NSObject, BLECameraDeviceClient {
 
     private func readTelemetry() {
         guard let commands else { return }
-        queryBeganAt = now
+        let request = TelemetryRequest(beganAt: now)
+        telemetryRequest = request
         nextTelemetryAt = now + 30
         let token = generation
         let battery = NSNumber(value: INSCameraOptionsType.batteryStatus.rawValue)
@@ -286,8 +300,10 @@ final class Insta360SDKClient: NSObject, BLECameraDeviceClient {
         let types = cameraModel == .insta360X6 ? [battery, storage, storageList] : [battery, storage]
         commands.getOptionsWithTypes(types) { [weak self] error, options, successTypes in
             DispatchQueue.main.async {
-                guard let self, self.generation == token else { return }
-                self.queryBeganAt = nil
+                guard let self, self.generation == token,
+                      let pending = self.telemetryRequest, pending.id == request.id else { return }
+                self.telemetryRequest = nil
+                guard !pending.expired, self.now - pending.beganAt < 5 else { return }
                 let successful = error == nil ? types : (successTypes ?? [])
                 guard let options else {
                     self.log("SDK telemetry failed: \(error?.localizedDescription ?? "missing options").")

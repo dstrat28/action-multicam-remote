@@ -62,6 +62,7 @@ public final class SDKTestCommands: INSCameraBasicCommands {
     public var status = INSCameraCaptureStatus()
     public var options = INSCameraOptions()
     public var holdOptions = false
+    public var holdTelemetry = false
     public var acceptCapture = true
     public var appliesModeChanges = true
     public var includeSuccessTypes = false
@@ -104,7 +105,9 @@ public final class SDKTestCommands: INSCameraBasicCommands {
     }
     public func getOptionsWithTypes(_ types: [NSNumber], completion: @escaping (Error?, INSCameraOptions?, [NSNumber]?) -> Void) {
         optionRequests.append(types)
-        if holdOptions { heldOptions.append((types, completion)) }
+        if holdOptions || (holdTelemetry && types.contains(NSNumber(value: INSCameraOptionsType.batteryStatus.rawValue))) {
+            heldOptions.append((types, completion))
+        }
         else { completion(optionsError, options, successTypesOverride ?? (includeSuccessTypes ? types : nil)) }
     }
     public func releaseOptions() {

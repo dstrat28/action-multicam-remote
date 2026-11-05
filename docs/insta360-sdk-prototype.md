@@ -241,3 +241,5 @@ without observing it physically.
 References: supplied v1.11.3 headers and Bluetooth sample;
 [iOS SDK overview](https://github.com/Insta360Develop/Insta360-Developer_Docs/blob/main/docs/en/sdk/x-ace-go/ios/guide.md),
 [API reference](https://github.com/Insta360Develop/Insta360-Developer_Docs/blob/main/docs/en/sdk/x-ace-go/ios/api.md).
+
+Optional battery/storage queries have independent request identities and a five-second display deadline. Capture-status polling takes priority and continues while optional metadata is delayed. An expired response is ignored and only one vendor telemetry request remains outstanding until it completes or the connection ends; capture commands are never repeated because of metadata failure. Metadata retains its 30-second refresh cadence.

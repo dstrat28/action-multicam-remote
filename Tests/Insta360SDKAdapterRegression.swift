@@ -180,6 +180,34 @@ enum Insta360SDKAdapterRegression {
         x3Commands.status.state = .normalCapture
         waitUntil { x3Events.results.contains { $0.id == x3SecondStart.id && $0.status == .sent } }
         x3.disconnectManagedConnection()
+        let (optional, optionalEvents) = make("X3 metadata", model: .insta360X3)
+        optional.didConnect()
+        waitUntil { optionalEvents.connections.last == .connected }
+        let optionalCommands = INSBluetoothManager.instances.last!.commands
+        let batteryType = NSNumber(value: INSCameraOptionsType.batteryStatus.rawValue)
+        optionalCommands.holdTelemetry = true
+        waitUntil { optionalCommands.heldOptions.contains { $0.0.contains(batteryType) } }
+        let statusBeforeDelay = optionalCommands.statusRequests
+        spin(5.6)
+        precondition(optionalCommands.statusRequests > statusBeforeDelay)
+        precondition(optionalEvents.updates.last?.recordingState == .stopped,
+            "Delayed optional metadata must not make capture status unknown")
+        let metadataStart = optional.send(.startRecording)
+        precondition(metadataStart.status == .queued)
+        optionalCommands.status.state = .normalCapture
+        waitUntil { optionalEvents.results.contains { $0.id == metadataStart.id && $0.status == .sent } }
+        let metadataStop = optional.send(.stopRecording)
+        optionalCommands.status.state = .notCapture
+        waitUntil { optionalEvents.results.contains { $0.id == metadataStop.id && $0.status == .sent } }
+        optionalCommands.options.batteryStatus?.batteryLevel = 17
+        optionalCommands.releaseOptions()
+        spin(0.1)
+        precondition(optionalEvents.updates.last?.telemetry?.batteryPercent == nil,
+            "Expired telemetry must not publish a late reading")
+        precondition(optionalCommands.optionRequests.filter { $0.contains(batteryType) }.count == 1,
+            "Only one optional request may be outstanding; retain the 30-second cadence")
+        optional.disconnectManagedConnection()
+
         print("Insta360 SDK adapter regressions passed: initialization, per-camera routing, X3 capture, stale replies/delegates, capture supersession, status polling and cleanup (SDK double).")
     }
 }
