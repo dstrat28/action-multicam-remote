@@ -62,6 +62,8 @@ public final class SDKTestCommands: INSCameraBasicCommands {
     public var status = INSCameraCaptureStatus()
     public var options = INSCameraOptions()
     public var holdOptions = false
+    public var holdStatus = false
+    public var heldStatus: ((Error?, INSCameraCaptureStatus?) -> Void)?
     public var holdTelemetry = false
     public var acceptCapture = true
     public var appliesModeChanges = true
@@ -99,6 +101,7 @@ public final class SDKTestCommands: INSCameraBasicCommands {
     }
     public func getCurrentCaptureStatus(completion: @escaping (Error?, INSCameraCaptureStatus?) -> Void) {
         statusRequests += 1
+        if holdStatus { heldStatus = completion; return }
         let snapshot = INSCameraCaptureStatus()
         snapshot.state = status.state; snapshot.captureTime = status.captureTime
         completion(nil, snapshot)

@@ -54,6 +54,8 @@ final class Insta360SDKClient: NSObject, BLECameraDeviceClient {
     private var telemetry = CameraTelemetry()
     private var telemetryAt: TimeInterval?
     private var lastStatusAt: TimeInterval?
+    private var recordingElapsedVisible = false
+    private var lastPublishedStatus: CameraStatusUpdate?
     private var nextModeErrorLogAt: TimeInterval = 0
     private let session: Insta360SDKSession
     private let onStatus: (UUID, CameraConnectionState, String?) -> Void
@@ -73,12 +75,23 @@ final class Insta360SDKClient: NSObject, BLECameraDeviceClient {
         self.onLog = onLog
         session = Insta360SDKSession(cameraID: cameraID, cameraName: cameraName)
         super.init()
-        session.onCompletion = onCommandCompleted
+        session.onCompletion = { [weak self] result in
+            // Commands can change the store's progress without changing the
+            // camera. Its next status must be allowed to restore that state.
+            self?.lastPublishedStatus = nil
+            onCommandCompleted(result)
+        }
     }
 
     deinit { disconnectManagedConnection() }
 
     private var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
+
+    func setRecordingElapsedVisible(_ visible: Bool) {
+        guard recordingElapsedVisible != visible else { return }
+        recordingElapsedVisible = visible
+        if ready { publish() }
+    }
 
     func didConnect() {
         disconnectManagedConnection()
@@ -139,6 +152,7 @@ final class Insta360SDKClient: NSObject, BLECameraDeviceClient {
         telemetry = CameraTelemetry()
         telemetryAt = nil
         lastStatusAt = nil
+        lastPublishedStatus = nil
         nextModeErrorLogAt = 0
         session.end()
         if holdsRuntime {
@@ -250,13 +264,19 @@ final class Insta360SDKClient: NSObject, BLECameraDeviceClient {
                 let observedAt = self.now
                 let recordingState = Insta360SDKSession.recordingState(rawValue: status.state.rawValue)
                 let elapsed = UInt32(clamping: status.captureTime)
+                // Capture status remains the health signal while recording.
+                // Mode must be read again for transitions and pending commands.
+                if recordingState == .recording, self.session.recordingState == .recording,
+                   !self.session.isBusy, let mode = self.session.currentMode {
+                    self.finishStatus(recordingState, mode: mode, elapsed: elapsed,
+                        observedAt: observedAt, commandID: commandID, observationToken: observationToken)
+                    return
+                }
                 let photoType = NSNumber(value: INSCameraOptionsType.photoSubMode.rawValue)
                 let videoType = NSNumber(value: INSCameraOptionsType.videoSubMode.rawValue)
                 self.commands?.getOptionsWithTypes([photoType, videoType]) { [weak self] error, options, successTypes in
                     DispatchQueue.main.async {
                         guard let self, self.generation == token else { return }
-                        self.queryBeganAt = nil
-                        self.nextStatusAt = self.now + 1
                         // The SDK contract says nil error means all requested
                         // options succeeded; successTypes itself is nullable.
                         let successful = error == nil ? [photoType, videoType] : (successTypes ?? [])
@@ -267,25 +287,34 @@ final class Insta360SDKClient: NSObject, BLECameraDeviceClient {
                             self.log("SDK normal capture mode is unknown: \(error?.localizedDescription ?? "unsupported or incomplete mode response").")
                             self.nextModeErrorLogAt = self.now + 30
                         }
-                        self.session.tick(at: self.now)
-                        let accepted = self.session.observe(state: recordingState,
-                            mode: captureMode, at: observedAt, queryCommandID: commandID, queryToken: observationToken)
-                        // A slow mode response must not make an old stopped
-                        // observation fresh enough to authorize a new Start.
-                        self.session.tick(at: self.now)
-                        guard accepted else { self.publish(); return }
-                        self.lastStatusAt = observedAt
-                        self.telemetry.recordingElapsedSeconds = elapsed
-                        if !self.ready {
-                            self.ready = true
-                            self.log("SDK Bluetooth ready; capture status received.")
-                            self.onStatus(self.cameraID, .connected, "Insta360 SDK Bluetooth ready (experimental).")
-                        }
-                        self.publish()
+                        self.finishStatus(recordingState, mode: captureMode, elapsed: elapsed,
+                            observedAt: observedAt, commandID: commandID, observationToken: observationToken)
                     }
                 }
             }
         }
+    }
+
+    private func finishStatus(
+        _ state: CameraRecordingState, mode: CaptureMode?, elapsed: UInt32,
+        observedAt: TimeInterval, commandID: UUID?, observationToken: UUID
+    ) {
+        queryBeganAt = nil
+        nextStatusAt = now + 1
+        session.tick(at: now)
+        let accepted = session.observe(state: state, mode: mode, at: observedAt,
+            queryCommandID: commandID, queryToken: observationToken)
+        // A slow mode response cannot refresh an old stopped observation.
+        session.tick(at: now)
+        guard accepted else { publish(); return }
+        lastStatusAt = observedAt
+        telemetry.recordingElapsedSeconds = elapsed
+        if !ready {
+            ready = true
+            log("SDK Bluetooth ready; capture status received.")
+            onStatus(cameraID, .connected, "Insta360 SDK Bluetooth ready (experimental).")
+        }
+        publish()
     }
 
     private func readTelemetry() {
@@ -365,10 +394,15 @@ final class Insta360SDKClient: NSObject, BLECameraDeviceClient {
         if telemetryAt.map({ now - $0 > 75 }) != false {
             value = CameraTelemetry(recordingElapsedSeconds: telemetry.recordingElapsedSeconds)
         }
-        if session.statusAt == nil { value.recordingElapsedSeconds = nil }
-        value.lastUpdated = Date()
-        onCameraStatus(cameraID, CameraStatusUpdate(recordingState: session.recordingState,
-            currentMode: session.currentMode, telemetry: value, replacesTelemetry: true))
+        if session.statusAt == nil || !recordingElapsedVisible { value.recordingElapsedSeconds = nil }
+        // Keep freshness internal; a new display timestamp is not a change.
+        value.lastUpdated = nil
+        var update = CameraStatusUpdate(recordingState: session.recordingState,
+            currentMode: session.currentMode, telemetry: value, replacesTelemetry: true)
+        guard update != lastPublishedStatus else { return }
+        lastPublishedStatus = update
+        update.telemetry?.lastUpdated = Date()
+        onCameraStatus(cameraID, update)
     }
 
     private func fail(_ message: String) {

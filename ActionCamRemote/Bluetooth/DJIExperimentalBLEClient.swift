@@ -47,6 +47,9 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
     private var nanoCaptureSettingUpdates: [String: DJINanoProtocol.CaptureSettingUpdate] = [:]
     private var lastNanoCaptureMode: CaptureMode?
     private var nanoKeepAliveTimer: Timer?
+    private var nextNanoMetadataAt: TimeInterval = 0
+    private var nanoMetadataDeferredUntil: TimeInterval = 0
+    private let metadataTime: () -> TimeInterval
     private var silentRSDKStatusSubscriptionSequences: Set<UInt16> = []
     private var dumlRouting: DJIDUMLRouting
     private var sequenceNumber: UInt16 = UInt16.random(in: .min ... .max)
@@ -107,7 +110,8 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
         onLog: @escaping (String) -> Void,
         isInitialPairing: Bool = false,
         onCommandCompleted: @escaping (CameraCommandResult) -> Void = { _ in },
-        onPairingRejected: @escaping (UUID, String) -> Void
+        onPairingRejected: @escaping (UUID, String) -> Void,
+        metadataTime: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
     ) {
         self.cameraID = cameraID
         self.cameraName = cameraName
@@ -123,6 +127,7 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
         self.isInitialPairing = isInitialPairing
         self.onCommandCompleted = onCommandCompleted
         self.onPairingRejected = onPairingRejected
+        self.metadataTime = metadataTime
         super.init()
     }
 
@@ -172,6 +177,8 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
         lastNanoCaptureMode = nil
         nanoKeepAliveTimer?.invalidate()
         nanoKeepAliveTimer = nil
+        nextNanoMetadataAt = 0
+        nanoMetadataDeferredUntil = 0
         silentRSDKStatusSubscriptionSequences.removeAll()
         pendingRecordActionsBySequence.removeAll()
         pendingModeUpdatesBySequence.removeAll()
@@ -1423,6 +1430,7 @@ private extension DJIExperimentalBLEClient {
             return rSDKNotReadyResult(for: command)
         }
 
+        if cameraBehavior.kind == .djiOsmoNano { deferNanoMetadata(for: 15) }
         let burstCount = action.isStopping ? stopCommandBurstCount : 1
         var packetCount = 0
         if action.isStarting {
@@ -1538,6 +1546,7 @@ private extension DJIExperimentalBLEClient {
             commandID: 0x01,
             payload: Data([0x01])
         )
+        deferNanoMetadata(for: 5)
         enqueueNanoWrite(packet.data, label: "Nano capture photo", to: peripheral)
         return result(for: command, status: .sent, message: "Queued DJI Nano photo capture command.")
     }
@@ -1559,6 +1568,7 @@ private extension DJIExperimentalBLEClient {
             payload: Data([modeValue])
         )
         pendingModeUpdatesBySequence[packet.sequenceNumber] = mode
+        deferNanoMetadata(for: 5)
         nanoCaptureSettingUpdates.removeAll()
         let modeName = mode.displayName(for: cameraModel)
         enqueueNanoWrite(packet.data, label: "Nano switch to \(modeName)", to: peripheral)
@@ -1589,6 +1599,13 @@ private extension DJIExperimentalBLEClient {
         includeExtendedProbes: Bool,
         shouldLog: Bool
     ) {
+        if cameraBehavior.kind == .djiOsmoNano {
+            guard metadataTime() >= nanoMetadataDeferredUntil else { return }
+            if !shouldLog {
+                guard hasReportedLegacyDumlReady, metadataTime() >= nextNanoMetadataAt else { return }
+                nextNanoMetadataAt = metadataTime() + 30
+            }
+        }
         let packets = djiStatusProbePackets(includeExtendedProbes: includeExtendedProbes)
         if cameraBehavior.kind == .djiOsmoNano,
            rSDKWriteCharacteristic != nil {
@@ -1623,6 +1640,13 @@ private extension DJIExperimentalBLEClient {
                     }
                 }
             }
+        }
+    }
+
+    func deferNanoMetadata(for interval: TimeInterval) {
+        nanoMetadataDeferredUntil = metadataTime() + interval
+        pendingNanoWrites.removeAll {
+            $0.label == "Nano status poll" || $0.label.hasPrefix("status probe ")
         }
     }
 
@@ -1663,17 +1687,19 @@ private extension DJIExperimentalBLEClient {
                 )
             )
 
-            packets.append(
-                DJICommandPacket(
-                    label: "camera work mode get \(routing.debugLabel)",
-                    command: nextDumlPacket(
-                        routing: routing,
-                        commandSet: 0x02,
-                        commandID: 0x11,
-                        payload: Data()
+            if cameraBehavior.kind != .djiOsmoNano || includeExtendedProbes {
+                packets.append(
+                    DJICommandPacket(
+                        label: "camera work mode get \(routing.debugLabel)",
+                        command: nextDumlPacket(
+                            routing: routing,
+                            commandSet: 0x02,
+                            commandID: 0x11,
+                            payload: Data()
+                        )
                     )
                 )
-            )
+            }
 
             if includeExtendedProbes {
                 packets.append(

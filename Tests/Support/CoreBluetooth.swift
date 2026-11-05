@@ -92,6 +92,26 @@ public let CBPeripheralManagerRestoredStateAdvertisementDataKey = "restoredAdver
 public let CBAdvertisementDataManufacturerDataKey = "manufacturerData"
 public let CBAdvertisementDataLocalNameKey = "localName"
 public let CBAdvertisementDataServiceUUIDsKey = "serviceUUIDs"
+public let CBAdvertisementDataOverflowServiceUUIDsKey = "overflowServiceUUIDs"
+public let CBAdvertisementDataServiceDataKey = "serviceData"
+public let CBAdvertisementDataTxPowerLevelKey = "txPower"
+public let CBAdvertisementDataIsConnectable = "isConnectable"
+public let CBCentralManagerScanOptionAllowDuplicatesKey = "allowDuplicates"
+public let CBConnectPeripheralOptionEnableAutoReconnect = "autoReconnect"
+public protocol CBCentralManagerDelegate: AnyObject {}
+public final class CBCentralManager {
+    public static var instances: [CBCentralManager] = []
+    public var state = CBManagerState.poweredOn
+    public private(set) var scanCount = 0
+    public private(set) var stopCount = 0
+    public private(set) var disconnectCount = 0
+    public init(delegate: CBCentralManagerDelegate?, queue: DispatchQueue?) { Self.instances.append(self) }
+    public func scanForPeripherals(withServices services: [CBUUID]?, options: [String: Any]?) { scanCount += 1 }
+    public func stopScan() { stopCount += 1 }
+    public func retrievePeripherals(withIdentifiers ids: [UUID]) -> [CBPeripheral] { [] }
+    public func connect(_ peripheral: CBPeripheral, options: [String: Any]?) {}
+    public func cancelPeripheralConnection(_ peripheral: CBPeripheral) { disconnectCount += 1 }
+}
 public final class CBPeripheralManager {
     public struct Response { public let request: CBATTRequest; public let result: CBATTError.Code }
     public struct Update { public let data: Data; public let centrals: [CBCentral]? }
@@ -118,6 +138,8 @@ public final class CBPeripheralManager {
 public final class CBPeripheral {
     public struct Write { public let data: Data; public let characteristic: CBCharacteristic }
     public weak var delegate: (any CBPeripheralDelegate)?
+    public let identifier = UUID()
+    public var name: String?
     public var state = CBPeripheralState.connected
     public var services: [CBService]?
     public var maximumLength = 20

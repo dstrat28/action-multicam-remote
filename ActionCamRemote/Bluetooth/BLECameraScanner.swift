@@ -58,6 +58,7 @@ private struct KnownCameraProfile {
 final class BLECameraScanner: NSObject {
     private lazy var centralManager = CBCentralManager(delegate: self, queue: nil)
     private var wantsScanning = false
+    private var discoveryPaused = false
     private var peripheralsByID: [UUID: CBPeripheral] = [:]
     private var clientsByID: [UUID: any BLECameraDeviceClient] = [:]
     private var forcedReconnectOptionsByID: [UUID: [String: Any]] = [:]
@@ -66,12 +67,27 @@ final class BLECameraScanner: NSObject {
 
     var onEvent: ((BLEScannerEvent) -> Void)?
 
+    var isScanningRequested: Bool { wantsScanning }
+
+    func setDiscoveryPaused(_ paused: Bool) {
+        guard discoveryPaused != paused else { return }
+        discoveryPaused = paused
+        if paused {
+            // Pausing unused discovery must not initialize Bluetooth.
+            guard wantsScanning else { return }
+            centralManager.stopScan()
+        } else if wantsScanning {
+            start()
+        }
+    }
+
     var bluetoothState: CBManagerState {
         centralManager.state
     }
 
     func start() {
         wantsScanning = true
+        guard !discoveryPaused else { return }
         guard centralManager.state == .poweredOn else {
             onEvent?(.bluetoothStateChanged(centralManager.state))
             return
@@ -215,6 +231,7 @@ extension BLECameraScanner: CBCentralManagerDelegate {
         advertisementData: [String: Any],
         rssi RSSI: NSNumber
     ) {
+        guard !discoveryPaused else { return }
         guard let candidate = identifyRememberedCamera(
             peripheral: peripheral,
             advertisementData: advertisementData,

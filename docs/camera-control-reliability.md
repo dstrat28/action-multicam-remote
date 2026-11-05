@@ -1,5 +1,19 @@
 # Camera connection and command reliability
 
+## Work during recording
+
+Discovery pauses while a camera is recording, all paired cameras are connected,
+and pairing and pending Start/Stop recovery are idle. Manage Cameras, a dropped
+camera, or a pending command permits discovery again. Connected Nano cameras
+retain discovery because their sleep advertisements can invalidate an apparently
+live link. Pausing preserves explicit scan intent and every camera connection;
+advertisements queued before the pause are ignored.
+
+Battery and storage remain available to the iPhone, Apple Watch and CarPlay.
+Insta360 SDK elapsed time is published only while that camera's iPhone details
+are visible and the app is active. Health and recording confirmation continue
+regardless of display visibility.
+
 ## GoPro
 
 The transport queues one logical request at a time. Bluetooth write completion
@@ -81,6 +95,14 @@ promptly. Nano keeps its existing 15-second confirmation window, ending as soon
 as trusted stopped status arrives. If that deadline expires, the app shows
 “Stop not confirmed” and permits another explicit action.
 
+Nano's recurring metadata query runs at most once every 30 seconds after protocol
+readiness. It no longer asks for the work-mode field that Nano ignores. Capture
+discards queued metadata and defers new polls for the 15-second recording
+confirmation window (five seconds for photo/mode commands). Polling resumes
+after the bounded window even without confirmation. One-second keepalives,
+incoming protocol-health notifications, live capture status and sleep discovery
+remain independent. Metadata replies cannot confirm recording or mode.
+
 Nano's successful DUML status-poll replies update battery/storage only on the
 camera-to-app route. They cannot confirm capture state/mode or advance the
 recording timer used as capture evidence. Live status pushes keep that role.
@@ -135,3 +157,9 @@ confirmation lasts up to 25 seconds, and 30 seconds without valid status closes
 the session. ACK means acceptance, not confirmed recording state. SDK-enabled
 builds select the SDK automatically for compatible models. Active links retain
 their backend until reconnect; failures never trigger a legacy shutter action.
+
+Established SDK recording continues capture-status polling without rereading
+Photo/Video mode on every cycle. Transitions, stale/unknown state and pending
+commands refresh mode. Identical display values do not republish store updates;
+internal freshness and command deadlines continue advancing. Command completion
+permits an unchanged status to republish so temporary progress can settle.

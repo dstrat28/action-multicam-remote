@@ -198,17 +198,55 @@ enum Insta360SDKAdapterRegression {
         precondition(x3Start.status == .queued && x3Commands.starts == 1)
         x3Commands.status.state = .normalCapture
         waitUntil { x3Events.results.contains { $0.id == x3Start.id && $0.status == .sent } }
-        x3Commands.holdOptions = true
-        waitUntil { !x3Commands.heldOptions.isEmpty }
+        waitUntil { x3Events.updates.last?.telemetry?.batteryPercent == 50 }
+        func modeRequestCount() -> Int {
+            x3Commands.optionRequests.filter {
+                $0.contains(NSNumber(value: INSCameraOptionsType.photoSubMode.rawValue))
+            }.count
+        }
+        let modeRequests = modeRequestCount()
+        let steadyUpdates = x3Events.updates.count
+        let statusRequests = x3Commands.statusRequests
+        x3Commands.status.captureTime = 42
+        spin(6.2) // Cross the five-second capture-status freshness boundary.
+        precondition(x3Commands.statusRequests >= statusRequests + 4)
+        precondition(modeRequestCount() == modeRequests,
+            "Established recording must not repeatedly request mode")
+        precondition(x3Events.updates.count == steadyUpdates,
+            "Identical state and hidden elapsed time must not republish store updates")
+        precondition(x3Events.updates.last?.recordingState == .recording
+            && x3Events.connections.last == .connected,
+            "Internal freshness must advance even when publication is suppressed")
+        x3.setRecordingElapsedVisible(true)
+        precondition(x3Events.updates.last?.telemetry?.recordingElapsedSeconds == 42)
+        x3Commands.status.captureTime = 43
+        waitUntil { x3Events.updates.last?.telemetry?.recordingElapsedSeconds == 43 }
+        x3.setRecordingElapsedVisible(false)
+        precondition(x3Events.updates.last?.telemetry?.recordingElapsedSeconds == nil)
+        x3Commands.holdStatus = true
+        waitUntil { x3Commands.heldStatus != nil }
         spin(5.6)
         precondition(x3Events.updates.last?.recordingState == .unknown)
         let x3Stop = x3.send(.stopRecording)
         precondition(x3Stop.status == .queued && x3Commands.stops == 1,
                      "Unknown capture state must still reach explicit SDK Stop")
         x3Commands.status.state = .notCapture
-        x3Commands.holdOptions = false
-        x3Commands.releaseOptions()
+        let oldStatus = INSCameraCaptureStatus()
+        oldStatus.state = .normalCapture
+        x3Commands.holdStatus = false
+        x3Commands.heldStatus?(nil, oldStatus)
+        x3Commands.heldStatus = nil
         waitUntil { x3Events.results.contains { $0.id == x3Stop.id && $0.status == .sent } }
+        precondition(modeRequestCount() > modeRequests,
+            "Stop and subsequent Start must refresh mode")
+
+        // A redundant Stop may change the store's progress while the camera
+        // stays stopped. Completion must allow that same status to republish.
+        let beforeRedundantStop = x3Events.updates.count
+        let redundantStop = x3.send(.stopRecording)
+        waitUntil { x3Events.results.contains { $0.id == redundantStop.id && $0.status == .sent } }
+        precondition(x3Events.updates.count > beforeRedundantStop
+            && x3Events.updates.last?.recordingState == .stopped)
 
         x3Commands.options.photoSubMode = 0
         x3Commands.options.videoSubMode = 100
@@ -231,6 +269,11 @@ enum Insta360SDKAdapterRegression {
         precondition(x3SecondStart.status == .queued && x3Commands.starts == 2 && x3Commands.modeChanges == 1)
         x3Commands.status.state = .normalCapture
         waitUntil { x3Events.results.contains { $0.id == x3SecondStart.id && $0.status == .sent } }
+        x3Commands.status.state = .notCapture
+        x3Commands.options.photoSubMode = 0
+        x3Commands.options.videoSubMode = 100
+        waitUntil { x3Events.updates.last?.recordingState == .stopped
+            && x3Events.updates.last?.currentMode == .photo }
         x3.disconnectManagedConnection()
         let (optional, optionalEvents) = make("X3 metadata", model: .insta360X3)
         optional.didConnect()

@@ -96,6 +96,9 @@ jobs:
       - name: Check DJI Stop and pairing lifecycle
         run: sh ci_scripts/check_dji_stop_feedback.sh
 
+      - name: Check discovery during recording
+        run: sh ci_scripts/check_camera_discovery.sh
+
       - name: Check GoPro transport and client lifecycle
         run: sh ci_scripts/check_gopro_transport.sh
 

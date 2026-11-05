@@ -987,6 +987,8 @@ private struct CameraDetailContent: View {
         .background(Color.acrAppBackground)
         .navigationTitle("Camera Info")
         .navigationBarTitleDisplayMode(.inline)
+        .onAppear { store.setCameraDetailVisible(true, for: camera.id) }
+        .onDisappear { store.setCameraDetailVisible(false, for: camera.id) }
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
                 Button {
