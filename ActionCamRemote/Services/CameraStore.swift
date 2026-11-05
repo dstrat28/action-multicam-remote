@@ -38,9 +38,6 @@ final class CameraStore {
     @ObservationIgnored private var commandHistoryGeneration: UInt64 = 0
     @ObservationIgnored private var commandHistoryRevision: UInt64 = 0
     @ObservationIgnored private var insta360Remote: Insta360RemoteService?
-    private var insta360SDKEnabled: Bool {
-        FeatureAvailability.insta360SDK && UserDefaults.standard.bool(forKey: ACRPreferences.insta360SDKEnabled)
-    }
     @ObservationIgnored private let phoneGPSProvider = PhoneGPSProvider()
     @ObservationIgnored private let recordingLiveActivityController = RecordingLiveActivityController()
     @ObservationIgnored private var liveActivityStopObserver: NSObjectProtocol?
@@ -553,7 +550,7 @@ final class CameraStore {
 
     func connect(_ requestedCamera: DiscoveredCamera) {
         var camera = cameras.first(where: { $0.id == requestedCamera.id }) ?? requestedCamera
-        let selection = camera.resolvedInsta360SDKSelection(preferred: insta360SDKEnabled)
+        let selection = camera.resolvedInsta360SDKSelection()
         if camera.brand == .insta360, let previous = camera.insta360UsesSDK, previous != selection {
             clearInsta360CaptureIntents(for: camera.id)
         }
@@ -813,27 +810,6 @@ final class CameraStore {
             cancelConnectionTimeout(for: camera.id)
             updateCamera(camera.id, state: .failed(error.localizedDescription), detail: nil)
         }
-    }
-
-    func refreshInsta360SDKPreference() {
-        for index in cameras.indices where cameras[index].brand == .insta360 {
-            let selection = cameras[index].resolvedInsta360SDKSelection(preferred: insta360SDKEnabled)
-            guard cameras[index].insta360UsesSDK != selection else { continue }
-            let id = cameras[index].id
-            clearInsta360CaptureIntents(for: id)
-            cameras[index].insta360UsesSDK = selection
-            cameras[index].capabilities = normalizedCapabilities(cameras[index].capabilities,
-                brand: cameras[index].brand, model: cameras[index].model, name: cameras[index].name,
-                usesInsta360SDK: selection)
-            if let reason = cameras[index].unsupportedReason {
-                cameras[index].connectionState = .unsupported(reason)
-                cameras[index].isSelected = false
-            } else if case .unsupported = cameras[index].connectionState {
-                cameras[index].connectionState = cameras[index].isPaired ? .disconnected : .discovered
-            }
-        }
-        appendLog("Insta360 SDK preference updated; it applies to the next connection. Active links keep their current control method.")
-        persistPairedCameras()
     }
 
     private func clearInsta360CaptureIntents(for id: UUID) {
@@ -1406,8 +1382,9 @@ private extension CameraStore {
             let previousSortRank = cameras[index].defaultSortRank
             let resolvedModel = candidate.model == .unknown ? cameras[index].model : candidate.model
             var routeCamera = cameras[index]
+            routeCamera.brand = candidate.brand
             routeCamera.model = resolvedModel
-            let sdkSelection = routeCamera.resolvedInsta360SDKSelection(preferred: insta360SDKEnabled)
+            let sdkSelection = routeCamera.resolvedInsta360SDKSelection()
             let capabilities = normalizedCapabilities(
                 candidate.capabilities,
                 brand: candidate.brand,
@@ -1418,8 +1395,7 @@ private extension CameraStore {
             let unsupportedReason = unsupportedReason(
                 brand: candidate.brand,
                 model: resolvedModel,
-                name: candidate.name,
-                usesInsta360SDK: sdkSelection
+                name: candidate.name
             )
 
             if cameras[index].name != candidate.name {
@@ -1435,7 +1411,7 @@ private extension CameraStore {
                 shouldSort = true
             }
             if cameras[index].connectionState != .connected && cameras[index].connectionState != .connecting {
-                cameras[index].insta360UsesSDK = insta360SDKEnabled && resolvedModel.supportsInsta360SDKPrototype
+                cameras[index].insta360UsesSDK = sdkSelection
             }
             if cameras[index].capabilities != capabilities {
                 cameras[index].capabilities = capabilities
@@ -1583,7 +1559,8 @@ private extension CameraStore {
                     lastConnectableSeen: isConnectionFreshnessAdvertisement ? Date() : nil,
                     isPairingAdvertisement: candidate.brand == .gopro ? candidate.isPairing : nil,
                     advertisementAwake: candidate.isAwake,
-                    insta360UsesSDK: insta360SDKEnabled && candidate.model.supportsInsta360SDKPrototype
+                    insta360UsesSDK: FeatureAvailability.insta360SDK && candidate.brand == .insta360
+                        && candidate.model.supportsInsta360SDK
                 )
             )
             shouldSort = true
@@ -3796,7 +3773,10 @@ private extension CameraStore {
         do {
             cameras = try JSONDecoder().decode([DiscoveredCamera].self, from: data).map { saved in
                 var camera = saved
-                camera.insta360UsesSDK = insta360SDKEnabled && camera.model.supportsInsta360SDKPrototype
+                // A relaunched app starts a new connection, independent of any
+                // saved backend or the retired SDK opt-in preference.
+                camera.connectionState = .disconnected
+                camera.insta360UsesSDK = camera.resolvedInsta360SDKSelection()
                 camera.capabilities = normalizedCapabilities(
                     camera.capabilities,
                     brand: camera.brand,
@@ -3891,7 +3871,7 @@ private extension CameraStore {
         name: String,
         usesInsta360SDK: Bool? = nil
     ) -> Set<CameraCapability> {
-        if unsupportedReason(brand: brand, model: model, name: name, usesInsta360SDK: usesInsta360SDK) != nil {
+        if unsupportedReason(brand: brand, model: model, name: name) != nil {
             return [.experimental]
         }
 
@@ -3908,7 +3888,7 @@ private extension CameraStore {
             normalized.remove(.mode)
             normalized.remove(.settings)
             normalized.remove(.keepAlive)
-            if (usesInsta360SDK ?? insta360SDKEnabled) && model.supportsInsta360SDKPrototype { normalized.insert(.mode) }
+            if (usesInsta360SDK ?? FeatureAvailability.insta360SDK) && model.supportsInsta360SDK { normalized.insert(.mode) }
         }
         return normalized
     }
@@ -3916,12 +3896,8 @@ private extension CameraStore {
     func unsupportedReason(
         brand: CameraBrand,
         model: CameraModel,
-        name: String,
-        usesInsta360SDK: Bool? = nil
+        name: String
     ) -> String? {
-        if model.requiresInsta360SDK, FeatureAvailability.insta360SDK, !(usesInsta360SDK ?? insta360SDKEnabled) {
-            return DiscoveredCamera.insta360SDKRequiredReason
-        }
         return DiscoveredCamera.unsupportedReason(brand: brand, model: model, name: name)
     }
 

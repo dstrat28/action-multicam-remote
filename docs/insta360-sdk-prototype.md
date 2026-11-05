@@ -1,8 +1,9 @@
 # Insta360 iOS SDK Bluetooth control
 
-PR #15 adds optional control using the approved iOS v1.11.3 package. SDK control
-is off by default. Ordinary builds retain the existing X5/X6 direct Bluetooth
-and GPS Remote implementations.
+Device builds that include the approved iOS v1.11.3 package automatically use
+the SDK for its documented camera models. Ace and GO models retain GPS Remote
+control. SDK-free builds retain the existing X5/X6 direct Bluetooth and GPS
+Remote implementations. There is no user-facing backend setting.
 
 ## Private SDK installation and build
 
@@ -55,8 +56,8 @@ claiming an app feature that uses the phone camera. Standard and simulator build
 omit this SDK-specific purpose string. The original Info.plist keys are retained.
 
 The supplied Camera/Media frameworks have no simulator slice. Simulator and
-ordinary device builds exclude SDK imports and binaries and hide the Settings
-switch. A successful public CI build therefore does not validate SDK packaging;
+SDK-free device builds exclude SDK imports and binaries. A successful public
+CI build therefore does not validate SDK packaging;
 the SDK-enabled device build must also be checked locally with the approved files.
 The current public GitHub CI workflow deliberately does not download the proprietary
 package. It tests the Cloud provisioning code using handwritten fixtures.
@@ -123,10 +124,10 @@ URLs, tokens, or response contents.
 If the workflow opts in but its URL, checksum, or frameworks are missing/invalid,
 the build fails instead of silently producing an SDK-free release. Leaving the
 flag unset or setting `NO` removes any generated override and builds the existing
-routes. Simulator builds always omit the vendor SDK. The in-app switch remains
-off by default even when the release includes the SDK.
+routes. Simulator builds always omit the vendor SDK. SDK-enabled releases select
+the backend automatically; an old saved opt-in preference has no effect.
 
-The hooks and a local reproduction are checked in this PR. Provision the private
+The hooks and a local reproduction are checked in. Provision the private
 archive and workflow variables separately for your release environment; the public
 repository contains no private endpoint or credentials. Run a signed Cloud archive
 and verify the result before distributing the first SDK-enabled release. The post-build hook
@@ -150,27 +151,39 @@ explicit USB manager when the first SDK client starts and shuts it down when the
 last client closes. Bluetooth capture/status commands always use each camera's
 own command interface. Wi-Fi and external-accessory controls are not used.
 
-## Setting and return to existing control
+## Automatic camera routing
 
-SDK device builds show a plain **Settings > Insta360 SDK** switch. Changes apply
-to the next connection without restarting Multicam. An established connection or
-an in-flight handshake keeps its current method, including while recording.
+SDK-enabled device builds select the backend from the documented model list:
 
-To return to existing control, turn the switch off, disconnect the camera, and
-connect it again. The selection change clears queued capture intents; it does
-not send a shutter command. A remembered X5 GPS Remote fallback is preserved.
-X2, ONE X, ONE R, and ONE RS 1-Inch require SDK control and have no existing route
-to return to; disabling SDK makes those four models unavailable.
+| Models | Backend |
+| --- | --- |
+| X6, X5, X4 Air, X4, X3, X2/ONE X2, ONE X, ONE R, ONE RS, ONE RS 1-Inch | Insta360 SDK Bluetooth |
+| Ace/Ace Pro/Ace Pro 2, GO 3/3S/Ultra | Existing GPS Remote |
+| Unknown models | Unavailable |
+
+There is no Settings toggle, and the old saved SDK preference is ignored.
+An established connection or in-flight handshake keeps its current backend,
+including while recording. A new connection resolves the backend automatically.
+SDK connection or capture failures never trigger a legacy connection or shutter
+toggle. A remembered X5 GPS Remote fallback cannot override SDK selection.
+
+For development or diagnosis, build with `MULTICAM_INSTA360_SDK_ENABLED=NO`.
+This retains the existing X5/X6 direct Bluetooth and GPS Remote routes, including
+a remembered X5 fallback. X2, ONE X, ONE R, and ONE RS 1-Inch have no legacy route
+and remain unavailable in SDK-free builds. A backend change clears queued capture
+intents rather than carrying them into a different protocol. SDK files continue
+to come from private storage; automatic routing does not change public-repository
+exclusion or Cloud provisioning.
 
 ## Camera and command scope
 
-The complete official iOS list is eligible: X6, X5, X4 Air, X4, X3, X2, ONE X,
+The complete official iOS list uses the SDK: X6, X5, X4 Air, X4, X3, X2, ONE X,
 ONE R, ONE RS, and ONE RS 1-Inch. Ace and GO models retain GPS Remote control.
 Eligibility is not physical-camera validation. Discovery also recognizes the
 ONE X2 alias and ONE RS 1-Inch 360 Edition name.
-With SDK control off, SDK-only models remain unavailable and never prepare a
+In SDK-free builds, SDK-only models remain unavailable and never prepare a
 GPS Remote restoration request. X5/X6 retain their existing direct control paths;
-the setting does not change their legacy support.
+automatic routing does not remove those legacy implementations.
 
 - Each camera has its own Bluetooth manager, device, command interface,
   connection task, delegate generation, and command confirmation state.
@@ -206,8 +219,9 @@ modes, and highlight tags are outside this Bluetooth integration.
 ## Verification and remaining uncertainty
 
 `sh ci_scripts/check_insta360_sdk.sh` tests state freshness, command confirmation,
-late replies, mode gates, timeouts, all ten models, connection-scoped preference
-changes, and return to a remembered X5 route with SDK availability on and off.
+late replies, mode gates, timeouts, automatic routing for all ten models,
+connection-scoped backend ownership, legacy model eligibility, and return to a
+remembered X5 route in SDK-free builds. SDK failures retain SDK routing on reconnect.
 
 `sh ci_scripts/check_insta360_sdk_adapter.sh` exercises the actual adapter against
 our handwritten SDK double: initialization/shutdown, independent cameras,
@@ -217,10 +231,10 @@ The double provides no evidence that vendor internals or camera firmware behave
 identically. Native device builds verify the supplied headers and linker inputs.
 
 No physical Insta360 camera is available for this review. Merge readiness is
-based on documented setup, native builds, synthetic regression tests, the
-existing routes remaining available, and SDK control being opt-in. Camera
+based on documented setup, native builds, synthetic regression tests, and the
+legacy routes remaining available in SDK-free builds. Camera
 compatibility remains unverified and should be assessed through controlled user
-reports for one-camera capture, multiple/mixed cameras, relaunch, Bluetooth loss,
+reports in TestFlight for one-camera capture, multiple/mixed cameras, relaunch, Bluetooth loss,
 and foreground/background transitions. Do not label a camera hardware-tested
 without observing it physically.
 

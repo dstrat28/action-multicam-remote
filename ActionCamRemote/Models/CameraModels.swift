@@ -60,7 +60,7 @@ enum CameraModel: String, Identifiable, Codable {
 
     var id: String { rawValue }
 
-    var supportsInsta360SDKPrototype: Bool {
+    var supportsInsta360SDK: Bool {
         switch self {
         case .insta360X6, .insta360X5, .insta360X4Air, .insta360X4, .insta360X3,
              .insta360X2, .insta360OneX, .insta360OneR, .insta360OneRS, .insta360OneRS1Inch:
@@ -947,7 +947,6 @@ struct CameraBehaviorProfile: Equatable {
 
 struct DiscoveredCamera: Identifiable, Equatable, Codable {
     static let unsupportedCameraReason = "Unsupported"
-    static let insta360SDKRequiredReason = "Enable Insta360 SDK in Settings, then connect this camera."
 
     let id: UUID
     var name: String
@@ -978,9 +977,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     }
 
     var unsupportedReason: String? {
-        if let reason = Self.unsupportedReason(brand: brand, model: model, name: name) { return reason }
-        if model.requiresInsta360SDK, insta360UsesSDK != true { return Self.insta360SDKRequiredReason }
-        return nil
+        Self.unsupportedReason(brand: brand, model: model, name: name)
     }
 
     static func unsupportedReason(
@@ -1219,13 +1216,13 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
         brand == .insta360 && isSupportedByApp && behavior.kind != .insta360Direct
     }
 
-    func resolvedInsta360SDKSelection(preferred: Bool) -> Bool {
+    func resolvedInsta360SDKSelection(sdkAvailable: Bool = FeatureAvailability.insta360SDK) -> Bool {
         guard brand == .insta360 else { return false }
-        // Preferences affect the next connection, never an established link or
-        // an in-flight handshake. Reconnects resolve the preference afresh.
+        // An established link or in-flight handshake retains its backend.
+        // New connections use the SDK automatically for documented models.
         if connectionState == .connected || connectionState == .connecting,
            let insta360UsesSDK { return insta360UsesSDK }
-        return preferred && model.supportsInsta360SDKPrototype
+        return sdkAvailable && model.supportsInsta360SDK
     }
 
     var isKnownAction6: Bool {

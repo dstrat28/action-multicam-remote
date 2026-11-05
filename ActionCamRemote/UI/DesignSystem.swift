@@ -97,7 +97,6 @@ enum ACRDesign {
 
 enum ACRPreferences {
     static let largerControls = "largerControls"
-    static let insta360SDKEnabled = "experimentalInsta360SDKEnabled"
 }
 
 struct ACRPrimaryActionButton: View {
