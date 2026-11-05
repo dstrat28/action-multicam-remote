@@ -1646,7 +1646,7 @@ private extension DJIExperimentalBLEClient {
     }
 
     func deferNanoMetadata(for interval: TimeInterval) {
-        nanoMetadataDeferredUntil = metadataTime() + interval
+        nanoMetadataDeferredUntil = max(nanoMetadataDeferredUntil, metadataTime() + interval)
         pendingNanoWrites.removeAll {
             $0.label == "Nano status poll" || $0.label.hasPrefix("status probe ")
         }

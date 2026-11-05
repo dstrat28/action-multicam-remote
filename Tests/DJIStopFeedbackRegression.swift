@@ -166,7 +166,17 @@ enum DJIStopFeedbackRegression {
         receiveState()
         precondition(activityCount > activityBefore && updates.last?.recordingState == .recording,
             "Live capture and health notifications must continue during the metadata pause")
-        clock = 160
+        // A later mode command has a shorter metadata window. It must not
+        // shorten the still-active Stop confirmation window (155 + 15).
+        clock = 155
+        precondition(client.send(.stopRecording).status == .sent)
+        clock = 156
+        precondition(client.send(.setMode(.photo)).status == .sent)
+        clock = 162
+        try? await Task.sleep(for: .seconds(2.6))
+        precondition(polls() == firstPolls,
+            "A mode command must not shorten the pending Stop metadata pause")
+        clock = 170
         try? await Task.sleep(for: .seconds(2.8))
         precondition(polls() == firstPolls + 1,
             "Metadata must resume after its bounded capture window without confirming capture")

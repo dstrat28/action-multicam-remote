@@ -101,7 +101,8 @@ readiness; startup retains its 2.5-second retries when a probe is lost. It no
 longer asks for the work-mode field that Nano ignores. Capture
 discards queued metadata and defers new polls for the 15-second recording
 confirmation window (five seconds for photo/mode commands). Polling resumes
-after the bounded window even without confirmation. One-second keepalives,
+after the bounded window even without confirmation. Overlapping commands retain
+the longer active metadata pause. One-second keepalives,
 incoming protocol-health notifications, live capture status and sleep discovery
 remain independent. Metadata replies cannot confirm recording or mode.
 
