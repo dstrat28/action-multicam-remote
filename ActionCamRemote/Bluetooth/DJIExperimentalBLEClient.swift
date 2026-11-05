@@ -91,7 +91,7 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
     private let onLog: (String) -> Void
     private let isInitialPairing: Bool
     private let onCommandCompleted: (CameraCommandResult) -> Void
-    private let onPairingRejected: (UUID) -> Void
+    private let onPairingRejected: (UUID, String) -> Void
     private let hasConfirmedAwakeNanoAdvertisement: Bool
 
     init(
@@ -107,7 +107,7 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
         onLog: @escaping (String) -> Void,
         isInitialPairing: Bool = false,
         onCommandCompleted: @escaping (CameraCommandResult) -> Void = { _ in },
-        onPairingRejected: @escaping (UUID) -> Void = { _ in }
+        onPairingRejected: @escaping (UUID, String) -> Void
     ) {
         self.cameraID = cameraID
         self.cameraName = cameraName
@@ -1186,9 +1186,9 @@ private extension DJIExperimentalBLEClient {
                     completeRSDKHandshake(to: peripheral, source: "camera verification")
                 }
             } else if request.verifyMode == 0x02, request.verifyData == 1 {
-                onPairingRejected(cameraID)
-                onStatus(cameraID, .failed("Connection declined on the DJI camera. Tap Pair to try again."),
-                    "DJI rejected the connection; automatic pairing retries are paused.")
+                // One terminal event owns rejection status and teardown. A
+                // separate Failed callback could be discarded by that teardown.
+                onPairingRejected(cameraID, "Connection declined on the DJI camera. Tap Pair to try again.")
             } else {
                 onLog(
                     "\(cameraName): DJI R SDK camera verification rejected: mode 0x\(request.verifyMode.hexByte), data 0x\(request.verifyData.hexWord)."

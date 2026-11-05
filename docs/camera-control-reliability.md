@@ -33,12 +33,40 @@ not when first queued. A response must match both the sequence and command type.
 Expired writes are discarded, late replies cannot revive expired intents, and
 Stop cancels an unsent Start/photo request. A late Start acknowledgement cannot restore Starting after a newer Stop. Failures reach saved command history.
 
-If the latest explicit Stop times out, is rejected, or loses its connection,
-the store retains that Stop, closes the failed link, and issues a new Stop after
-the camera's protocol is ready again. A newer capture request (including Start
-still preparing Video mode) supersedes that recovery. Disconnect pauses it.
-This recovery applies only to DJI's explicit Stop; uncertain Start, photo,
-mode-change, and Insta360 toggle commands are never replayed automatically.
+If the latest explicit GoPro or DJI Stop times out, is rejected, or loses its
+connection before stopped status arrives, the store retains that Stop and issues
+a new Stop after the camera's protocol is ready again. This includes loss after
+command acknowledgement and loss after the advisory confirmation deadline, as
+well as Bluetooth power-off and protocol-staleness disconnects. Reconnect Stop
+gets a fresh confirmation window and repeated readiness does not dispatch it
+twice. Trusted stopped status ends confirmation. A newer capture request
+(including Start still preparing Video mode), Disconnect, or Remove supersedes
+recovery. Uncertain Start, photo, mode-change, and Insta360 capture commands are
+never automatically repeated by this recovery path.
+Trusted stopped status also clears a retained Stop before protocol readiness,
+so a later readiness callback cannot replay a request already settled by the camera.
+Once trusted stopped status settles Stop, a late transport failure cannot reopen
+recovery. A rejected duplicate Stop cannot supersede the request already in flight.
+Stop feedback and queued recovery have one owner, `CameraStopState`. Confirmation,
+new capture, manual Disconnect and Remove use one settlement operation; ending
+connection-specific feedback explicitly preserves a queued reconnect Stop.
+
+Every GoPro, DJI, direct Insta360 and SDK client has a connection-scoped callback
+session. Replacement, Disconnect, Remove and terminal connection status invalidate
+even callbacks already queued on the main actor. Discarded command outcomes still
+reach command history without changing the new connection's state or controls.
+For GoPro and direct Insta360 failures, applying terminal status and requesting
+the required Bluetooth disconnect run in one guarded actor turn. Retiring that
+session cannot discard its own teardown, and a replaced session cannot close its successor.
+DJI pairing rejection is one terminal event: it pauses automatic pairing,
+applies the rejection reason and completes teardown in the same guarded actor turn.
+An explicitly disconnected camera stays Not Connected even when its last report
+was Recording; the camera's recording state does not override the user's pause.
+
+The scanner reports physical link state; opening that link keeps the app in
+Connecting until the client reports protocol-ready Connected. Pending Start/Stop
+and passive DJI setup use those typed states, never diagnostic-message text.
+Nano's deferred awake/readiness marker is cleared with its connection session.
 
 First-time pairing requests camera confirmation and allows 90 seconds for it.
 An explicit camera rejection pauses automatic pairing attempts until a user
@@ -77,9 +105,10 @@ actually transmitted. It uses the same duration as the transport; duplicate or
 superseded delivery callbacks cannot extend the wait. Recording timers while
 Stop is still queued keep Recording visible and cannot cancel its pending UI.
 
-The app's Stop spinner ends after five seconds for GPS Remote. Other cameras
-wait for stopped status, with a 15-second fallback to an advisory “Stop not
-confirmed”; a late trusted stopped status clears it. GPS Remote returns
+The app's Stop spinner ends after five seconds for GPS Remote. SDK cameras wait
+up to 25 seconds, matching their command confirmation deadline; GoPro/DJI and
+legacy direct cameras wait up to 15 seconds. Missing stopped status becomes an
+advisory “Stop not confirmed”; a late trusted stopped status clears it. GPS Remote returns
 to the green connection display because it cannot explicitly confirm Stop, while
 its underlying recording state remains unknown. Missing confirmation adds no new
 recording lockout.
@@ -93,3 +122,18 @@ Multicam has not been tested on Insta360 hardware. Host checks replay documented
 packets and exercise parser boundaries, command correlation, timeouts, fallback
 eligibility, independent camera state, and superseded capture intents. These
 checks do not establish radio behavior or compatibility with every firmware.
+
+## Alignment with Trackside
+
+Both apps share the GoPro transaction and readiness rules, first-pair approval
+window, rejected-pairing pause, explicit GoPro/DJI Stop recovery, stale-client
+callback rejection and SDK capture safety rules. SDK Start needs stopped status
+no older than five seconds in normal Video; confirmation lasts up to 25 seconds,
+and 30 seconds without valid status closes the session. ACK means acceptance,
+not confirmed recording state. SDK preference changes apply on the next connection.
+
+Trackside owns capture for a telemetry session and retains recent GPS Remote timer
+evidence to block an unsafe automatic Start. Multicam permits a new manual shutter
+action after its five-second cooldown, without confirming Stop. Multicam retains
+its X5/X6 direct BLE and manual photo/mode/preset controls; Trackside keeps its
+existing GPS Remote model coverage alongside the optional SDK backend.

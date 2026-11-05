@@ -43,6 +43,7 @@ enum BLEPeripheralLookupState {
 enum BLEScannerEvent {
     case bluetoothStateChanged(CBManagerState)
     case discovered(DiscoveredCameraCandidate)
+    // Physical link state, distinct from a client's protocol-ready status.
     case connectionChanged(UUID, CameraConnectionState)
     case log(String)
 }

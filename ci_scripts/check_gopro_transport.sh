@@ -19,6 +19,19 @@ xcrun swiftc -parse-as-library -module-cache-path "$task_test_dir/ModuleCache" \
   ActionCamRemote/Bluetooth/GoProCommandQueue.swift \
   ActionCamRemote/Bluetooth/GoProPresetProtocol.swift \
   ActionCamRemote/Bluetooth/GoProBLEClient.swift \
-  Tests/GoProTransportRegression.swift \
-  -o "$task_test_dir/gopro-transport-regression"
+  Tests/GoProTransportRegression.swift -o "$task_test_dir/gopro-transport-regression"
 "$task_test_dir/gopro-transport-regression"
+xcrun swiftc -parse-as-library -module-cache-path "$task_test_dir/ModuleCache" \
+  -I "$task_test_dir" -L "$task_test_dir" -lCoreBluetooth \
+  -Xlinker -rpath -Xlinker "$task_test_dir" \
+  ActionCamRemote/Models/CameraModels.swift \
+  ActionCamRemote/Bluetooth/Insta360RemoteProtocol.swift \
+  ActionCamRemote/Bluetooth/BLECameraDeviceClient.swift \
+  ActionCamRemote/Bluetooth/GoProCommandQueue.swift \
+  ActionCamRemote/Bluetooth/GoProPresetProtocol.swift \
+  ActionCamRemote/Bluetooth/GoProBLEClient.swift \
+  ActionCamRemote/Bluetooth/Insta360DirectProtocol.swift \
+  ActionCamRemote/Bluetooth/Insta360DirectSession.swift \
+  ActionCamRemote/Bluetooth/Insta360DirectBLEClient.swift \
+  Tests/CameraClientLifecycleRegression.swift -o "$task_test_dir/client-lifecycle-regression"
+"$task_test_dir/client-lifecycle-regression"

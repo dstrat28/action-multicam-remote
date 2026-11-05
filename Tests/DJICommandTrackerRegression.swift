@@ -64,9 +64,9 @@ enum DJICommandTrackerRegression {
         }
         func action(_ failure: CameraCommandResult, brand: CameraBrand = .dji,
                     results: [CameraCommandResult]? = nil, pendingStart: Bool = false,
-                    disconnected: Bool = false) -> CameraCommandFailureAction {
+                    pendingStop: Bool = true, disconnected: Bool = false) -> CameraCommandFailureAction {
             CameraCommandFailurePolicy.action(for: failure, brand: brand, among: results ?? [failure],
-                hasPendingExplicitStart: pendingStart, userDisconnected: disconnected)
+                hasPendingExplicitStart: pendingStart, hasUnconfirmedStop: pendingStop, userDisconnected: disconnected)
         }
 
         for wasSent in [false, true] {
@@ -101,13 +101,25 @@ enum DJICommandTrackerRegression {
             "An explicit Start preparing Video mode supersedes Stop before its result exists")
         precondition(action(failure, disconnected: true) == .ignore,
             "A disconnect callback must not undo the user's Disconnect request")
+        precondition(action(failure, pendingStop: false) == .ignore,
+            "A late transport failure must not undo trusted Stopped status")
+        precondition(action(failure, results: [result(.stopRecording, status: .skipped), failure]) == .reconnectToStop,
+            "A rejected duplicate Stop cannot cancel the original Stop's failure recovery")
         var otherCamera = result(.startRecording)
         otherCamera.cameraID = UUID()
         precondition(action(failure, results: [otherCamera, failure]) == .reconnectToStop)
         precondition(action(failure, results: []) == .ignore)
 
-        for brand in [CameraBrand.gopro, .insta360, .unknown] {
-            precondition(action(failure, brand: brand) == .report, "Only DJI explicit Stop is eligible for recovery")
+        for brand in [CameraBrand.gopro, .dji] {
+            precondition(action(failure, brand: brand) == .reconnectToStop,
+                "GoPro and DJI explicit Stop must survive transport failure")
+            let oldStart = result(.startRecording, status: .failed)
+            precondition(action(oldStart, brand: brand, results: [failure, oldStart]) == .ignore,
+                "An older Start failure must not overwrite a newer Stop")
+        }
+        for brand in [CameraBrand.insta360, .unknown] {
+            precondition(action(failure, brand: brand) == .report,
+                "Uncertain Insta360 capture must not be replayed")
         }
         for command in [CameraCommand.startRecording, .capturePhoto, .toggleRecording, .setMode(.video)] {
             precondition(action(result(command, status: .failed)) != .reconnectToStop,

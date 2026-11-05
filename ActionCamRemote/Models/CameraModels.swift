@@ -394,6 +394,13 @@ enum CameraConnectionState: Equatable, Codable {
     case unsupported(String)
     case failed(String)
 
+    /// A scanner link opening does not establish command readiness. Only a
+    /// client that has completed protocol setup can promote Connecting.
+    func applyingLinkUpdate(_ state: CameraConnectionState) -> CameraConnectionState {
+        if state == .connected, self != .connected { return .connecting }
+        return state
+    }
+
     var label: String {
         switch self {
         case .discovered:
@@ -1209,7 +1216,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     }
 
     var usesInsta360GPSRemote: Bool {
-        brand == .insta360 && behavior.kind != .insta360Direct
+        brand == .insta360 && isSupportedByApp && behavior.kind != .insta360Direct
     }
 
     func resolvedInsta360SDKSelection(preferred: Bool) -> Bool {
@@ -1719,12 +1726,45 @@ struct CameraStatusUpdate: Equatable {
     var activeGoProPresetID: UInt32? = nil
 }
 
-/// UI progress for Stop requests, separate from the camera's reported state.
-struct CameraStopProgress {
+/// One connection's deferred callbacks. Retiring it also invalidates work
+/// already queued on the main actor, without losing command-history outcomes.
+@MainActor
+final class CameraClientEventSession {
+    private var active = true
+
+    func invalidate() { active = false }
+
+    nonisolated func deliver(
+        _ apply: @escaping @MainActor () -> Void,
+        onDiscard: @escaping @MainActor () -> Void = {}
+    ) {
+        Task { @MainActor [weak self] in
+            if self?.active == true { apply() } else { onDiscard() }
+        }
+    }
+
+    nonisolated func deliverStatus(
+        _ state: CameraConnectionState,
+        apply: @escaping @MainActor () -> Void,
+        onFailure: @escaping @MainActor () -> Void
+    ) {
+        deliver {
+            apply()
+            // Applying Failed retires this session. Finish its required
+            // teardown in the same actor turn, before any replacement can run.
+            if case .failed = state { onFailure() }
+        }
+    }
+}
+
+/// Owns Stop intent, reconnect replay, and feedback presentation. The camera's
+/// reported recording state remains independent from this requested action.
+struct CameraStopState {
     static func confirmationTimeout(for camera: DiscoveredCamera) -> TimeInterval {
         // Only GPS Remote lacks Stop confirmation. Other cameras can still be
         // finalizing after acceptance and must get time to report Stopped.
-        camera.usesInsta360GPSRemote ? Insta360RemoteProtocol.stopFeedbackCooldown : 15
+        if camera.insta360UsesSDK == true { return 25 }
+        return camera.usesInsta360GPSRemote ? Insta360RemoteProtocol.stopFeedbackCooldown : 15
     }
 
     private struct Entry {
@@ -1734,10 +1774,15 @@ struct CameraStopProgress {
     }
     private var entries: [UUID: Entry] = [:]
     private var unconfirmedCameraIDs: Set<UUID> = []
-    var isEmpty: Bool { entries.isEmpty }
+    private var replayCameraIDs: Set<UUID> = []
+    var hasPendingFeedback: Bool { !entries.isEmpty }
 
-    func contains(_ cameraID: UUID) -> Bool { entries[cameraID] != nil }
+    func isWaiting(_ cameraID: UUID) -> Bool { entries[cameraID] != nil }
     func isUnconfirmed(_ cameraID: UUID) -> Bool { unconfirmedCameraIDs.contains(cameraID) }
+    func needsReplay(_ cameraID: UUID) -> Bool { replayCameraIDs.contains(cameraID) }
+    func hasIntent(_ cameraID: UUID) -> Bool {
+        isWaiting(cameraID) || isUnconfirmed(cameraID) || needsReplay(cameraID)
+    }
 
     func isUnconfirmed(for camera: DiscoveredCamera) -> Bool {
         !camera.usesInsta360GPSRemote && isUnconfirmed(camera.id)
@@ -1750,7 +1795,7 @@ struct CameraStopProgress {
            entries[camera.id]?.hasSentResult == true || isUnconfirmed(camera.id) {
             return false
         }
-        return camera.recordingState == .recording || contains(camera.id)
+        return camera.recordingState == .recording || isWaiting(camera.id)
     }
 
     mutating func begin(_ cameraID: UUID, at now: TimeInterval, timeout: TimeInterval) {
@@ -1778,11 +1823,29 @@ struct CameraStopProgress {
     }
 
     @discardableResult
-    mutating func finish(_ cameraID: UUID, matching resultID: UUID? = nil) -> Bool {
+    mutating func finishFeedback(_ cameraID: UUID, matching resultID: UUID? = nil) -> Bool {
         if let resultID, entries[cameraID]?.resultID != resultID { return false }
         let removedPending = entries.removeValue(forKey: cameraID) != nil
         let removedUnconfirmed = unconfirmedCameraIDs.remove(cameraID) != nil
         return removedPending || removedUnconfirmed
+    }
+
+    @discardableResult
+    mutating func settle(_ cameraID: UUID) -> Bool {
+        let removedFeedback = finishFeedback(cameraID)
+        let removedReplay = cancelReplay(cameraID)
+        return removedFeedback || removedReplay
+    }
+
+    @discardableResult
+    mutating func queueReplay(_ camera: DiscoveredCamera, at now: TimeInterval) -> Bool {
+        begin(camera.id, at: now, timeout: Self.confirmationTimeout(for: camera))
+        return replayCameraIDs.insert(camera.id).inserted
+    }
+
+    @discardableResult
+    mutating func cancelReplay(_ cameraID: UUID) -> Bool {
+        replayCameraIDs.remove(cameraID) != nil
     }
 
     @discardableResult
@@ -1801,7 +1864,7 @@ struct CameraStopProgress {
                 guard entries[camera.id]?.hasSentResult != false else { return false }
                 // The transport suppresses trailing timers during its Stop
                 // cooldown, so a new Recording update is authoritative.
-                return finish(camera.id)
+                return settle(camera.id)
             }
             if state == .unknown {
                 return markUnconfirmed(camera.id)
@@ -1812,8 +1875,8 @@ struct CameraStopProgress {
 
     @discardableResult
     mutating func observe(_ cameraID: UUID, state: CameraRecordingState, canClearActiveRecording: Bool) -> Bool {
-        guard canClearActiveRecording, state == .stopped || state == .ready else { return false }
-        return finish(cameraID)
+        guard Self.isStopConfirmation(state, canClearActiveRecording: canClearActiveRecording) else { return false }
+        return settle(cameraID)
     }
 
     mutating func expire(at now: TimeInterval) -> [UUID] {
@@ -1821,28 +1884,28 @@ struct CameraStopProgress {
         for id in expired { markUnconfirmed(id) }
         return expired
     }
-}
 
-enum CameraStopReplayPolicy {
-    static func consumeIfReady(camera: DiscoveredCamera, detail: String?, pending: inout Set<UUID>) -> Bool {
-        guard camera.isConnected, pending.contains(camera.id), let detail else { return false }
-        let ready: Bool
-        switch camera.brand {
-        case .gopro:
-            ready = detail.contains("Open GoPro protocol ready")
-        case .dji:
-            ready = detail.contains("DJI record characteristics ready") || detail.contains("DJI R SDK protocol ready")
-                || detail.contains("DJI Nano protocol ready")
-        case .insta360:
-            ready = !camera.usesInsta360GPSRemote && (detail.contains("direct Bluetooth ready")
-                || (camera.insta360UsesSDK == true && detail.contains("SDK Bluetooth ready")))
-        case .unknown:
-            ready = false
-        }
-        guard ready else { return false }
+    static func isStopConfirmation(_ state: CameraRecordingState, canClearActiveRecording: Bool) -> Bool {
+        canClearActiveRecording && (state == .stopped || state == .ready)
+    }
+
+    func shouldRetainAfterConnectionLoss(
+        camera: DiscoveredCamera,
+        hasPendingExplicitStart: Bool, userDisconnected: Bool
+    ) -> Bool {
+        // ACK/command acceptance and a UI deadline cannot establish Stopped.
+        // Only GoPro/DJI explicit Stop may be recovered automatically.
+        (camera.brand == .gopro || camera.brand == .dji)
+            && !hasPendingExplicitStart && !userDisconnected
+            && (isWaiting(camera.id) || isUnconfirmed(camera.id))
+    }
+
+    mutating func consumeReplayIfReady(camera: DiscoveredCamera) -> Bool {
+        guard camera.isConnected, needsReplay(camera.id), camera.brand != .unknown,
+              !camera.usesInsta360GPSRemote else { return false }
         // Consume before dispatch: repeated readiness/status callbacks must not
         // replay the same Stop. An immediate transport failure can requeue it.
-        pending.remove(camera.id)
+        replayCameraIDs.remove(camera.id)
         return true
     }
 }
@@ -1864,6 +1927,8 @@ enum CameraRecordingStartPolicy {
     static func isLatestCaptureResult(_ result: CameraCommandResult, among results: [CameraCommandResult]) -> Bool {
         results.first {
             guard $0.cameraID == result.cameraID else { return false }
+            if result.command == .stopRecording, $0.command == .stopRecording,
+               $0.status == .skipped || $0.status == .unsupported { return false }
             switch $0.command {
             case .startRecording, .stopRecording, .capturePhoto, .toggleRecording: return true
             default: return false
@@ -1893,6 +1958,7 @@ enum CameraCommandFailurePolicy {
         brand: CameraBrand,
         among results: [CameraCommandResult],
         hasPendingExplicitStart: Bool,
+        hasUnconfirmedStop: Bool,
         userDisconnected: Bool
     ) -> CameraCommandFailureAction {
         guard result.status != .sent, result.status != .queued,
@@ -1900,9 +1966,12 @@ enum CameraCommandFailurePolicy {
               CameraRecordingStartPolicy.isLatestCaptureResult(result, among: results) else { return .ignore }
         // Start can be waiting for mode selection before it has a command result.
         guard result.command != .stopRecording || !hasPendingExplicitStart else { return .ignore }
-        // DJI Stop is explicit and idempotent. Never replay Start, photos, or
+        // Trusted Stopped, manual cancellation or a newer capture can settle
+        // the intent before a transport failure is delivered.
+        guard result.command != .stopRecording || hasUnconfirmedStop else { return .ignore }
+        // GoPro/DJI Stop is explicit and idempotent. Never replay Start, photos, or
         // Insta360 shutter toggles after an uncertain outcome.
-        return brand == .dji && result.command == .stopRecording && result.status == .failed
+        return (brand == .gopro || brand == .dji) && result.command == .stopRecording && result.status == .failed
             ? .reconnectToStop : .report
     }
 }

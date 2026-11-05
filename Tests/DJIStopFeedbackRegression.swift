@@ -2,8 +2,9 @@ import CoreBluetooth
 import Foundation
 
 @main
+@MainActor
 enum DJIStopFeedbackRegression {
-    static func main() {
+    static func main() async {
         let peripheral = CBPeripheral()
         let characteristic = CBCharacteristic(uuid: CBUUID(string: "FFF1"), properties: [.writeWithoutResponse, .notify])
         let service = CBService(uuid: CBUUID(string: "FFF0"), characteristics: [characteristic])
@@ -13,7 +14,8 @@ enum DJIStopFeedbackRegression {
             peripheral: peripheral, onStatus: { _, _, _ in },
             onCameraStatus: { _, update in updates.append(update) },
             onProtocolActivity: { _ in }, onNanoPairingStatus: { _, _ in },
-            hasConfirmedAwakeNanoAdvertisement: true, onLog: { _ in }
+            hasConfirmedAwakeNanoAdvertisement: true, onLog: { _ in },
+            onPairingRejected: { _, _ in preconditionFailure("Nano Stop must not reject pairing") }
         )
         client.peripheral(peripheral, didDiscoverCharacteristicsFor: service, error: nil)
 
@@ -64,6 +66,57 @@ enum DJIStopFeedbackRegression {
         precondition(updates.last?.canClearActiveRecording == true,
             "An explicit Stop must release the prior Start's stale-stopped guard")
         client.didDisconnect(error: nil)
-        print("DJI Nano Stop feedback checks passed: acceptance, continued recording, and confirmed Stop after a recent Start.")
+        await checkPairingRejection()
+        print("DJI checks passed: Nano Stop acceptance/confirmation and connection-scoped pairing rejection.")
+    }
+
+    private static func checkPairingRejection() async {
+        // Standard R SDK verification request: verifyMode 2, verifyData 1
+        // (declined), including the protocol's header and packet checksums.
+        let packet = "aa 30 00 02 00 00 00 00 01 00 8c df 00 19 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 01 00 00 e0 af 0b de"
+        for retired in [false, true] {
+            let events = CameraClientEventSession()
+            let peripheral = CBPeripheral()
+            let notify = CBCharacteristic(uuid: CBUUID(string: "FFF4"), properties: [.notify])
+            peripheral.services = [CBService(uuid: CBUUID(string: "FFF0"), characteristics: [notify])]
+            var receivedRejections = 0
+            var genericStatuses = 0
+            var failureMessages: [String] = []
+            var disconnects = 0
+            let client = DJIExperimentalBLEClient(cameraID: UUID(), cameraName: "DJI", cameraModel: .djiRSDKCamera,
+                peripheral: peripheral, onStatus: { _, _, _ in genericStatuses += 1 },
+                onCameraStatus: { _, _ in }, onProtocolActivity: { _ in }, onNanoPairingStatus: { _, _ in },
+                hasConfirmedAwakeNanoAdvertisement: true, onLog: { _ in },
+                onPairingRejected: { _, message in
+                    receivedRejections += 1
+                    events.deliverStatus(.failed(message), apply: {
+                        failureMessages.append(message)
+                        events.invalidate() // Applying terminal status retires its own session.
+                    }, onFailure: { disconnects += 1 })
+                })
+            notify.value = Data(packet.split(separator: " ").map { UInt8($0, radix: 16)! })
+            client.peripheral(peripheral, didUpdateValueFor: notify, error: nil)
+            precondition(receivedRejections == 1 && genericStatuses == 0,
+                "Rejection must be one terminal event, not separately queued rejection and failure callbacks")
+            if retired { events.invalidate() }
+
+            let replacement = CameraClientEventSession()
+            var replacementReady = false
+            replacement.deliver { replacementReady = true }
+            let deadline = ContinuousClock.now.advanced(by: .seconds(2))
+            while (!replacementReady || (!retired && disconnects == 0)), ContinuousClock.now < deadline {
+                try? await Task.sleep(for: .milliseconds(1))
+            }
+            precondition(replacementReady)
+            if retired {
+                precondition(failureMessages.isEmpty && disconnects == 0,
+                    "A replaced client's rejection must neither change status nor disconnect its successor")
+            } else {
+                precondition(failureMessages == ["Connection declined on the DJI camera. Tap Pair to try again."]
+                    && disconnects == 1,
+                    "Current rejection must preserve its failure reason and teardown after retiring the session")
+            }
+            client.didDisconnect(error: nil)
+        }
     }
 }
