@@ -117,32 +117,55 @@ enum Insta360SDKSessionRegression {
         let sdkModels: [CameraModel] = [.insta360X6, .insta360X5, .insta360X4Air, .insta360X4,
             .insta360X3, .insta360X2, .insta360OneX, .insta360OneR, .insta360OneRS, .insta360OneRS1Inch]
         for model in sdkModels {
-            precondition(model.supportsInsta360SDKPrototype)
+            precondition(model.supportsInsta360SDK)
             precondition(model.brand == .insta360)
             precondition(!model.isOpenGoProCompatible && !model.supportsHighlight)
             var camera = DiscoveredCamera(id: UUID(), name: model.rawValue + " ABC123", brand: .insta360,
-                model: model, rssi: -50, capabilities: [.record, .mode, .status], connectionState: .connected,
+                model: model, rssi: -50, capabilities: [.record, .mode, .status], connectionState: .discovered,
                 recordingState: .stopped, isPaired: true, isSelected: true, lastSeen: Date())
-            if model.requiresInsta360SDK {
+            precondition(camera.resolvedInsta360SDKSelection() == FeatureAvailability.insta360SDK,
+                "Documented models must select the SDK automatically when this build includes it")
+            precondition(camera.resolvedInsta360SDKSelection(sdkAvailable: true))
+            precondition(!camera.resolvedInsta360SDKSelection(sdkAvailable: false))
+            if model.requiresInsta360SDK && !FeatureAvailability.insta360SDK {
                 precondition(!camera.isSupportedByApp)
                 precondition(!camera.usesInsta360GPSRemote,
-                    "SDK-only models must never prepare GPS Remote restoration when the setting is off")
+                    "SDK-only models must never prepare GPS Remote restoration in SDK-free builds")
+            }
+            for state: CameraConnectionState in [.connected, .connecting] {
+                camera.connectionState = state
+                for existingBackend in [false, true] {
+                    camera.insta360UsesSDK = existingBackend
+                    for available in [false, true] {
+                        precondition(camera.resolvedInsta360SDKSelection(sdkAvailable: available) == existingBackend,
+                            "Active links and in-flight handshakes must keep their backend")
+                    }
+                }
             }
             camera.insta360UsesSDK = true
-            precondition(camera.resolvedInsta360SDKSelection(preferred: false))
-            camera.connectionState = .connecting
-            precondition(camera.resolvedInsta360SDKSelection(preferred: false))
             camera.connectionState = .disconnected
-            precondition(!camera.resolvedInsta360SDKSelection(preferred: false))
-            precondition(camera.resolvedInsta360SDKSelection(preferred: true))
+            precondition(camera.resolvedInsta360SDKSelection() == FeatureAvailability.insta360SDK)
+            precondition(!camera.resolvedInsta360SDKSelection(sdkAvailable: false))
             camera.connectionState = .connected
             precondition(camera.behavior.kind == .insta360Direct)
             precondition(!camera.usesInsta360GPSRemote)
             precondition(camera.availableCaptureModes == [.video, .photo])
             precondition(camera.isSupportedByApp == (!model.requiresInsta360SDK || FeatureAvailability.insta360SDK))
         }
-        precondition(!CameraModel.insta360AcePro2.supportsInsta360SDKPrototype)
-        precondition(!CameraModel.insta360Go3S.supportsInsta360SDKPrototype)
+        for model: CameraModel in [.insta360Ace, .insta360AcePro, .insta360AcePro2,
+                                   .insta360Go3, .insta360Go3S, .insta360GoUltra,
+                                   .goproHero13Black, .djiOsmoAction6, .djiOsmoNano, .unknown] {
+            let camera = DiscoveredCamera(id: UUID(), name: model.rawValue + " ABC123", brand: model.brand,
+                model: model, rssi: -50, capabilities: [.record, .status], connectionState: .discovered,
+                recordingState: .unknown, isPaired: true, isSelected: false, lastSeen: Date())
+            precondition(!model.supportsInsta360SDK)
+            precondition(!camera.resolvedInsta360SDKSelection(sdkAvailable: true))
+            if model.brand == .insta360 {
+                precondition(camera.usesInsta360GPSRemote, "Ace and GO models must retain GPS Remote control")
+            } else if model == .unknown {
+                precondition(!camera.isSupportedByApp)
+            }
+        }
 
         let ordered = Insta360SDKSession(cameraID: UUID(), cameraName: "X3")
         let beforeCommand = ordered.observationToken
@@ -160,11 +183,15 @@ enum Insta360SDKSessionRegression {
             model: .insta360X5, rssi: -50, capabilities: [.record, .status], connectionState: .connected,
             recordingState: .recording, isPaired: true, isSelected: true, lastSeen: Date(),
             insta360UsesGPSRemoteFallback: true, insta360UsesSDK: false)
-        precondition(!legacy.resolvedInsta360SDKSelection(preferred: true))
-        legacy.insta360UsesSDK = true
-        precondition(legacy.resolvedInsta360SDKSelection(preferred: false))
+        precondition(!legacy.resolvedInsta360SDKSelection(sdkAvailable: true))
         legacy.connectionState = .disconnected
-        legacy.insta360UsesSDK = legacy.resolvedInsta360SDKSelection(preferred: false)
+        legacy.insta360UsesSDK = legacy.resolvedInsta360SDKSelection(sdkAvailable: true)
+        precondition(legacy.insta360UsesSDK == true && !legacy.usesInsta360GPSRemote,
+            "A remembered legacy backend must not prevent automatic SDK selection on reconnect")
+        legacy.connectionState = .failed("SDK capture or connection outcome is unknown")
+        precondition(legacy.resolvedInsta360SDKSelection(sdkAvailable: true),
+            "SDK failure must not trigger a GPS Remote fallback, even with a remembered X5 fallback")
+        legacy.insta360UsesSDK = legacy.resolvedInsta360SDKSelection(sdkAvailable: false)
         precondition(legacy.usesInsta360GPSRemote && legacy.insta360UsesGPSRemoteFallback == true)
 
         let slowMode = Insta360SDKSession(cameraID: UUID(), cameraName: "X4")

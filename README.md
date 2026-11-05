@@ -20,14 +20,14 @@ Control multiple GoPro, DJI, and Insta360 action cameras over Bluetooth from you
 | --- | --- |
 | GoPro | HERO9–13 Black, HERO11 Black Mini, MAX 2, LIT HERO |
 | DJI | Osmo Action 4, Action 5 Pro, Action 6, Osmo 360, Osmo Nano |
-| Insta360 — experimental | Ace, Ace Pro, Ace Pro 2, X3, X4, X4 Air, X5, X6, ONE RS, GO 3, GO 3S, GO Ultra |
-| Insta360 SDK — experimental, opt-in | X6, X5, X4 Air, X4, X3, X2, ONE X, ONE R, ONE RS, ONE RS 1-Inch |
+| Insta360 GPS Remote — experimental | Ace, Ace Pro, Ace Pro 2, GO 3, GO 3S, GO Ultra |
+| Insta360 SDK — experimental, automatic in SDK builds | X6, X5, X4 Air, X4, X3, X2, ONE X, ONE R, ONE RS, ONE RS 1-Inch |
 
 See the [full compatibility matrix and hardware-testing status](docs/camera-support.md). DJI Osmo Pocket 3 is currently unsupported.
 
 ## Limitations
 
-- Insta360 support is experimental. X5/X6 use direct Bluetooth for normal video; X6 also reports battery/storage. X5 can fall back to GPS Remote during setup. Other Insta360 models supported by standard builds pair through the camera's **Insta360 GPS Remote** menu. Verify the camera mode before group recording; recording status may remain unknown.
+- Insta360 support is experimental and hardware-unverified. SDK builds automatically use official SDK control for compatible models, with no Settings toggle. Ace and GO cameras use the camera's **Insta360 GPS Remote** menu. SDK-free builds retain X5/X6 direct Bluetooth and existing GPS Remote coverage; the four SDK-only models remain unavailable. Verify the camera mode before group recording; recording status may remain unknown.
 - Wake is supported for paired GoPros and Osmo Nano. Insta360 wake remains unverified; other DJI models cannot be woken by this app.
 - Phone GPS writes location into recordings and requires permission and the iPhone app to remain open and connected.
 - Apple Watch controls require the paired iPhone.
@@ -41,9 +41,10 @@ Open `ActionCamRemote.xcodeproj` and select the `ActionCamRemote` scheme. Follow
 
 CarPlay development and testing notes are in [docs/carplay.md](docs/carplay.md).
 
-An opt-in [Insta360 SDK Bluetooth prototype](docs/insta360-sdk-prototype.md) is
-available for approved SDK device builds. It remains off by default and requires
-physical camera validation.
+[Insta360 SDK Bluetooth control](docs/insta360-sdk-prototype.md) is automatic for
+compatible models in approved SDK device builds and still requires physical
+camera validation. Vendor frameworks stay outside this public repository;
+SDK-free builds remain available for development and diagnosis.
 
 ## Acknowledgements
 

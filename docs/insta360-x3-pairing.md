@@ -66,9 +66,9 @@ The follow-up review and additional fixes are recorded in
 
 1. Record the X3 firmware version. Keep the awake camera close and Multicam in
    the foreground. Delete a stale remote entry on the camera and pair afresh
-   with SDK disabled. Verify a CE82 subscription and camera-connected event,
+   in a diagnostic SDK-free build (`MULTICAM_INSTA360_SDK_ENABLED=NO`). Verify a CE82 subscription and camera-connected event,
    not just CE81 writes. Check manual start/stop twice in normal Video mode.
-2. Enable SDK, disconnect/reconnect, and confirm Diagnostics selects SDK
+2. Install an SDK-enabled build, connect, and confirm Diagnostics automatically selects SDK
    Bluetooth. This uses the app connection path rather than selecting the
    emulated GPS Remote on the camera. Complete any camera authorization prompt.
    Verify manual start/stop and Photo-to-Video Start All.

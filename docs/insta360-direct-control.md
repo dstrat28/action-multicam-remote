@@ -1,6 +1,8 @@
 # Insta360 X5/X6 direct Bluetooth
 
-X5 and X6 are enabled directly, with no Settings toggle or SDK dependency. Pair an awake
+SDK-free builds use direct X5/X6 control with no SDK dependency. SDK-enabled
+builds automatically use the official SDK for these models; see [SDK routing](insta360-sdk-prototype.md).
+For the SDK-free route, pair an awake
 X5/X6 from Multicam's camera list. Enable Bluetooth and set normal Video mode on the
 camera before recording. The direct path connects to the camera rather than Multicam's advertised `Insta360 GPS Remote` service. X5 retains a GPS Remote fallback for firmware that does not establish the documented direct protocol.
 

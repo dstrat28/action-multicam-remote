@@ -127,5 +127,6 @@ checks do not establish radio behavior or compatibility with every firmware.
 
 SDK Start needs stopped status no older than five seconds in normal Video;
 confirmation lasts up to 25 seconds, and 30 seconds without valid status closes
-the session. ACK means acceptance, not confirmed recording state. SDK preference
-changes apply on the next connection.
+the session. ACK means acceptance, not confirmed recording state. SDK-enabled
+builds select the SDK automatically for compatible models. Active links retain
+their backend until reconnect; failures never trigger a legacy shutter action.
