@@ -3,6 +3,7 @@ import io
 import os
 from pathlib import Path
 import plistlib
+import shutil
 import stat
 import subprocess
 import tempfile
@@ -137,20 +138,85 @@ class SDKCloudTests(unittest.TestCase):
             self.assertNotIn("Build.xcconfig", archive.namelist())
         sdk.unpack(packed, self.root / "round-trip")
 
-    def test_archive_validation_checks_linkage_resources_and_signatures(self):
+    def make_archive(self):
         app = self.root / "build.xcarchive/Products/Applications/Multicam.app"
         sdk.unpack(self.archive, app)
+        for name in set(sdk.FRAMEWORKS) - set(sdk.RUNTIME_FRAMEWORKS):
+            shutil.rmtree(app / "Frameworks" / f"{name}.framework")
         (app / "Info.plist").write_bytes(plistlib.dumps({"CFBundleExecutable": "Multicam", "NSCameraUsageDescription": "SDK camera APIs"}))
-        dependencies = "\n".join(f"@rpath/{name}.framework/{name}" for name in sdk.FRAMEWORKS)
+        return app
+
+    def test_archive_validation_checks_linkage_resources_and_signatures(self):
+        app = self.make_archive()
+        dependencies = "\n".join(f"@rpath/{name}.framework/{name}" for name in sdk.RUNTIME_FRAMEWORKS)
         with mock.patch.object(sdk.subprocess, "check_output", return_value=dependencies), mock.patch.object(sdk.subprocess, "run") as codesign:
             sdk.verify_archive(self.root / "build.xcarchive")
-            self.assertEqual(codesign.call_count, 4)
-            (app / "Frameworks/INSCoreMedia.framework/PrivacyInfo.xcprivacy").unlink()
+            self.assertEqual(codesign.call_count, 1)
+            (app / "Frameworks/INSCameraServiceSDK.framework/PrivacyInfo.xcprivacy").unlink()
             with self.assertRaisesRegex(ValueError, "privacy manifest"):
                 sdk.verify_archive(self.root / "build.xcarchive")
         with mock.patch.object(sdk.subprocess, "check_output", return_value=""):
             with self.assertRaisesRegex(ValueError, "embedded/linked"):
                 sdk.verify_archive(self.root / "build.xcarchive")
+
+    def test_archive_rejects_unused_frameworks_even_if_only_linked_or_embedded(self):
+        app = self.make_archive()
+        service = "@rpath/INSCameraServiceSDK.framework/INSCameraServiceSDK"
+        for name in set(sdk.FRAMEWORKS) - set(sdk.RUNTIME_FRAMEWORKS):
+            with self.subTest(name=name):
+                dependencies = service + f"\n@rpath/{name}.framework/{name}"
+                with mock.patch.object(sdk.subprocess, "check_output", return_value=dependencies):
+                    with self.assertRaisesRegex(ValueError, "Unused media framework"):
+                        sdk.verify_archive(self.root / "build.xcarchive", verify_signatures=False)
+                framework = app / "Frameworks" / f"{name}.framework"
+                framework.mkdir()
+                with mock.patch.object(sdk.subprocess, "check_output", return_value=service):
+                    with self.assertRaisesRegex(ValueError, "Unused media framework"):
+                        sdk.verify_archive(self.root / "build.xcarchive", verify_signatures=False)
+                framework.rmdir()
+
+    def test_archive_rejects_service_dependency_on_excluded_media_sdk(self):
+        self.make_archive()
+        dependencies = ["@rpath/INSCameraServiceSDK.framework/INSCameraServiceSDK",
+                        "@rpath/INSCoreMedia.framework/INSCoreMedia"]
+        with mock.patch.object(sdk.subprocess, "check_output", side_effect=dependencies):
+            with self.assertRaisesRegex(ValueError, "requires excluded media framework"):
+                sdk.verify_archive(self.root / "build.xcarchive", verify_signatures=False)
+
+    def run_embed(self, **updates):
+        environment = dict(os.environ, MULTICAM_INSTA360_SDK_ENABLED="YES", PLATFORM_NAME="iphoneos",
+                           INSTA360_SDK_ROOT=str(self.vendor), TARGET_BUILD_DIR=str(self.root / "build"),
+                           FRAMEWORKS_FOLDER_PATH="Multicam.app/Frameworks", CODE_SIGNING_ALLOWED="NO")
+        environment.update(updates)
+        return subprocess.run(["/bin/sh", str(Path(sdk.__file__).with_name("embed_insta360_sdk.sh"))],
+                              env=environment, text=True, capture_output=True)
+
+    def test_embedding_removes_previous_media_frameworks_and_preserves_service_resources(self):
+        sdk.unpack(self.archive, self.vendor)
+        destination = self.root / "build/Multicam.app/Frameworks"
+        shutil.copytree(self.vendor / "Frameworks", destination)
+        (destination / "Unrelated.framework").mkdir()
+        source = self.vendor / "Frameworks/INSCameraServiceSDK.framework"
+        (source / "Headers").mkdir()
+        (source / "Headers/SDK.h").write_text("handwritten SDK header")
+        result = self.run_embed()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual({p.name for p in destination.iterdir()},
+                         {"INSCameraServiceSDK.framework", "Unrelated.framework"})
+        service = destination / "INSCameraServiceSDK.framework"
+        self.assertEqual((service / "INSCameraServiceSDK").read_bytes(), (source / "INSCameraServiceSDK").read_bytes())
+        self.assertTrue((service / "PrivacyInfo.xcprivacy").is_file())
+        self.assertFalse((service / "Headers").exists())
+
+    def test_embedding_cleans_all_vendor_frameworks_when_disabled_or_on_simulator(self):
+        sdk.unpack(self.archive, self.vendor)
+        destination = self.root / "build/Multicam.app/Frameworks"
+        for update in ({"MULTICAM_INSTA360_SDK_ENABLED": "NO"}, {"PLATFORM_NAME": "iphonesimulator"}):
+            with self.subTest(update=update):
+                shutil.copytree(self.vendor / "Frameworks", destination, dirs_exist_ok=True)
+                result = self.run_embed(**update)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(list(destination.iterdir()), [])
 
     def test_sdk_archive_requires_camera_purpose_string(self):
         app = self.root / "build.xcarchive/Products/Applications/Multicam.app"

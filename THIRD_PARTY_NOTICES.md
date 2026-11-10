@@ -6,11 +6,11 @@ retain the upstream copyright and license text. This file is bundled in the iPho
 
 ## Optional Insta360 SDK dependencies
 
-SDK-enabled builds include proprietary Insta360 frameworks under the vendor's
-terms, alongside the supplied SSZipArchive 2.1.2 binary dependency. These vendor
-frameworks are not covered by Multicam's MIT license. The embedded INSCoreMedia
-framework retains its vendor-supplied LICENSE file. The notices below come from
-the public SSZipArchive upstream, not proprietary SDK headers or sample code.
+SDK-enabled builds include the proprietary Insta360 INSCameraServiceSDK framework
+under the vendor's terms, outside Multicam's MIT license. The original private
+delivery also includes preview/media frameworks and their supplied SSZipArchive
+2.1.2 dependency; these are excluded from the app. Their upstream SSZipArchive
+notice is retained below for attribution of the original delivery.
 
 ### SSZipArchive
 

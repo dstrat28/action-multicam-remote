@@ -7,7 +7,7 @@ Remote implementations. There is no user-facing backend setting.
 
 ## Private SDK installation and build
 
-Follow the vendor's four-framework dependency list:
+Install the vendor's original four-framework delivery:
 
 - `INSCameraSDK.framework`
 - `INSCameraServiceSDK.framework`
@@ -23,7 +23,11 @@ sh ci_scripts/setup_insta360_sdk.sh /path/to/INSCameraSDKSample-bluetooth
 The installer validates all four device binaries before copying their `ios-arm64`
 frameworks, resources, and privacy manifests into `Vendor/Insta360/Frameworks`.
 It omits the sample app, sample models, and debug-symbol bundles. The SDK-enabled
-app's unthinned dependencies occupy about 167 MB; normal builds do not include them.
+app links and embeds only `INSCameraServiceSDK` (about 9.2 MB before signing) for
+Bluetooth control. Its Mach-O load commands reference only system libraries.
+The unused preview/stitching/export chain (`INSCameraSDK` → `INSCoreMedia` →
+`SSZipArchive`) stays out of the app, saving roughly 161 MB. Normal builds do not
+include the SDK.
 
 `Vendor/Insta360/` and framework bundles are ignored by Git. CI rejects tracked
 vendor distribution files. The public repository contains our integration and
@@ -44,9 +48,11 @@ xcodebuild \
 For installation, configure signing as described in [CONTRIBUTING.md](../CONTRIBUTING.md).
 `INSTA360_SDK_ROOT` can override the installed directory; it must contain the
 `Frameworks` directory described above. Device builds with the option enabled
-link/embed all four frameworks, use `TO_B_SDK=1`, retain resource/privacy files,
-and sign each embedded framework when signing is enabled. Disabling the build
-option removes all four frameworks from reused build output.
+link/embed only the service framework, use `TO_B_SDK=1`, retain its resources/privacy
+manifest, and sign it when signing is enabled. The embed step removes stale media
+frameworks from reused build output. Disabling the build option removes all four
+frameworks. The build phase retains all four output declarations so sandboxed
+SDK-free builds can clean the previous bundle too.
 
 SDK-enabled device builds also merge `NSCameraUsageDescription` into the app's
 Info.plist. Apple's processing checks require it because the linked SDK contains
@@ -131,9 +137,9 @@ The hooks and a local reproduction are checked in. Provision the private
 archive and workflow variables separately for your release environment; the public
 repository contains no private endpoint or credentials. Run a signed Cloud archive
 and verify the result before distributing the first SDK-enabled release. The post-build hook
-checks the actual archive for all four linked/embedded frameworks, their signatures,
-the two supplied privacy manifests, and the required camera purpose string. It fails
-if an SDK-enabled archive omits them.
+checks the actual archive for the linked/embedded service framework, its signature,
+the supplied service privacy manifest, and the required camera purpose string. It
+rejects unused media frameworks or a service update that links them.
 This verifies Cloud download/signing, which local unsigned builds cannot establish.
 Vendor debug symbols are not included in this compact dependency archive, so
 symbolication inside the vendor's prebuilt binaries requires their matching dSYMs

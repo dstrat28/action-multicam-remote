@@ -464,6 +464,7 @@
 				"$(INSTA360_SDK_INPUT_$(MULTICAM_INSTA360_SDK_ENABLED))",
 			);
 			name = "Embed optional Insta360 SDK";
+			/* Legacy output paths permit sandboxed SDK-free builds to remove stale media frameworks. */
 			outputPaths = (
 				"$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/INSCameraServiceSDK.framework",
 				"$(TARGET_BUILD_DIR)/$(FRAMEWORKS_FOLDER_PATH)/INSCameraSDK.framework",
@@ -705,7 +706,7 @@
 				INSTA360_SDK_SANDBOX_YES = NO;
 				"ENABLE_USER_SCRIPT_SANDBOXING[sdk=iphoneos*]" = "$(INSTA360_SDK_SANDBOX_$(MULTICAM_INSTA360_SDK_ENABLED))";
 				INSTA360_SDK_LINK_NO = "";
-				INSTA360_SDK_LINK_YES = "-framework INSCameraSDK -framework INSCameraServiceSDK -framework INSCoreMedia -framework SSZipArchive -ObjC";
+				INSTA360_SDK_LINK_YES = "-framework INSCameraServiceSDK -ObjC";
 				"FRAMEWORK_SEARCH_PATHS[sdk=iphoneos*]" = ("$(inherited)", "$(INSTA360_SDK_SEARCH_$(MULTICAM_INSTA360_SDK_ENABLED))",);
 				"OTHER_LDFLAGS[sdk=iphoneos*]" = "$(inherited) $(INSTA360_SDK_LINK_$(MULTICAM_INSTA360_SDK_ENABLED))";
 				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphoneos*]" = "APP_MAIN_TARGET $(inherited) $(INSTA360_SDK_SWIFT_$(MULTICAM_INSTA360_SDK_ENABLED))";
@@ -765,7 +766,7 @@
 				INSTA360_SDK_SANDBOX_YES = NO;
 				"ENABLE_USER_SCRIPT_SANDBOXING[sdk=iphoneos*]" = "$(INSTA360_SDK_SANDBOX_$(MULTICAM_INSTA360_SDK_ENABLED))";
 				INSTA360_SDK_LINK_NO = "";
-				INSTA360_SDK_LINK_YES = "-framework INSCameraSDK -framework INSCameraServiceSDK -framework INSCoreMedia -framework SSZipArchive -ObjC";
+				INSTA360_SDK_LINK_YES = "-framework INSCameraServiceSDK -ObjC";
 				"FRAMEWORK_SEARCH_PATHS[sdk=iphoneos*]" = ("$(inherited)", "$(INSTA360_SDK_SEARCH_$(MULTICAM_INSTA360_SDK_ENABLED))",);
 				"OTHER_LDFLAGS[sdk=iphoneos*]" = "$(inherited) $(INSTA360_SDK_LINK_$(MULTICAM_INSTA360_SDK_ENABLED))";
 				"SWIFT_ACTIVE_COMPILATION_CONDITIONS[sdk=iphoneos*]" = "APP_MAIN_TARGET $(inherited) $(INSTA360_SDK_SWIFT_$(MULTICAM_INSTA360_SDK_ENABLED))";

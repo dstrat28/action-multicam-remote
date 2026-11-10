@@ -19,6 +19,9 @@ import urllib.request
 import zipfile
 
 FRAMEWORKS = ("INSCameraSDK", "INSCameraServiceSDK", "INSCoreMedia", "SSZipArchive")
+# Keep the approved private delivery intact, but ship only the Bluetooth control
+# service. Multicam does not use the preview/stitching/export frameworks.
+RUNTIME_FRAMEWORKS = ("INSCameraServiceSDK",)
 REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -149,15 +152,25 @@ def verify_archive(archive, verify_signatures=True):
         raise ValueError("SDK-enabled archive needs NSCameraUsageDescription for the SDK's linked camera APIs.")
     executable = info["CFBundleExecutable"]
     dependencies = subprocess.check_output(["xcrun", "otool", "-L", str(app / executable)], text=True)
-    for name in FRAMEWORKS:
+    excluded = tuple(name for name in FRAMEWORKS if name not in RUNTIME_FRAMEWORKS)
+    for name in excluded:
+        if ((app / "Frameworks" / f"{name}.framework").exists()
+                or f"@rpath/{name}.framework/{name}" in dependencies):
+            raise ValueError(f"Unused media framework must not be embedded/linked: {name}.")
+    for name in RUNTIME_FRAMEWORKS:
         framework = app / "Frameworks" / f"{name}.framework"
         if not (framework / name).is_file() or f"@rpath/{name}.framework/{name}" not in dependencies:
             raise ValueError(f"SDK-enabled Cloud archive is missing embedded/linked {name}.")
-        if name in ("INSCameraServiceSDK", "INSCoreMedia") and not (framework / "PrivacyInfo.xcprivacy").is_file():
+        if not (framework / "PrivacyInfo.xcprivacy").is_file():
             raise ValueError(f"Cloud archive is missing {name}'s supplied privacy manifest.")
+        framework_dependencies = subprocess.check_output(
+            ["xcrun", "otool", "-L", str(framework / name)], text=True)
+        for dependency in excluded:
+            if f"@rpath/{dependency}.framework/{dependency}" in framework_dependencies:
+                raise ValueError(f"{name} requires excluded media framework: {dependency}.")
         if verify_signatures:
             subprocess.run(["/usr/bin/codesign", "--verify", "--strict", str(framework)], check=True)
-    print("Verified all four SDK frameworks and supplied privacy manifests in the archive.")
+    print("Verified service-only Insta360 linkage and supplied privacy manifest in the archive.")
 
 
 def main():
