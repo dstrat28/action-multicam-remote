@@ -194,9 +194,16 @@ automatic routing does not remove those legacy implementations.
 - Each camera has its own Bluetooth manager, device, command interface,
   connection task, delegate generation, and command confirmation state.
 - Implements explicit video Start/Stop, normal Photo, normal Video/Photo mode
-  changes, capture status, elapsed time, battery, and storage. Mode reads use
-  successful `photoSubMode`/`videoSubMode` options: normal capture is 0 and the
-  inactive family is 100. Legacy EVO sync-mode commands are not used.
+  changes, capture status, elapsed time, battery, and storage. Record preserves
+  the camera-selected video submode; only an explicit mode-selection action
+  writes normal Video or Photo. Mode reads require successful `photoSubMode`
+  and `videoSubMode` options. Normal capture is 0 and the inactive family is
+  100; a defined SDK video value from 1 through 15 with inactive Photo is shown as
+  `Camera Video`, without claiming a model-specific mode name. Selecting Video
+  from that state explicitly returns to normal Video. Legacy EVO sync-mode
+  commands are not used. Undefined values such as 16 or 99 remain unknown and
+  cannot authorize recording. Unknown-mode diagnostics include the successful
+  raw option values, with unavailable fields marked explicitly, for beta reports.
 - X6 requests `storageStateList` and reports its internal and SD storage
   in separate Camera Info rows, with free-space-only values. Capacities are not combined or
   presented as a selected recording volume. Other cameras use `storageStatus`.
@@ -205,7 +212,9 @@ automatic routing does not remove those legacy implementations.
   `sendHeartbeats` API documented for socket use is not called. Battery/storage refresh
   every 30 seconds and expire after 75; only successful fields are applied.
 - Start, Photo, and mode changes require stopped status no older than five seconds.
-  Start requires normal Video; Photo requires normal Photo. Explicit Stop remains
+  Start requires a confirmed active video family; Photo requires normal Photo.
+  Photo, undefined, inactive, ambiguous, and incomplete mode reads cannot authorize video
+  Start, and Start never changes those modes automatically. Explicit Stop remains
   available with unknown status. Stop can supersede pending capture/mode confirmation.
 - SDK acceptance does not confirm Start, Stop, or a mode change. A subsequent
   query must match the command and follow its acceptance. Old/superseded replies
@@ -219,8 +228,11 @@ automatic routing does not remove those legacy implementations.
   Global SDK notifications without a reliable camera identity are not applied;
   status is requested through the specific device's interface.
 
-Preview, media transfer, firmware updates, Wi-Fi setup, wake, advanced capture
-modes, and highlight tags are outside this Bluetooth integration.
+Preview, media transfer, firmware updates, Wi-Fi setup, wake, selecting advanced
+capture modes, and highlight tags are outside this Bluetooth integration.
+Preserving a camera-selected video submode is not hardware validation of that
+mode: FreeFrame mapping, firmware behavior, and resulting footage still need
+physical-camera confirmation.
 
 ## Verification and remaining uncertainty
 

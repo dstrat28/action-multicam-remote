@@ -47,6 +47,10 @@ Support and hardware-testing status are listed separately. Camera behavior may v
 
 - Approved SDK device builds automatically use SDK Bluetooth control for the full official iOS SDK camera list. Ace and GO models retain GPS Remote. There is no SDK toggle; an old saved preference is ignored, and active connections retain their backend until reconnect. SDK failures never switch to a legacy shutter action. X2, ONE X, ONE R, and ONE RS 1-Inch have no legacy route and remain unavailable in SDK-free builds. All SDK camera control remains hardware-unverified. See [SDK setup and validation](insta360-sdk-prototype.md).
 - Camera behavior can vary by model and firmware; see the hardware-testing status above.
+- SDK Record preserves the camera's selected video submode. Use the mode selector
+  to explicitly choose normal Video or Photo. Other active video submodes are
+  displayed as `Camera Video`; FreeFrame behavior remains hardware-unverified.
+  An unknown mode or Photo mode does not authorize SDK video Start.
 - In SDK-free builds, X5/X6 direct Bluetooth control uses community hardware captures (X5: October 2026 firmware; X6: 1.1.7); Multicam has not been tested on Insta360 hardware. Set normal Video mode on the camera. Direct mode changes, photos, settings, and wake are unavailable. X5 can fall back to GPS Remote before protocol confirmation or any capture transmission. [Protocol and validation details](insta360-direct-control.md).
 - Insta360 GPS Remote support requires selecting `Insta360 GPS Remote` in the camera's Bluetooth Remote settings while Multicam remains open.
 - Insta360 GPS Remote wake is experimental and has not been verified on hardware. Multicam attempts a targeted iBeacon advertisement while the app is in the foreground. iOS supports this fixed beacon format, but the ESP32 remote reference includes an extra byte that this format does not reproduce; successful wake must not be assumed.

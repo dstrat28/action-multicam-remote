@@ -206,7 +206,7 @@ final class WatchConnectivityController: NSObject {
                     $0 > 0 ? "\(Self.duration(seconds: UInt32($0))) duration" : nil
                 },
             ]
-        case .video, .superNight,
+        case .video, .cameraVideo, .superNight,
              .selfie, .boostVideo, .vortex, .panoramicSuperNight, .singleLensSuperNight,
              nil:
             settings = [

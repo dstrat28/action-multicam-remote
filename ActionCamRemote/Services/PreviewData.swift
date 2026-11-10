@@ -174,7 +174,7 @@ extension CameraStore {
     ) -> CameraTelemetry {
         let settings: CameraTelemetry
         switch mode {
-        case .video:
+        case .video, .cameraVideo:
             settings = CameraTelemetry(
                 modeName: "Video",
                 modeParameters: "4K60 Off",

@@ -3,7 +3,7 @@ import Foundation
 // Handwritten host-only test double for the public APIs used by our adapter.
 // No vendor implementation, header text, or binary is included.
 @objc public enum INSBluetoothManageState: UInt { case bluetoothUnknown, bluetoothDisable, bluetoothUnauthorized, ready }
-public enum INSCameraCaptureState: UInt { case notCapture = 0, normalCapture = 1 }
+public enum INSCameraCaptureState: UInt { case notCapture = 0, normalCapture = 1, fpv = 20, selfie = 23 }
 public enum INSCameraOptionsType: UInt16 { case batteryStatus = 11, storageState = 20, photoSubMode = 40, videoSubMode = 41, storageStateList = 176 }
 public enum INSCameraPowerType { case battery, adapter }
 public enum INSCameraCardState { case normal, noCard, noSpace, invalidFormat, unknownError }

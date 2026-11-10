@@ -67,7 +67,7 @@ struct CarPlayCameraState: Equatable {
         // confirmed Video mode also protects cameras whose remote uses a toggle.
         let ready = selected.filter {
             $0.canSelectForBatch
-                && $0.currentMode == .video
+                && $0.isInVideoMode
                 && ($0.recordingState == .ready || $0.recordingState == .stopped)
         }
         startCameraIDs = !selected.isEmpty && ready.count == selected.count
@@ -88,7 +88,7 @@ struct CarPlayCameraState: Equatable {
             startDetail = "Starting selected cameras"
         } else if selected.contains(where: { $0.recordingState == .recording }) {
             startDetail = "Stop selected recordings before starting"
-        } else if selected.contains(where: { $0.currentMode != .video }) {
+        } else if selected.contains(where: { !$0.isInVideoMode }) {
             startDetail = "Set cameras to Video before your drive"
         } else if ready.count != selected.count {
             startDetail = "Waiting for camera recording status"

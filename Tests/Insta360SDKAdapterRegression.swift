@@ -256,15 +256,13 @@ enum Insta360SDKAdapterRegression {
         precondition(x3Mode.status == .queued && x3Commands.modeChanges == 1)
         spin(1.8)
         precondition(!x3Events.results.contains { $0.id == x3Mode.id }, "Mode acceptance alone cannot confirm Video")
-        precondition(CameraRecordingStartPolicy.sdkModePreparation(result: x3Mode,
-            currentMode: x3Events.updates.last?.currentMode, now: Date()) == .waiting)
+        precondition(x3.send(.startRecording).status == .skipped,
+            "An explicit mode change must finish before recording")
         precondition(x3Commands.starts == 1 && x3Commands.modeChanges == 1)
         x3Commands.options.photoSubMode = 100
         x3Commands.options.videoSubMode = 0
         waitUntil { x3Events.results.contains { $0.id == x3Mode.id && $0.status == .sent } }
-        let confirmedMode = x3Events.results.first { $0.id == x3Mode.id }!
-        precondition(CameraRecordingStartPolicy.sdkModePreparation(result: confirmedMode,
-            currentMode: x3Events.updates.last?.currentMode, now: Date()) == .ready)
+        precondition(x3Events.updates.last?.currentMode == .video)
         let x3SecondStart = x3.send(.startRecording)
         precondition(x3SecondStart.status == .queued && x3Commands.starts == 2 && x3Commands.modeChanges == 1)
         x3Commands.status.state = .normalCapture
@@ -274,6 +272,20 @@ enum Insta360SDKAdapterRegression {
         x3Commands.options.videoSubMode = 100
         waitUntil { x3Events.updates.last?.recordingState == .stopped
             && x3Events.updates.last?.currentMode == .photo }
+        x3Commands.options.photoSubMode = 100
+        x3Commands.options.videoSubMode = 10 // SDK Selfie video submode.
+        waitUntil { x3Events.updates.last?.currentMode == .cameraVideo }
+        let modesBeforeSelfie = x3Commands.modeChanges
+        let selfieStart = x3.send(.startRecording)
+        precondition(selfieStart.status == .queued)
+        x3Commands.status.state = .selfie
+        waitUntil { x3Events.results.contains { $0.id == selfieStart.id && $0.status == .sent } }
+        precondition(x3Events.updates.last?.recordingState == .recording)
+        let selfieStop = x3.send(.stopRecording)
+        x3Commands.status.state = .notCapture
+        waitUntil { x3Events.results.contains { $0.id == selfieStop.id && $0.status == .sent } }
+        precondition(x3Commands.modeChanges == modesBeforeSelfie && x3Commands.options.videoSubMode == 10,
+            "Start and Stop must preserve Selfie without requiring normal-capture status")
         x3.disconnectManagedConnection()
         let (optional, optionalEvents) = make("X3 metadata", model: .insta360X3)
         optional.didConnect()

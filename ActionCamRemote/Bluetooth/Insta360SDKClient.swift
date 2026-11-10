@@ -282,11 +282,13 @@ final class Insta360SDKClient: NSObject, BLECameraDeviceClient {
                         // The SDK contract says nil error means all requested
                         // options succeeded; successTypes itself is nullable.
                         let successful = error == nil ? [photoType, videoType] : (successTypes ?? [])
+                        let photoSubMode = successful.contains(photoType) ? options?.photoSubMode : nil
+                        let videoSubMode = successful.contains(videoType) ? options?.videoSubMode : nil
                         let captureMode = Insta360SDKSession.mode(
-                            photoSubMode: successful.contains(photoType) ? options?.photoSubMode : nil,
-                            videoSubMode: successful.contains(videoType) ? options?.videoSubMode : nil)
+                            photoSubMode: photoSubMode, videoSubMode: videoSubMode)
                         if captureMode == nil, self.now >= self.nextModeErrorLogAt {
-                            self.log("SDK normal capture mode is unknown: \(error?.localizedDescription ?? "unsupported or incomplete mode response").")
+                            let values = "photoSubMode=\(photoSubMode.map { String($0) } ?? "unavailable"), videoSubMode=\(videoSubMode.map { String($0) } ?? "unavailable")"
+                            self.log("SDK capture mode is unknown (\(values)): \(error?.localizedDescription ?? "unsupported or incomplete mode response").")
                             self.nextModeErrorLogAt = self.now + 30
                         }
                         self.finishStatus(recordingState, mode: captureMode, elapsed: elapsed,

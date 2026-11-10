@@ -43,22 +43,6 @@ enum CameraStopProgressRegression {
             }
         }
 
-        let modeStarted = Date()
-        var mode = CameraCommandResult(cameraID: x3.id, cameraName: x3.name, command: .setMode(.video),
-            status: .queued, message: "Waiting for SDK", timestamp: modeStarted)
-        precondition(CameraRecordingStartPolicy.sdkModePreparation(result: mode, currentMode: .photo,
-            now: modeStarted.addingTimeInterval(1.6)) == .waiting)
-        precondition(CameraRecordingStartPolicy.sdkModePreparation(result: mode, currentMode: nil,
-            now: modeStarted.addingTimeInterval(24)) == .waiting)
-        precondition(CameraRecordingStartPolicy.sdkModePreparation(result: mode, currentMode: .photo,
-            now: modeStarted.addingTimeInterval(30)) == .failed)
-        mode.status = .sent
-        precondition(CameraRecordingStartPolicy.sdkModePreparation(result: mode, currentMode: .video,
-            now: modeStarted.addingTimeInterval(8)) == .ready)
-        mode.status = .failed
-        precondition(CameraRecordingStartPolicy.sdkModePreparation(result: mode, currentMode: .video,
-            now: modeStarted.addingTimeInterval(8)) == .failed)
-
         let front = UUID(), rear = UUID()
         precondition(CameraStopState.confirmationTimeout(for: gopro) == 15)
         x3.insta360UsesSDK = true

@@ -1901,7 +1901,7 @@ private extension CaptureMode {
             1001
         case .timelapse:
             1002
-        case .slowMotion, .hyperlapse, .superNight, .selfie, .boostVideo, .vortex,
+        case .cameraVideo, .slowMotion, .hyperlapse, .superNight, .selfie, .boostVideo, .vortex,
              .panoramicSuperNight, .singleLensSuperNight:
             nil
         }
