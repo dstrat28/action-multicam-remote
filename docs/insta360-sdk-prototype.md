@@ -198,10 +198,12 @@ automatic routing does not remove those legacy implementations.
   the camera-selected video submode; only an explicit mode-selection action
   writes normal Video or Photo. Mode reads require successful `photoSubMode`
   and `videoSubMode` options. Normal capture is 0 and the inactive family is
-  100; an active video value from 1 through 99 with inactive Photo is shown as
+  100; a defined SDK video value from 1 through 15 with inactive Photo is shown as
   `Camera Video`, without claiming a model-specific mode name. Selecting Video
   from that state explicitly returns to normal Video. Legacy EVO sync-mode
-  commands are not used.
+  commands are not used. Undefined values such as 16 or 99 remain unknown and
+  cannot authorize recording. Unknown-mode diagnostics include the successful
+  raw option values, with unavailable fields marked explicitly, for beta reports.
 - X6 requests `storageStateList` and reports its internal and SD storage
   in separate Camera Info rows, with free-space-only values. Capacities are not combined or
   presented as a selected recording volume. Other cameras use `storageStatus`.
@@ -211,7 +213,7 @@ automatic routing does not remove those legacy implementations.
   every 30 seconds and expire after 75; only successful fields are applied.
 - Start, Photo, and mode changes require stopped status no older than five seconds.
   Start requires a confirmed active video family; Photo requires normal Photo.
-  Photo, inactive, ambiguous, and incomplete mode reads cannot authorize video
+  Photo, undefined, inactive, ambiguous, and incomplete mode reads cannot authorize video
   Start, and Start never changes those modes automatically. Explicit Stop remains
   available with unknown status. Stop can supersede pending capture/mode confirmation.
 - SDK acceptance does not confirm Start, Stop, or a mode change. A subsequent

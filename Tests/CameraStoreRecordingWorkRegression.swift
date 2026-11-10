@@ -18,7 +18,7 @@ enum CameraStoreRecordingWorkRegression {
         // control below uses the real store, scanner and SDK client with doubles.
         let store = CameraStore(demoMode: true)
         store.isDemoMode = false
-        let camera = DiscoveredCamera(id: UUID(), name: "X3", brand: .insta360, model: .insta360X3,
+        let camera = DiscoveredCamera(id: UUID(), name: "X5", brand: .insta360, model: .insta360X5,
             rssi: -50, capabilities: [.record, .mode, .status], connectionState: .discovered,
             recordingState: .unknown, isPaired: true, isSelected: true, lastSeen: Date())
         store.cameras = [camera]
@@ -97,6 +97,9 @@ enum CameraStoreRecordingWorkRegression {
         await waitUntil("The camera-selected video family must be ready") {
             store.cameras[0].currentMode == .cameraVideo && store.cameras[0].recordingState == .stopped
         }
+        precondition(store.cameras[0].insta360UsesSDK == true)
+        precondition(commands.starts == 0 && commands.modeChanges == 0 && commands.options.videoSubMode == 7,
+            "Connecting the X5 must not capture or change the camera-selected mode")
         precondition(store.cameras[0].canStartRecording && store.canStartMulticamRecording)
         precondition(CarPlayCameraState(cameras: store.cameras).canStart)
 
@@ -112,7 +115,7 @@ enum CameraStoreRecordingWorkRegression {
             await waitUntil("\(surface) Start must reach the selected video submode") { commands.starts == before + 1 }
             precondition(commands.modeChanges == 0 && commands.options.videoSubMode == 7,
                 "\(surface) Start must not select normal Video")
-            commands.status.state = .normalCapture
+            commands.status.state = .fpv
             await waitUntil("\(surface) recording must confirm in the selected submode") {
                 store.cameras[0].recordingState == .recording && store.cameras[0].currentMode == .cameraVideo
             }
@@ -126,7 +129,7 @@ enum CameraStoreRecordingWorkRegression {
 
         // Incomplete/ambiguous mode reads must block capture, not repair the
         // state by overwriting the camera's selection.
-        for submodes: (UInt32, UInt32) in [(0, 100), (100, 100), (0, 7)] {
+        for submodes: (UInt32, UInt32) in [(0, 100), (100, 100), (0, 7), (100, 16), (100, 99)] {
             commands.options.photoSubMode = submodes.0
             commands.options.videoSubMode = submodes.1
             await waitUntil("The camera must report the new non-video/unknown mode") {
@@ -160,7 +163,7 @@ enum CameraStoreRecordingWorkRegression {
         reconnected.options.videoSubMode = 7
         await waitUntil("Queued Start must use the camera-selected mode after reconnect") { reconnected.starts == 1 }
         precondition(reconnected.modeChanges == 0 && reconnected.options.videoSubMode == 7)
-        reconnected.status.state = .normalCapture
+        reconnected.status.state = .fpv
         await waitUntil("Reconnected recording must confirm") { store.cameras[0].recordingState == .recording }
         store.disconnect(store.cameras[0])
     }

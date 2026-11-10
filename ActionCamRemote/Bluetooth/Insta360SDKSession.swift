@@ -28,7 +28,9 @@ final class Insta360SDKSession {
         // The inactive family is 100; normal Photo and Video are both 0.
         // Both fields must have been returned successfully to resolve the mode.
         if photoSubMode == 0, videoSubMode == 100 { return .photo }
-        if photoSubMode == 100, let videoSubMode, videoSubMode < 100 {
+        // SDK v1.11.3 defines video submodes 0...15 (Normal through PTZ).
+        // Values between that range and the inactive sentinel remain unknown.
+        if photoSubMode == 100, let videoSubMode, videoSubMode <= 15 {
             return videoSubMode == 0 ? .video : .cameraVideo
         }
         return nil
@@ -41,7 +43,7 @@ final class Insta360SDKSession {
     static func recordingState(rawValue: UInt) -> CameraRecordingState {
         switch rawValue {
         case 0: .stopped
-        case 1, 2, 7, 9, 12, 13, 17, 18, 20, 21, 22: .recording
+        case 1, 2, 7, 9, 12, 13, 17, 18, 20, 21, 22, 23, 24, 29, 30: .recording
         default: .unknown
         }
     }

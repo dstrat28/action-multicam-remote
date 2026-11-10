@@ -66,10 +66,14 @@ correct. Its state values used by our mapping are:
 | 20 | FPV |
 | 21 | MovieRecording |
 | 22 | SlowMotion |
+| 23 | Selfie |
+| 24 | Pure |
+| 29 | DashCam |
+| 30 | PtzRecord |
 
 Those active-state mappings are display/status interpretation, not hardware
 validation of advanced modes. Start now preserves a confirmed camera-selected
-video submode, shown as `Camera Video` for nonzero active video values. Unknown,
+video submode, shown as `Camera Video` for defined nonzero SDK video values (1–15). Unknown,
 inactive, or ambiguous mode reports cannot authorize or confirm video Start.
 Photo and explicit Video/Photo selection remain normal-mode-only. The generic
 `stopCapture` header describes video stopping but does not provide a complete

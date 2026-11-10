@@ -109,11 +109,12 @@ enum Insta360SDKSessionRegression {
         precondition(Insta360SDKSession.mode(photoSubMode: 100, videoSubMode: 100) == nil)
         precondition(Insta360SDKSession.mode(photoSubMode: nil, videoSubMode: 0) == nil)
         precondition(Insta360SDKSession.mode(photoSubMode: 0, videoSubMode: nil) == nil)
-        for submode: UInt32 in [1, 7, 15, 99] {
+        for submode: UInt32 in 1...15 {
             precondition(Insta360SDKSession.mode(photoSubMode: 100, videoSubMode: submode) == .cameraVideo)
         }
-        for submode: UInt32 in [100, 101, .max] {
-            precondition(Insta360SDKSession.mode(photoSubMode: 100, videoSubMode: submode) == nil)
+        for submode: UInt32 in [16, 99, 100, 101, .max] {
+            precondition(Insta360SDKSession.mode(photoSubMode: 100, videoSubMode: submode) == nil,
+                "An undefined video submode must remain unknown")
         }
         precondition(Insta360SDKSession.mode(photoSubMode: 1, videoSubMode: 100) == nil)
         precondition(Insta360SDKSession.mode(photoSubMode: 0, videoSubMode: 7) == nil)
@@ -144,6 +145,14 @@ enum Insta360SDKSessionRegression {
         precondition(videoResults.last?.id == normalVideo.id && videoResults.last?.status == .sent)
         precondition(Insta360SDKSession.recordingState(rawValue: 0) == .stopped)
         precondition(Insta360SDKSession.recordingState(rawValue: 1) == .recording)
+        for state: UInt in [23, 24, 29, 30] {
+            precondition(Insta360SDKSession.recordingState(rawValue: state) == .recording,
+                "Documented active video state \(state) must confirm recording")
+        }
+        for state: UInt in [3, 4, 5, 6, 8, 10, 14, 15, 16, 19, 25, 27, 28, 31, 32] {
+            precondition(Insta360SDKSession.recordingState(rawValue: state) == .unknown,
+                "Photo, preparation, and unrecognized states must not confirm video recording")
+        }
         precondition(Insta360SDKSession.recordingState(rawValue: 4) == .unknown)
         precondition(Insta360SDKSession.recordingState(rawValue: 999) == .unknown)
         let sdkModels: [CameraModel] = [.insta360X6, .insta360X5, .insta360X4Air, .insta360X4,
