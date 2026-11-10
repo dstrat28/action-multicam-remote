@@ -24,13 +24,18 @@ final class Insta360SDKSession {
         self.cameraName = cameraName
     }
 
-    // Only explicit, documented normal capture modes are exposed by this prototype.
     static func mode(photoSubMode: UInt32?, videoSubMode: UInt32?) -> CaptureMode? {
         // The inactive family is 100; normal Photo and Video are both 0.
         // Both fields must have been returned successfully to resolve the mode.
         if photoSubMode == 0, videoSubMode == 100 { return .photo }
-        if photoSubMode == 100, videoSubMode == 0 { return .video }
+        if photoSubMode == 100, let videoSubMode, videoSubMode < 100 {
+            return videoSubMode == 0 ? .video : .cameraVideo
+        }
         return nil
+    }
+
+    private static func isVideoMode(_ mode: CaptureMode?) -> Bool {
+        mode == .video || mode == .cameraVideo
     }
 
     static func recordingState(rawValue: UInt) -> CameraRecordingState {
@@ -53,8 +58,8 @@ final class Insta360SDKSession {
             let fresh = statusAt.map { now - $0 <= 5 } == true
             switch command {
             case .startRecording:
-                reason = fresh && recordingState == .stopped && currentMode == .video
-                    ? nil : "SDK Start requires a fresh stopped status in normal Video mode."
+                reason = fresh && recordingState == .stopped && Self.isVideoMode(currentMode)
+                    ? nil : "SDK Start requires a fresh stopped status in a camera-selected video mode."
             case .capturePhoto:
                 reason = fresh && recordingState == .stopped && currentMode == .photo
                     ? nil : "SDK Photo requires a fresh stopped status in normal Photo mode."
@@ -116,7 +121,7 @@ final class Insta360SDKSession {
               pending.result.id == queryCommandID else { return true }
         let confirmed: Bool
         switch pending.result.command {
-        case .startRecording: confirmed = state == .recording && mode == .video
+        case .startRecording: confirmed = state == .recording && Self.isVideoMode(mode)
         case .stopRecording: confirmed = state == .stopped
         case .setMode(let target): confirmed = mode == target && state == .stopped
         default: confirmed = false

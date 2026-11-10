@@ -31,7 +31,7 @@ enum Insta360SDKSessionRegression {
         precondition(results.count == 1) // No confirmation until SDK accepts the command.
         first.accepted(start.id, error: nil, at: 3)
         first.observe(state: .recording, mode: nil, at: 3.5, queryCommandID: start.id, queryToken: first.observationToken)
-        precondition(first.pendingID == start.id, "An advanced/unknown video mode cannot confirm normal Video Start")
+        precondition(first.pendingID == start.id, "An incomplete mode response cannot confirm video Start")
         first.observe(state: .recording, mode: .video, at: 2.5, queryCommandID: start.id, queryToken: first.observationToken)
         precondition(results.count == 1) // A reply observed before acceptance cannot confirm it.
         first.observe(state: .recording, mode: .video, at: 4, queryCommandID: start.id, queryToken: first.observationToken)
@@ -109,7 +109,39 @@ enum Insta360SDKSessionRegression {
         precondition(Insta360SDKSession.mode(photoSubMode: 100, videoSubMode: 100) == nil)
         precondition(Insta360SDKSession.mode(photoSubMode: nil, videoSubMode: 0) == nil)
         precondition(Insta360SDKSession.mode(photoSubMode: 0, videoSubMode: nil) == nil)
-        precondition(Insta360SDKSession.mode(photoSubMode: 100, videoSubMode: 1) == nil)
+        for submode: UInt32 in [1, 7, 15, 99] {
+            precondition(Insta360SDKSession.mode(photoSubMode: 100, videoSubMode: submode) == .cameraVideo)
+        }
+        for submode: UInt32 in [100, 101, .max] {
+            precondition(Insta360SDKSession.mode(photoSubMode: 100, videoSubMode: submode) == nil)
+        }
+        precondition(Insta360SDKSession.mode(photoSubMode: 1, videoSubMode: 100) == nil)
+        precondition(Insta360SDKSession.mode(photoSubMode: 0, videoSubMode: 7) == nil)
+
+        let cameraVideo = Insta360SDKSession(cameraID: UUID(), cameraName: "Camera-selected video")
+        var videoResults: [CameraCommandResult] = []
+        cameraVideo.onCompletion = { videoResults.append($0) }
+        cameraVideo.observe(state: .stopped, mode: .cameraVideo, at: 0,
+            queryCommandID: nil, queryToken: cameraVideo.observationToken)
+        precondition(cameraVideo.send(.setMode(.cameraVideo), at: 0).status == .skipped,
+            "Camera Video is readback only, not an invented selectable vendor mode")
+        let videoStart = cameraVideo.send(.startRecording, at: 0)
+        precondition(videoStart.status == .queued)
+        cameraVideo.accepted(videoStart.id, error: nil, at: 0)
+        cameraVideo.observe(state: .recording, mode: .cameraVideo, at: 1,
+            queryCommandID: videoStart.id, queryToken: cameraVideo.observationToken)
+        precondition(videoResults.last?.id == videoStart.id && videoResults.last?.status == .sent)
+        cameraVideo.observe(state: .stopped, mode: .cameraVideo, at: 2,
+            queryCommandID: nil, queryToken: cameraVideo.observationToken)
+        let normalVideo = cameraVideo.send(.setMode(.video), at: 2)
+        cameraVideo.accepted(normalVideo.id, error: nil, at: 2)
+        cameraVideo.observe(state: .stopped, mode: .cameraVideo, at: 3,
+            queryCommandID: normalVideo.id, queryToken: cameraVideo.observationToken)
+        precondition(cameraVideo.pendingID == normalVideo.id,
+            "Explicit normal Video selection must not confirm from another video submode")
+        cameraVideo.observe(state: .stopped, mode: .video, at: 4,
+            queryCommandID: normalVideo.id, queryToken: cameraVideo.observationToken)
+        precondition(videoResults.last?.id == normalVideo.id && videoResults.last?.status == .sent)
         precondition(Insta360SDKSession.recordingState(rawValue: 0) == .stopped)
         precondition(Insta360SDKSession.recordingState(rawValue: 1) == .recording)
         precondition(Insta360SDKSession.recordingState(rawValue: 4) == .unknown)
@@ -151,6 +183,17 @@ enum Insta360SDKSessionRegression {
             precondition(!camera.usesInsta360GPSRemote)
             precondition(camera.availableCaptureModes == [.video, .photo])
             precondition(camera.isSupportedByApp == (!model.requiresInsta360SDK || FeatureAvailability.insta360SDK))
+            for mode: CaptureMode? in [.video, .cameraVideo, .photo, nil] {
+                camera.currentMode = mode
+                precondition(!camera.shouldSwitchToVideoBeforeRecording)
+                let videoReady = mode == .video || mode == .cameraVideo
+                precondition(camera.canStartRecordingInCurrentMode == videoReady)
+                if camera.isSupportedByApp {
+                    precondition(camera.isReadyForMulticamStart == videoReady)
+                    precondition(camera.canSwitchCaptureMode, "Explicit mode selection must remain available")
+                    precondition(camera.canSwitchToVideoMode == (mode != .video))
+                }
+            }
         }
         for model: CameraModel in [.insta360Ace, .insta360AcePro, .insta360AcePro2,
                                    .insta360Go3, .insta360Go3S, .insta360GoUltra,
@@ -165,6 +208,14 @@ enum Insta360SDKSessionRegression {
             } else if model == .unknown {
                 precondition(!camera.isSupportedByApp)
             }
+        }
+
+        for model: CameraModel in [.goproHero13Black, .djiOsmoAction6] {
+            let camera = DiscoveredCamera(id: UUID(), name: model.rawValue, brand: model.brand,
+                model: model, rssi: -50, capabilities: [.record, .mode, .status], connectionState: .connected,
+                recordingState: .stopped, currentMode: .photo, isPaired: true, isSelected: true, lastSeen: Date())
+            precondition(camera.shouldSwitchToVideoBeforeRecording && camera.isReadyForMulticamStart,
+                "Preserve GoPro/DJI's existing automatic Video preparation")
         }
 
         let ordered = Insta360SDKSession(cameraID: UUID(), cameraName: "X3")

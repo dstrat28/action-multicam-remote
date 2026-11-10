@@ -633,6 +633,13 @@ private struct PairingCameraRow: View {
     }
 
     private var initialPairingInstructions: String {
+        if camera.resolvedInsta360SDKSelection() {
+            if isConnecting {
+                return "Keep the camera awake with Bluetooth enabled. Multicam preserves the video mode selected on the camera."
+            }
+            let action = camera.isPaired ? "Connect" : "Pair"
+            return "Turn on your camera, enable Bluetooth, and select your preferred video mode. Then tap \(action) here."
+        }
         if camera.behavior.kind == .insta360Direct {
             if isConnecting {
                 return "Keep the camera awake with Bluetooth enabled and normal Video mode selected while Multicam connects."

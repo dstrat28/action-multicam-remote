@@ -449,12 +449,12 @@ final class CameraStore {
         }
 
         if selectedControllableCameras.contains(where: {
-            $0.isConnected && !$0.canStartRecordingInCurrentMode && !$0.canSwitchToVideoMode
+            $0.isConnected && !$0.canStartRecordingInCurrentMode && !$0.shouldSwitchToVideoBeforeRecording
         }) {
             return "Switch cameras to Video mode before recording."
         }
 
-        if selectedControllableCameras.contains(where: { $0.isConnected && $0.canSwitchToVideoMode }) {
+        if selectedControllableCameras.contains(where: { $0.isConnected && $0.shouldSwitchToVideoBeforeRecording }) {
             return "Ready. Start will switch selected cameras to Video first."
         }
 
@@ -2624,7 +2624,7 @@ private extension CameraStore {
                     && sleepingDJICameraIDs.contains(camera.id)
                 if !isSleepingActionWakeAttempt,
                    camera.currentMode != .video,
-                   camera.canSwitchToVideoMode {
+                   camera.shouldSwitchToVideoBeforeRecording {
                     sendVideoModeCommandAttempt(for: camera, attemptsAlreadySent: 0)
                     modeSwitchAttemptsByCameraID[camera.id] = 1
                 }
@@ -2725,31 +2725,9 @@ private extension CameraStore {
 
                     let isSleepingActionWakeAttempt = latest.supportsExperimentalDJISleepWake
                         && self.sleepingDJICameraIDs.contains(latest.id)
-                    if latest.insta360UsesSDK == true,
-                       (self.modeSwitchAttemptsByCameraID[id] ?? 0) > 0 {
-                        let modeResult = self.commandResults.first {
-                            $0.cameraID == id && $0.command == .setMode(.video)
-                        }
-                        switch CameraRecordingStartPolicy.sdkModePreparation(
-                            result: modeResult, currentMode: latest.currentMode, now: Date()
-                        ) {
-                        case .waiting:
-                            self.scheduleRecordAfterModeSwitch(for: [id])
-                            return
-                        case .failed:
-                            self.appendLog("\(latest.name): SDK Video mode did not confirm; recording was not started.")
-                            self.setCameraDiagnostic("Switch this camera to Video mode, then try recording again.", for: latest)
-                            self.pendingStartCameraIDs.remove(id)
-                            self.clearStateGuards(for: id)
-                            self.cancelStartRecording(for: id)
-                            return
-                        case .ready:
-                            break
-                        }
-                    }
                     if !isSleepingActionWakeAttempt,
                        latest.currentMode != .video,
-                       latest.canSwitchToVideoMode {
+                       latest.shouldSwitchToVideoBeforeRecording {
                         let attempts = self.modeSwitchAttemptsByCameraID[id] ?? 0
                         if attempts >= 6 {
                             self.appendLog("\(latest.name): recording skipped because the camera did not confirm Video mode.")

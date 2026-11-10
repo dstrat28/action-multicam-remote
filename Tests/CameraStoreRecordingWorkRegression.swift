@@ -84,6 +84,84 @@ enum CameraStoreRecordingWorkRegression {
         precondition(commands.starts == dispatchedStarts, "Rejected Start must not reach the camera")
         store.disconnect(store.cameras[0])
         await waitUntil("Disconnect must permit discovery again") { store.isScanning }
-        print("Store recording-work checks passed: quick SDK transitions, pairing, discovery and disconnect.")
+        await checkPreservedSDKModes(store)
+        print("Store recording-work checks passed: SDK mode preservation, quick transitions, pairing, discovery and disconnect.")
+    }
+
+    private static func checkPreservedSDKModes(_ store: CameraStore) async {
+        store.connect(store.cameras[0])
+        let commands = INSBluetoothManager.instances.last!.commands
+        // A nonzero value proves we preserve a camera-selected submode. It is
+        // deliberately not labeled FreeFrame without a verified vendor mapping.
+        commands.options.videoSubMode = 7
+        await waitUntil("The camera-selected video family must be ready") {
+            store.cameras[0].currentMode == .cameraVideo && store.cameras[0].recordingState == .stopped
+        }
+        precondition(store.cameras[0].canStartRecording && store.canStartMulticamRecording)
+        precondition(CarPlayCameraState(cameras: store.cameras).canStart)
+
+        for surface in ["camera", "multicam", "Siri", "Watch", "CarPlay"] {
+            let before = commands.starts
+            switch surface {
+            case "camera": store.startRecording(store.cameras[0])
+            case "multicam": store.startMulticamRecording()
+            case "Siri": precondition(store.startAllRecording())
+            case "Watch": precondition(store.startWatchRecording())
+            default: precondition(store.startCarPlayRecording())
+            }
+            await waitUntil("\(surface) Start must reach the selected video submode") { commands.starts == before + 1 }
+            precondition(commands.modeChanges == 0 && commands.options.videoSubMode == 7,
+                "\(surface) Start must not select normal Video")
+            commands.status.state = .normalCapture
+            await waitUntil("\(surface) recording must confirm in the selected submode") {
+                store.cameras[0].recordingState == .recording && store.cameras[0].currentMode == .cameraVideo
+            }
+            store.stopRecording(store.cameras[0])
+            commands.status.state = .notCapture
+            await waitUntil("\(surface) Stop must preserve the selected submode") {
+                store.cameras[0].recordingState == .stopped && store.cameras[0].currentMode == .cameraVideo
+            }
+            precondition(commands.modeChanges == 0 && commands.options.videoSubMode == 7)
+        }
+
+        // Incomplete/ambiguous mode reads must block capture, not repair the
+        // state by overwriting the camera's selection.
+        for submodes: (UInt32, UInt32) in [(0, 100), (100, 100), (0, 7)] {
+            commands.options.photoSubMode = submodes.0
+            commands.options.videoSubMode = submodes.1
+            await waitUntil("The camera must report the new non-video/unknown mode") {
+                store.cameras[0].currentMode == (submodes.0 == 0 && submodes.1 == 100 ? .photo : nil)
+            }
+            let starts = commands.starts
+            precondition(!store.startAllRecording() && !store.startWatchRecording() && !store.startCarPlayRecording())
+            precondition(commands.starts == starts && commands.modeChanges == 0)
+        }
+
+        commands.options.photoSubMode = 100
+        commands.options.videoSubMode = 7
+        await waitUntil("Camera Video must return after a successful read") { store.cameras[0].currentMode == .cameraVideo }
+        store.switchMode(.video, for: store.cameras[0])
+        await waitUntil("Explicit Video selection must still set and confirm normal Video") {
+            commands.modeChanges == 1 && store.cameras[0].currentMode == .video
+        }
+        precondition(commands.options.videoSubMode == 0)
+        store.switchMode(.photo, for: store.cameras[0])
+        await waitUntil("Explicit Photo selection must still work") {
+            commands.modeChanges == 2 && store.cameras[0].currentMode == .photo
+        }
+        store.disconnect(store.cameras[0])
+
+        // A pending Start must also preserve the mode discovered on reconnect.
+        await waitUntil("Disconnect must finish before requesting a reconnect Start") {
+            store.cameras[0].connectionState == .disconnected
+        }
+        store.startRecording(store.cameras[0])
+        let reconnected = INSBluetoothManager.instances.last!.commands
+        reconnected.options.videoSubMode = 7
+        await waitUntil("Queued Start must use the camera-selected mode after reconnect") { reconnected.starts == 1 }
+        precondition(reconnected.modeChanges == 0 && reconnected.options.videoSubMode == 7)
+        reconnected.status.state = .normalCapture
+        await waitUntil("Reconnected recording must confirm") { store.cameras[0].recordingState == .recording }
+        store.disconnect(store.cameras[0])
     }
 }

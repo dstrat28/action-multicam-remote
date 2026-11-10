@@ -15,7 +15,7 @@ pure session/policy tests. None establishes physical camera compatibility.
 - SDK: explicit Stop now supersedes pending mode or photo confirmation as well
   as Start. A matching but still-unconfirmed mode response reporting recording
   previously left Stop blocked. Late callbacks cannot consume the newer Stop.
-  Normal Video Start confirmation additionally requires normal Video mode.
+  Video Start confirmation additionally requires a confirmed active video family.
   Capture errors clear stale status and report an unconfirmed outcome without
   resending capture commands.
 - SDK: remove the socket-only heartbeat call. The online overview places a
@@ -67,9 +67,11 @@ correct. Its state values used by our mapping are:
 | 21 | MovieRecording |
 | 22 | SlowMotion |
 
-Those active-state mappings are display/status interpretation, not a claim that
-all advanced modes are implemented. Our Start/Photo remain normal-mode-only;
-unknown or advanced mode cannot confirm normal Video Start. The generic
+Those active-state mappings are display/status interpretation, not hardware
+validation of advanced modes. Start now preserves a confirmed camera-selected
+video submode, shown as `Camera Video` for nonzero active video values. Unknown,
+inactive, or ambiguous mode reports cannot authorize or confirm video Start.
+Photo and explicit Video/Photo selection remain normal-mode-only. The generic
 `stopCapture` header describes video stopping but does not provide a complete
 mode-by-model support matrix. Separate timelapse stop methods are documented
 for ONE/ONE X, not as an X3 fallback. We do not guess a different X3 command.

@@ -1311,6 +1311,16 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
             && recordingState != .starting
     }
 
+    var shouldSwitchToVideoBeforeRecording: Bool {
+        // SDK capture preserves the camera's selected submode. Normal Video
+        // remains available as an explicit choice in the mode selector.
+        insta360UsesSDK != true && canSwitchToVideoMode
+    }
+
+    var isInVideoMode: Bool {
+        currentMode == .video || (insta360UsesSDK == true && currentMode == .cameraVideo)
+    }
+
     var availableCaptureModes: [CaptureMode] {
         guard capabilities.contains(.mode) else { return [] }
         if insta360UsesSDK == true { return [.video, .photo] }
@@ -1367,7 +1377,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
     }
 
     var canStartRecordingInCurrentMode: Bool {
-        if insta360UsesSDK == true { return !isConnected || currentMode == .video }
+        if insta360UsesSDK == true { return !isConnected || isInVideoMode }
         if behavior.kind == .djiOsmoNano {
             return !isConnected || currentMode == nil || currentMode != .photo
         }
@@ -1381,7 +1391,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
 
     var isReadyForMulticamStart: Bool {
         guard canSelectForBatch, recordingState != .recording, recordingState != .starting else { return false }
-        guard canStartRecordingInCurrentMode || canSwitchToVideoMode else { return false }
+        guard canStartRecordingInCurrentMode || shouldSwitchToVideoBeforeRecording else { return false }
         return !needsKnownStoppedStateForMulticam || recordingState == .stopped
     }
 
@@ -1402,7 +1412,7 @@ struct DiscoveredCamera: Identifiable, Equatable, Codable {
             return .stopRecording
         }
         guard recordingState != .starting else { return nil }
-        return (canStartRecording || canSwitchToVideoMode) ? .startRecording : nil
+        return (canStartRecording || shouldSwitchToVideoBeforeRecording) ? .startRecording : nil
     }
 
     var primaryRecordTitle: String {
@@ -1552,6 +1562,9 @@ private extension Data {
 enum CaptureMode: String, CaseIterable, Identifiable, Codable {
     case slowMotion = "Slow Motion"
     case video = "Video"
+    // Readback only: a video submode selected on an SDK-controlled camera.
+    // Keep it distinct so explicitly choosing Video still selects normal Video.
+    case cameraVideo = "Camera Video"
     case photo = "Photo"
     case timelapse = "Timelapse"
     case hyperlapse = "Hyperlapse"
@@ -1573,7 +1586,7 @@ enum CaptureMode: String, CaseIterable, Identifiable, Codable {
             return "360° Photo"
         case .hyperlapse:
             return "360° Hyperlapse"
-        case .slowMotion, .timelapse, .superNight, .selfie, .boostVideo, .vortex,
+        case .cameraVideo, .slowMotion, .timelapse, .superNight, .selfie, .boostVideo, .vortex,
              .panoramicSuperNight, .singleLensSuperNight:
             return rawValue
         }
@@ -1598,7 +1611,7 @@ enum CaptureMode: String, CaseIterable, Identifiable, Codable {
                 return 0x44
             case .singleLensSuperNight:
                 return 0x4A
-            case .slowMotion, .timelapse, .superNight:
+            case .cameraVideo, .slowMotion, .timelapse, .superNight:
                 return nil
             }
         }
@@ -1616,7 +1629,7 @@ enum CaptureMode: String, CaseIterable, Identifiable, Codable {
             return 0x0A
         case .superNight:
             return 0x28
-        case .selfie, .boostVideo, .vortex, .panoramicSuperNight, .singleLensSuperNight:
+        case .cameraVideo, .selfie, .boostVideo, .vortex, .panoramicSuperNight, .singleLensSuperNight:
             return nil
         }
     }
@@ -1677,7 +1690,7 @@ enum CaptureMode: String, CaseIterable, Identifiable, Codable {
             0x0A
         case .superNight:
             0x28
-        case .selfie, .boostVideo, .vortex, .panoramicSuperNight, .singleLensSuperNight:
+        case .cameraVideo, .selfie, .boostVideo, .vortex, .panoramicSuperNight, .singleLensSuperNight:
             nil
         }
     }
@@ -1929,19 +1942,6 @@ struct CameraStopState {
 }
 
 enum CameraRecordingStartPolicy {
-    enum SDKModePreparation { case ready, waiting, failed }
-
-    static func sdkModePreparation(
-        result: CameraCommandResult?, currentMode: CaptureMode?, now: Date
-    ) -> SDKModePreparation {
-        guard let result, result.command == .setMode(.video),
-              result.status == .queued || result.status == .sent else { return .failed }
-        if result.status == .sent, currentMode == .video { return .ready }
-        // The SDK has a 25-second confirmation deadline. Give its completion
-        // and status callbacks time to arrive; never resend a mode/capture call.
-        return now.timeIntervalSince(result.timestamp) < 30 ? .waiting : .failed
-    }
-
     static func isLatestCaptureResult(_ result: CameraCommandResult, among results: [CameraCommandResult]) -> Bool {
         results.first {
             guard $0.cameraID == result.cameraID else { return false }

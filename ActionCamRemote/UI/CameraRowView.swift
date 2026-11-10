@@ -498,7 +498,7 @@ struct CameraRowView: View {
                     )
                 },
             ]
-        case .video, .superNight:
+        case .video, .cameraVideo, .superNight:
             settings = [
                 telemetry.videoResolution.map { CaptureSummaryItem($0) },
                 telemetry.frameRate.map { CaptureSummaryItem($0) },
@@ -1445,7 +1445,7 @@ private enum CameraDetailFormat {
 private extension CaptureMode {
     var cameraCardSystemImage: String {
         switch self {
-        case .video:
+        case .video, .cameraVideo:
             "video.fill"
         case .photo:
             "camera.fill"

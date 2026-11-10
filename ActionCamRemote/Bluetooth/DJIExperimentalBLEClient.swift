@@ -2002,7 +2002,7 @@ private extension DJIExperimentalBLEClient {
                 default: nil
                 }
             }
-        case .selfie, .boostVideo, .vortex, .panoramicSuperNight, .singleLensSuperNight:
+        case .cameraVideo, .selfie, .boostVideo, .vortex, .panoramicSuperNight, .singleLensSuperNight:
             break
         }
 
@@ -2798,6 +2798,8 @@ private struct DJIRSDKStatusPush {
         guard let mode = captureMode(cameraModel: cameraModel) else { return false }
 
         switch mode {
+        case .cameraVideo:
+            return false
         case .photo:
             return Self.photoFormatLabel(videoResolution, cameraModel: cameraModel) != nil
                 && Self.photoAspectRatioLabel(photoRatio) != nil
@@ -2874,7 +2876,7 @@ private struct DJIRSDKStatusPush {
             telemetry.loopRecordingSeconds = loopRecordingSeconds
         case .selfie:
             telemetry.videoResolution = Self.videoResolutionLabel(videoResolution)
-        case nil:
+        case .cameraVideo, nil:
             break
         }
 

@@ -102,7 +102,7 @@ enum CarPlayCameraStateRegression {
         rear.isSelected = true
         precondition(CarPlayCameraState(cameras: [front, rear]).startCameraIDs == [front.id, rear.id])
 
-        for mode in [CaptureMode.photo, .timelapse, .slowMotion] {
+        for mode in [CaptureMode.photo, .timelapse, .slowMotion, .cameraVideo] {
             rear.currentMode = mode
             let state = CarPlayCameraState(cameras: [front, rear])
             precondition(!state.canStart, "Start must never capture photos or silently change modes")

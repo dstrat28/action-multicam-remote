@@ -286,7 +286,7 @@ final class Insta360SDKClient: NSObject, BLECameraDeviceClient {
                             photoSubMode: successful.contains(photoType) ? options?.photoSubMode : nil,
                             videoSubMode: successful.contains(videoType) ? options?.videoSubMode : nil)
                         if captureMode == nil, self.now >= self.nextModeErrorLogAt {
-                            self.log("SDK normal capture mode is unknown: \(error?.localizedDescription ?? "unsupported or incomplete mode response").")
+                            self.log("SDK capture mode is unknown: \(error?.localizedDescription ?? "unsupported or incomplete mode response").")
                             self.nextModeErrorLogAt = self.now + 30
                         }
                         self.finishStatus(recordingState, mode: captureMode, elapsed: elapsed,
