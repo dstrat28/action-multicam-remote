@@ -105,7 +105,12 @@ enum Insta360SDKSessionRegression {
 
         precondition(Insta360SDKSession.mode(photoSubMode: 0, videoSubMode: 100) == .photo)
         precondition(Insta360SDKSession.mode(photoSubMode: 100, videoSubMode: 0) == .video)
-        precondition(Insta360SDKSession.mode(photoSubMode: 0, videoSubMode: 0) == nil)
+        // The vendor's example resolves Photo before consulting Video. These
+        // are documented precedence cases, including the reported X3 (0, 0).
+        for videoSubMode: UInt32 in [0, 7, 100, .max] {
+            precondition(Insta360SDKSession.mode(photoSubMode: 0, videoSubMode: videoSubMode) == .photo,
+                "Normal Photo takes precedence over the Video field")
+        }
         precondition(Insta360SDKSession.mode(photoSubMode: 100, videoSubMode: 100) == nil)
         precondition(Insta360SDKSession.mode(photoSubMode: nil, videoSubMode: 0) == nil)
         precondition(Insta360SDKSession.mode(photoSubMode: 0, videoSubMode: nil) == nil)
@@ -117,7 +122,38 @@ enum Insta360SDKSessionRegression {
                 "An undefined video submode must remain unknown")
         }
         precondition(Insta360SDKSession.mode(photoSubMode: 1, videoSubMode: 100) == nil)
-        precondition(Insta360SDKSession.mode(photoSubMode: 0, videoSubMode: 7) == nil)
+        precondition(Insta360SDKSession.mode(photoSubMode: 1, videoSubMode: 0) == nil,
+            "An unsupported active Photo submode must not fall through to Video")
+
+        let x3Photo = Insta360SDKSession(cameraID: UUID(), cameraName: "X3 Photo priority")
+        var x3PhotoResults: [CameraCommandResult] = []
+        x3Photo.onCompletion = { x3PhotoResults.append($0) }
+        let reportedPhoto = Insta360SDKSession.mode(photoSubMode: 0, videoSubMode: 0)
+        x3Photo.observe(state: .stopped, mode: reportedPhoto, at: 0,
+            queryCommandID: nil, queryToken: x3Photo.observationToken)
+        precondition(x3Photo.currentMode == .photo)
+        precondition(x3Photo.send(.startRecording, at: 0).status == .skipped,
+            "The X3 zero pair must never authorize video Start")
+        let selectPhoto = x3Photo.send(.setMode(.photo), at: 0)
+        precondition(selectPhoto.status == .queued)
+        x3Photo.accepted(selectPhoto.id, error: nil, at: 0)
+        precondition(x3PhotoResults.isEmpty, "SDK acceptance alone must not confirm Photo")
+        x3Photo.observe(state: .stopped, mode: reportedPhoto, at: 1,
+            queryCommandID: selectPhoto.id, queryToken: x3Photo.observationToken)
+        precondition(x3PhotoResults.last?.id == selectPhoto.id && x3PhotoResults.last?.status == .sent)
+        let selectVideo = x3Photo.send(.setMode(.video), at: 1)
+        x3Photo.accepted(selectVideo.id, error: nil, at: 1)
+        x3Photo.observe(state: .stopped, mode: reportedPhoto, at: 2,
+            queryCommandID: selectVideo.id, queryToken: x3Photo.observationToken)
+        precondition(x3Photo.pendingID == selectVideo.id,
+            "A Photo-priority response cannot confirm Video")
+        x3Photo.observe(state: .stopped, mode: .video, at: 3,
+            queryCommandID: selectVideo.id, queryToken: x3Photo.observationToken)
+        precondition(x3PhotoResults.last?.id == selectVideo.id && x3PhotoResults.last?.status == .sent)
+        x3Photo.observe(state: .stopped, mode: reportedPhoto, at: 4,
+            queryCommandID: nil, queryToken: x3Photo.observationToken)
+        precondition(x3Photo.send(.capturePhoto, at: 10).status == .skipped,
+            "Photo priority must not weaken the freshness gate")
 
         let cameraVideo = Insta360SDKSession(cameraID: UUID(), cameraName: "Camera-selected video")
         var videoResults: [CameraCommandResult] = []

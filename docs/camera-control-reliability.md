@@ -160,7 +160,9 @@ video family. Start preserves the camera-selected video submode; normal Video
 or Photo is written only when explicitly selected in the mode menu. Other active
 video submodes are displayed as `Camera Video` without guessing a vendor name.
 Only defined SDK video submodes (0 through 15) qualify. Photo, undefined,
-inactive, ambiguous, and incomplete mode reports block video Start;
+inactive, and incomplete mode reports block video Start. Mode readback follows
+the vendor example's Photo-first priority, so `(0, 0)` reports Photo and blocks
+video Start. Both mode fields must be returned successfully. Command
 confirmation lasts up to 25 seconds, and 30 seconds without valid status closes
 the session. ACK means acceptance, not confirmed recording state. SDK-enabled
 builds select the SDK automatically for compatible models. Active links retain

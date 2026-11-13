@@ -127,13 +127,13 @@ enum CameraStoreRecordingWorkRegression {
             precondition(commands.modeChanges == 0 && commands.options.videoSubMode == 7)
         }
 
-        // Incomplete/ambiguous mode reads must block capture, not repair the
-        // state by overwriting the camera's selection.
-        for submodes: (UInt32, UInt32) in [(0, 100), (100, 100), (0, 7), (100, 16), (100, 99)] {
+        // Photo-priority and unknown mode reads must block video Start without
+        // overwriting the camera's selection. Include the reported X3 zero pair.
+        for submodes: (UInt32, UInt32) in [(0, 0), (100, 100), (0, 100), (1, 0), (0, 7), (100, 16), (100, 99)] {
             commands.options.photoSubMode = submodes.0
             commands.options.videoSubMode = submodes.1
             await waitUntil("The camera must report the new non-video/unknown mode") {
-                store.cameras[0].currentMode == (submodes.0 == 0 && submodes.1 == 100 ? .photo : nil)
+                store.cameras[0].currentMode == (submodes.0 == 0 ? .photo : nil)
             }
             let starts = commands.starts
             precondition(!store.startAllRecording() && !store.startWatchRecording() && !store.startCarPlayRecording())

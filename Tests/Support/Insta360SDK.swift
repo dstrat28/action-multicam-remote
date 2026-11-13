@@ -73,6 +73,7 @@ public final class SDKTestCommands: INSCameraBasicCommands {
     public private(set) var heldOptions: [([NSNumber], (Error?, INSCameraOptions?, [NSNumber]?) -> Void)] = []
     public private(set) var starts = 0
     public private(set) var stops = 0
+    public private(set) var photos = 0
     public private(set) var heartbeats = 0
     public private(set) var statusRequests = 0
     public private(set) var modeChanges = 0
@@ -88,7 +89,9 @@ public final class SDKTestCommands: INSCameraBasicCommands {
     public func stopCapture(with options: INSCaptureOptions?, completion: @escaping (Error?, Any?) -> Void) {
         stops += 1; completion(nil, nil)
     }
-    public func takePicture(with options: INSTakePictureOptions?, completion: @escaping (Error?, Any?) -> Void) { completion(nil, nil) }
+    public func takePicture(with options: INSTakePictureOptions?, completion: @escaping (Error?, Any?) -> Void) {
+        photos += 1; completion(nil, nil)
+    }
     public func setOptions(_ options: INSCameraOptions, forTypes: [NSNumber], completion: @escaping (Error?, [NSNumber]?) -> Void) {
         modeChanges += 1
         if !appliesModeChanges { completion(nil, nil); return }
