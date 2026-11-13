@@ -140,6 +140,26 @@ enum CameraStoreRecordingWorkRegression {
             precondition(commands.starts == starts && commands.modeChanges == 0)
         }
 
+        // If the zero pair accompanies camera-side video capture, keep Stop
+        // available instead of showing a disabled Photo capture.
+        commands.options.photoSubMode = 0
+        commands.options.videoSubMode = 0
+        commands.status.state = .normalCapture
+        await waitUntil("Camera-side video capture must remain visible with conflicting mode readback") {
+            store.cameras[0].recordingState == .recording
+        }
+        precondition(store.cameras[0].currentMode == nil)
+        precondition(store.cameras[0].primaryRecordCommand == .stopRecording)
+        precondition(store.cameras[0].primaryRecordTitle == "Stop")
+        precondition(store.canStopMulticamRecording && CarPlayCameraState(cameras: store.cameras).canStop)
+        let stops = commands.stops
+        store.stopRecording(store.cameras[0])
+        precondition(commands.stops == stops + 1)
+        commands.status.state = .notCapture
+        await waitUntil("Stop must confirm and restore Photo-first stopped readback") {
+            store.cameras[0].recordingState == .stopped && store.cameras[0].currentMode == .photo
+        }
+
         commands.options.photoSubMode = 100
         commands.options.videoSubMode = 7
         await waitUntil("Camera Video must return after a successful read") { store.cameras[0].currentMode == .cameraVideo }

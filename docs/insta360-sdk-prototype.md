@@ -220,6 +220,8 @@ automatic routing does not remove those legacy implementations.
   reads cannot authorize video Start, and Start never changes those modes
   automatically. Explicit Stop remains available with unknown status. Stop can
   supersede pending capture/mode confirmation.
+  Active video status with conflicting Photo readback clears the mode while
+  retaining recording status so the UI continues to offer Stop.
 - SDK acceptance does not confirm Start, Stop, or a mode change. A subsequent
   query must match the command and follow its acceptance. Old/superseded replies
   cannot refresh state or complete another command. Slow mode replies retain

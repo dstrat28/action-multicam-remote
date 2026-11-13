@@ -155,6 +155,19 @@ enum Insta360SDKSessionRegression {
         precondition(x3Photo.send(.capturePhoto, at: 10).status == .skipped,
             "Photo priority must not weaken the freshness gate")
 
+        x3Photo.observe(state: .recording, mode: reportedPhoto, at: 11,
+            queryCommandID: nil, queryToken: x3Photo.observationToken)
+        precondition(x3Photo.recordingState == .recording && x3Photo.currentMode == nil,
+            "Active video status must not be presented as a Photo capture when mode readback conflicts")
+        let x3Stop = x3Photo.send(.stopRecording, at: 11)
+        precondition(x3Stop.status == .queued)
+        x3Photo.accepted(x3Stop.id, error: nil, at: 11)
+        x3Photo.observe(state: .stopped, mode: reportedPhoto, at: 12,
+            queryCommandID: x3Stop.id, queryToken: x3Photo.observationToken)
+        precondition(x3PhotoResults.last?.id == x3Stop.id && x3PhotoResults.last?.status == .sent)
+        precondition(x3Photo.currentMode == .photo,
+            "Stopped readback must retain the vendor's Photo-first interpretation")
+
         let cameraVideo = Insta360SDKSession(cameraID: UUID(), cameraName: "Camera-selected video")
         var videoResults: [CameraCommandResult] = []
         cameraVideo.onCompletion = { videoResults.append($0) }

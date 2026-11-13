@@ -120,6 +120,9 @@ final class Insta360SDKSession {
                  queryCommandID: UUID?, queryToken: UUID) -> Bool {
         guard queryToken == observationToken,
               queryCommandID == pendingID else { return false }
+        // These active states identify video capture. Conflicting Photo mode
+        // must not turn the UI's Stop control into a disabled Capture button.
+        let mode = state == .recording && mode == .photo ? nil : mode
         recordingState = state
         currentMode = mode
         statusAt = now
