@@ -73,8 +73,12 @@ correct. Its state values used by our mapping are:
 
 Those active-state mappings are display/status interpretation, not hardware
 validation of advanced modes. Start now preserves a confirmed camera-selected
-video submode, shown as `Camera Video` for defined nonzero SDK video values (1–15). Unknown,
-inactive, or ambiguous mode reports cannot authorize or confirm video Start.
+video submode, shown as `Camera Video` for defined nonzero SDK video values (1–15).
+Unknown or inactive mode reports cannot authorize or confirm video Start. Mode readback
+follows the vendor example's Photo-first priority: `(0, 0)` is normal Photo and
+cannot authorize or confirm video Start. Both fields must be returned successfully.
+If active video status conflicts with Photo readback, keep recording status but
+clear the mode so Stop remains available.
 Photo and explicit Video/Photo selection remain normal-mode-only. The generic
 `stopCapture` header describes video stopping but does not provide a complete
 mode-by-model support matrix. Separate timelapse stop methods are documented

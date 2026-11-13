@@ -186,6 +186,41 @@ enum Insta360SDKAdapterRegression {
         waitUntil { partialEvents.results.contains { $0.id == mode.id && $0.status == .sent } }
         partial.disconnectManagedConnection()
 
+        // Replay the X3 mode pair through the real adapter. The vendor's
+        // Photo-first interpretation must not authorize or confirm Video.
+        let (zeroPair, zeroEvents) = make("X3 Photo priority", model: .insta360X3)
+        zeroPair.didConnect()
+        let zeroCommands = INSBluetoothManager.instances.last!.commands
+        zeroCommands.options.photoSubMode = 0
+        zeroCommands.options.videoSubMode = 0
+        waitUntil { zeroEvents.connections.last == .connected }
+        precondition(zeroEvents.updates.last?.currentMode == .photo)
+        precondition(zeroPair.send(.startRecording).status == .skipped && zeroCommands.starts == 0)
+        let zeroPhoto = zeroPair.send(.capturePhoto)
+        precondition(zeroPhoto.status == .queued && zeroCommands.photos == 1)
+        waitUntil { zeroEvents.results.contains { $0.id == zeroPhoto.id && $0.status == .sent } }
+        zeroCommands.appliesModeChanges = false
+        let zeroSelectPhoto = zeroPair.send(.setMode(.photo))
+        precondition(zeroSelectPhoto.status == .queued)
+        precondition(!zeroEvents.results.contains { $0.id == zeroSelectPhoto.id },
+            "Photo acceptance alone cannot confirm a mode change")
+        waitUntil { zeroEvents.results.contains { $0.id == zeroSelectPhoto.id && $0.status == .sent } }
+        let zeroSelectVideo = zeroPair.send(.setMode(.video))
+        precondition(zeroSelectVideo.status == .queued)
+        spin(1.8)
+        precondition(!zeroEvents.results.contains { $0.id == zeroSelectVideo.id },
+            "A zero pair must not confirm normal Video")
+        precondition(zeroPair.send(.startRecording).status == .skipped && zeroCommands.starts == 0)
+        let zeroStop = zeroPair.send(.stopRecording)
+        precondition(zeroStop.status == .queued && zeroCommands.stops == 1)
+        waitUntil { zeroEvents.results.contains { $0.id == zeroStop.id && $0.status == .sent } }
+        zeroCommands.optionsError = NSError(domain: "SDKTest", code: 206)
+        zeroCommands.successTypesOverride = [NSNumber(value: INSCameraOptionsType.photoSubMode.rawValue)]
+        waitUntil { zeroEvents.updates.last?.currentMode == nil }
+        precondition(zeroPair.send(.capturePhoto).status == .skipped && zeroCommands.photos == 1,
+            "A partial response cannot authorize Photo from a default Video value")
+        zeroPair.disconnectManagedConnection()
+
         // X3 takes the per-device SDK path, including explicit start/stop. This
         // exercises our adapter, not the vendor Bluetooth stack or X3 firmware.
         let (x3, x3Events) = make("X3 ABC123", model: .insta360X3)

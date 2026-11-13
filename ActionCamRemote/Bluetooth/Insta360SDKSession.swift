@@ -25,12 +25,17 @@ final class Insta360SDKSession {
     }
 
     static func mode(photoSubMode: UInt32?, videoSubMode: UInt32?) -> CaptureMode? {
-        // The inactive family is 100; normal Photo and Video are both 0.
-        // Both fields must have been returned successfully to resolve the mode.
-        if photoSubMode == 0, videoSubMode == 100 { return .photo }
+        // Both requested fields must have been returned successfully. Follow
+        // the vendor example's Photo-first priority: (0, 0) is normal Photo.
+        guard let photoSubMode, let videoSubMode else { return nil }
+        if photoSubMode != 100 {
+            // Advanced Photo submodes remain unsupported; do not fall through
+            // to Video when the Photo family is active.
+            return photoSubMode == 0 ? .photo : nil
+        }
         // SDK v1.11.3 defines video submodes 0...15 (Normal through PTZ).
         // Values between that range and the inactive sentinel remain unknown.
-        if photoSubMode == 100, let videoSubMode, videoSubMode <= 15 {
+        if videoSubMode <= 15 {
             return videoSubMode == 0 ? .video : .cameraVideo
         }
         return nil
@@ -115,6 +120,9 @@ final class Insta360SDKSession {
                  queryCommandID: UUID?, queryToken: UUID) -> Bool {
         guard queryToken == observationToken,
               queryCommandID == pendingID else { return false }
+        // These active states identify video capture. Conflicting Photo mode
+        // must not turn the UI's Stop control into a disabled Capture button.
+        let mode = state == .recording && mode == .photo ? nil : mode
         recordingState = state
         currentMode = mode
         statusAt = now

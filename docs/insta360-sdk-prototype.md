@@ -197,12 +197,15 @@ automatic routing does not remove those legacy implementations.
   changes, capture status, elapsed time, battery, and storage. Record preserves
   the camera-selected video submode; only an explicit mode-selection action
   writes normal Video or Photo. Mode reads require successful `photoSubMode`
-  and `videoSubMode` options. Normal capture is 0 and the inactive family is
-  100; a defined SDK video value from 1 through 15 with inactive Photo is shown as
-  `Camera Video`, without claiming a model-specific mode name. Selecting Video
-  from that state explicitly returns to normal Video. Legacy EVO sync-mode
-  commands are not used. Undefined values such as 16 or 99 remain unknown and
-  cannot authorize recording. Unknown-mode diagnostics include the successful
+  and `videoSubMode` options. Follow the vendor example's Photo-first priority:
+  normal Photo (0) takes precedence even when Video is also 0. Other active
+  Photo submodes remain unknown and never fall through to Video. Video is
+  considered only when Photo is inactive (100); a defined SDK video value from
+  1 through 15 is shown as `Camera Video`, without claiming a model-specific
+  mode name. Selecting Video from that state explicitly returns to normal Video.
+  Legacy EVO sync-mode commands are not used. Undefined Video values such as
+  16 or 99 with inactive Photo remain unknown and cannot authorize recording.
+  Unknown-mode diagnostics include the successful
   raw option values, with unavailable fields marked explicitly, for beta reports.
 - X6 requests `storageStateList` and reports its internal and SD storage
   in separate Camera Info rows, with free-space-only values. Capacities are not combined or
@@ -213,9 +216,12 @@ automatic routing does not remove those legacy implementations.
   every 30 seconds and expire after 75; only successful fields are applied.
 - Start, Photo, and mode changes require stopped status no older than five seconds.
   Start requires a confirmed active video family; Photo requires normal Photo.
-  Photo, undefined, inactive, ambiguous, and incomplete mode reads cannot authorize video
-  Start, and Start never changes those modes automatically. Explicit Stop remains
-  available with unknown status. Stop can supersede pending capture/mode confirmation.
+  Photo (including the `(0, 0)` pair), undefined, inactive, and incomplete mode
+  reads cannot authorize video Start, and Start never changes those modes
+  automatically. Explicit Stop remains available with unknown status. Stop can
+  supersede pending capture/mode confirmation.
+  Active video status with conflicting Photo readback clears the mode while
+  retaining recording status so the UI continues to offer Stop.
 - SDK acceptance does not confirm Start, Stop, or a mode change. A subsequent
   query must match the command and follow its acceptance. Old/superseded replies
   cannot refresh state or complete another command. Slow mode replies retain
