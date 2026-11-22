@@ -346,8 +346,10 @@ private extension BLECameraScanner {
             )
         }
 
-        if services.contains(Insta360BLEUUID.directControl)
-            || Insta360CameraNameClassifier.isCredibleCameraName(name) {
+        let hasInsta360Service = services.contains(Insta360BLEUUID.directControl)
+        let insta360Name = insta360ModelName([advertisedName, peripheral.name], hasCameraEvidence: hasInsta360Service)
+        if hasInsta360Service || insta360Name != nil {
+            let name = insta360Name ?? name
             return DiscoveredCameraCandidate(
                 id: peripheral.identifier,
                 name: name,
@@ -416,7 +418,7 @@ private extension BLECameraScanner {
 
         let advertisedName = advertisementData[CBAdvertisementDataLocalNameKey] as? String
         let services = advertisedServiceUUIDs(from: advertisementData)
-        let name = preferredCameraName(
+        var name = preferredCameraName(
             advertisedName: advertisedName,
             peripheralName: peripheral.name,
             fallback: known.name
@@ -428,7 +430,9 @@ private extension BLECameraScanner {
         case .dji:
             inferredModel = inferDJIModel(from: name)
         case .insta360:
-            inferredModel = Insta360CameraNameClassifier.model(for: name)
+            let modelName = insta360ModelName([advertisedName, peripheral.name], hasCameraEvidence: true)
+            name = modelName ?? known.name
+            inferredModel = modelName.map(Insta360CameraNameClassifier.model(for:)) ?? .unknown
         case .unknown:
             inferredModel = .unknown
         }
@@ -449,6 +453,15 @@ private extension BLECameraScanner {
             isPairing: known.brand == .gopro ? inferGoProPairingState(from: advertisementData) : nil,
             isConnectable: inferConnectableState(from: advertisementData)
         )
+    }
+
+    func insta360ModelName(_ names: [String?], hasCameraEvidence: Bool) -> String? {
+        // Core Bluetooth's peripheral name can differ from the advertised name.
+        // Prefer the first name that actually identifies an Insta360 model.
+        names.compactMap { $0 }.first { name in
+            if hasCameraEvidence { return Insta360CameraNameClassifier.model(for: name) != .unknown }
+            return Insta360CameraNameClassifier.isCredibleCameraName(name)
+        }
     }
 
     func preferredCameraName(

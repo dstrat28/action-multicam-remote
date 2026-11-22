@@ -74,6 +74,42 @@ enum CameraDiscoveryRegression {
         precondition(!scanner.isScanningRequested && central.scanCount == 2,
             "An explicit Stop Scan during the pause must survive resumption")
         precondition(client.disconnects == 0)
+        checkInsta360Discovery(scanner, central: central)
         print("Discovery checks passed: recording, reconnect, pairing, Nano sleep, scan intent and managed connections.")
+    }
+
+    private static func checkInsta360Discovery(_ scanner: BLECameraScanner, central: CBCentralManager) {
+        var candidate: DiscoveredCameraCandidate?
+        scanner.onEvent = { if case .discovered(let value) = $0 { candidate = value } }
+        let peripheral = CBPeripheral()
+        let cameraName = "X3 ABC123"
+        func discover(_ localName: String, hasService: Bool = true) -> DiscoveredCameraCandidate? {
+            candidate = nil
+            var advertisement: [String: Any] = [CBAdvertisementDataLocalNameKey: localName]
+            if hasService { advertisement[CBAdvertisementDataServiceUUIDsKey] = [Insta360BLEUUID.directControl] }
+            scanner.centralManager(central, didDiscover: peripheral, advertisementData: advertisement, rssi: -50)
+            return candidate
+        }
+
+        peripheral.name = cameraName
+        let genericAdvertisement = discover("amba_boss")
+        precondition(genericAdvertisement?.model == .insta360X3 && genericAdvertisement?.name == cameraName,
+            "A generic local name must not mask an X3 peripheral name")
+        peripheral.name = "amba_boss"
+        let namedAdvertisement = discover(cameraName)
+        precondition(namedAdvertisement?.model == .insta360X3 && namedAdvertisement?.name == cameraName)
+        let unknown = discover("amba_boss")
+        precondition(unknown?.brand == .insta360 && unknown?.model == CameraModel.unknown,
+            "The shared service and generic name do not establish a model")
+        precondition(discover("amba_boss", hasService: false) == nil)
+
+        scanner.rememberKnownCameras([
+            DiscoveredCamera(id: peripheral.identifier, name: cameraName, brand: .insta360, model: .insta360X3,
+                rssi: -50, capabilities: [.record], connectionState: .disconnected, recordingState: .unknown,
+                isPaired: true, isSelected: false, lastSeen: Date())
+        ])
+        let remembered = discover("amba_boss")
+        precondition(remembered?.model == .insta360X3 && remembered?.name == cameraName,
+            "A generic scan must preserve the remembered identity for the same peripheral")
     }
 }

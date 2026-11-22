@@ -1421,6 +1421,8 @@ private extension CameraStore {
         if let index = cameras.firstIndex(where: { $0.id == candidate.id }) {
             let previousSortRank = cameras[index].defaultSortRank
             let resolvedModel = candidate.model == .unknown ? cameras[index].model : candidate.model
+            let resolvedName = candidate.brand == .insta360 && cameras[index].brand == .insta360
+                && candidate.model == .unknown && resolvedModel != .unknown ? cameras[index].name : candidate.name
             var routeCamera = cameras[index]
             routeCamera.brand = candidate.brand
             routeCamera.model = resolvedModel
@@ -1429,17 +1431,17 @@ private extension CameraStore {
                 candidate.capabilities,
                 brand: candidate.brand,
                 model: resolvedModel,
-                name: candidate.name,
+                name: resolvedName,
                 usesInsta360SDK: sdkSelection
             )
             let unsupportedReason = unsupportedReason(
                 brand: candidate.brand,
                 model: resolvedModel,
-                name: candidate.name
+                name: resolvedName
             )
 
-            if cameras[index].name != candidate.name {
-                cameras[index].name = candidate.name
+            if cameras[index].name != resolvedName {
+                cameras[index].name = resolvedName
                 shouldSort = true
             }
             if cameras[index].brand != candidate.brand {
@@ -1478,6 +1480,11 @@ private extension CameraStore {
                 clearStateGuards(for: candidate.id)
                 shouldAutoConnect = false
             } else {
+                // A later scan can identify an Insta360 camera first seen with a generic name.
+                if candidate.brand == .insta360, case .unsupported = cameras[index].connectionState {
+                    cameras[index].connectionState = .disconnected
+                    cameras[index].recordingState = .unknown
+                }
                 let shouldRefreshSignal = now.timeIntervalSince(cameras[index].lastSeen) >= signalRefreshInterval
                     || abs(cameras[index].rssi - candidate.rssi) >= 12
                 if cameras[index].connectionState != .connected {
