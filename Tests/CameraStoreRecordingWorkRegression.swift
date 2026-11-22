@@ -120,6 +120,13 @@ enum CameraStoreRecordingWorkRegression {
         precondition(store.cameras.count == 1 && store.cameras[0].name == cameraName)
         precondition(store.cameras[0].model == .insta360X3 && store.cameras[0].insta360UsesSDK == true)
         precondition(store.cameras[0].recordingState == .unknown && !store.cameras[0].isPaired)
+
+        discover("X3", connectable: false)
+        await waitUntil("A nonconnectable scan must update the recovered row") {
+            store.cameras[0].connectionState == .disconnected
+        }
+        precondition(store.cameras[0].name == cameraName,
+            "A model-only scan must not replace the identifier before pairing")
     }
 
     private static func checkPreservedSDKModes(_ store: CameraStore) async {

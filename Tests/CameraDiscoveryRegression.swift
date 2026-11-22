@@ -98,6 +98,10 @@ enum CameraDiscoveryRegression {
         peripheral.name = "amba_boss"
         let namedAdvertisement = discover(cameraName)
         precondition(namedAdvertisement?.model == .insta360X3 && namedAdvertisement?.name == cameraName)
+        peripheral.name = cameraName
+        precondition(discover("X3")?.name == cameraName,
+            "A model-only advertisement must not mask a name with a camera identifier")
+        peripheral.name = "amba_boss"
         let unknown = discover("amba_boss")
         precondition(unknown?.brand == .insta360 && unknown?.model == CameraModel.unknown,
             "The shared service and generic name do not establish a model")
@@ -111,5 +115,8 @@ enum CameraDiscoveryRegression {
         let remembered = discover("amba_boss")
         precondition(remembered?.model == .insta360X3 && remembered?.name == cameraName,
             "A generic scan must preserve the remembered identity for the same peripheral")
+        peripheral.name = "X3"
+        precondition(discover("amba_boss")?.name == cameraName,
+            "A model-only peripheral name must not replace the remembered camera identifier")
     }
 }

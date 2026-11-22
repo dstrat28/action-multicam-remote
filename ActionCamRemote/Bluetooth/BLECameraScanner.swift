@@ -433,6 +433,9 @@ private extension BLECameraScanner {
             let modelName = insta360ModelName([advertisedName, peripheral.name], hasCameraEvidence: true)
             name = modelName ?? known.name
             inferredModel = modelName.map(Insta360CameraNameClassifier.model(for:)) ?? .unknown
+            if inferredModel == known.model {
+                name = Insta360CameraNameClassifier.preferredName(name, retainingIdentifierFrom: known.name)
+            }
         case .unknown:
             inferredModel = .unknown
         }
@@ -457,11 +460,11 @@ private extension BLECameraScanner {
 
     func insta360ModelName(_ names: [String?], hasCameraEvidence: Bool) -> String? {
         // Core Bluetooth's peripheral name can differ from the advertised name.
-        // Prefer the first name that actually identifies an Insta360 model.
-        names.compactMap { $0 }.first { name in
-            if hasCameraEvidence { return Insta360CameraNameClassifier.model(for: name) != .unknown }
-            return Insta360CameraNameClassifier.isCredibleCameraName(name)
-        }
+        // Prefer a full camera name before accepting a model-only name.
+        let names = names.compactMap { $0 }
+        if let fullName = names.first(where: Insta360CameraNameClassifier.isCredibleCameraName) { return fullName }
+        guard hasCameraEvidence else { return nil }
+        return names.first { Insta360CameraNameClassifier.model(for: $0) != .unknown }
     }
 
     func preferredCameraName(
