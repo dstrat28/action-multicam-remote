@@ -1419,16 +1419,14 @@ private extension CameraStore {
         }
 
         if let index = cameras.firstIndex(where: { $0.id == candidate.id }) {
-            let previousSortRank = cameras[index].defaultSortRank
-            let resolvedModel = candidate.model == .unknown ? cameras[index].model : candidate.model
-            var resolvedName = candidate.name
-            if candidate.brand == .insta360, cameras[index].brand == .insta360,
-               resolvedModel != .unknown, resolvedModel == cameras[index].model {
-                let knownName = cameras[index].name
-                resolvedName = candidate.model == .unknown ? knownName
-                    : Insta360CameraNameClassifier.preferredName(candidate.name, retainingIdentifierFrom: knownName)
-            }
-            var routeCamera = cameras[index]
+            let known = cameras[index]
+            let previousSortRank = known.defaultSortRank
+            let keepsInsta360Identity = candidate.brand == .insta360 && known.brand == .insta360
+                && ((candidate.model == .unknown && known.model != .unknown)
+                    || Insta360CameraNameClassifier.shouldKeepKnownIdentity(observed: candidate.name, known: known.name))
+            let resolvedName = keepsInsta360Identity ? known.name : candidate.name
+            let resolvedModel = keepsInsta360Identity || candidate.model == .unknown ? known.model : candidate.model
+            var routeCamera = known
             routeCamera.brand = candidate.brand
             routeCamera.model = resolvedModel
             let sdkSelection = routeCamera.resolvedInsta360SDKSelection()
@@ -1453,7 +1451,7 @@ private extension CameraStore {
                 cameras[index].brand = candidate.brand
                 shouldSort = true
             }
-            if candidate.model != .unknown, cameras[index].model != resolvedModel {
+            if known.model != resolvedModel {
                 cameras[index].model = resolvedModel
                 shouldSort = true
             }

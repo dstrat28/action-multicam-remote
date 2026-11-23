@@ -85,48 +85,89 @@ enum CameraStoreRecordingWorkRegression {
         store.disconnect(store.cameras[0])
         await waitUntil("Disconnect must permit discovery again") { store.isScanning }
         await checkPreservedSDKModes(store)
-        await checkInsta360DiscoveryRecovery()
+        await checkInsta360DiscoveryRecovery(name: "X3 ABC123", model: .insta360X3, shortenedName: "X3")
+        await checkInsta360DiscoveryRecovery(name: "GO 3S ABC123", model: .insta360Go3S, shortenedName: "GO 3")
+        await checkNewerInsta360IdentitySurvivesWeakScan()
         print("Store recording-work checks passed: SDK mode preservation, quick transitions, pairing, discovery and disconnect.")
     }
 
-    private static func checkInsta360DiscoveryRecovery() async {
+    private static func checkInsta360DiscoveryRecovery(name: String, model: CameraModel, shortenedName: String) async {
         let scanner = BLECameraScanner()
         let store = CameraStore(scanner: scanner, demoMode: true)
         store.cameras = []
         let central = CBCentralManager.instances.last!
         let peripheral = CBPeripheral()
         peripheral.name = "amba_boss"
-        let cameraName = "X3 ABC123"
-        func discover(_ name: String, connectable: Bool = true) {
+        func discover(_ name: String, connectable: Bool = true, rssi: NSNumber = -50) {
             scanner.centralManager(central, didDiscover: peripheral, advertisementData: [
                 CBAdvertisementDataLocalNameKey: name,
                 CBAdvertisementDataServiceUUIDsKey: [Insta360BLEUUID.directControl],
                 CBAdvertisementDataIsConnectable: NSNumber(value: connectable)
-            ], rssi: -50)
+            ], rssi: rssi)
         }
 
         discover("amba_boss")
         await waitUntil("A generic first sighting has no supported model") {
             store.cameras.count == 1 && !store.cameras[0].isSupportedByApp
         }
-        discover(cameraName, connectable: false)
+        discover(name, connectable: false)
         await waitUntil("Model identification alone cannot make a nonconnectable advertisement available") {
-            store.cameras[0].model == .insta360X3 && store.cameras[0].connectionState == .disconnected
+            store.cameras[0].model == model && store.cameras[0].connectionState == .disconnected
         }
         discover("amba_boss")
-        await waitUntil("The same X3 becomes available on a subsequent connectable advertisement") {
+        await waitUntil("The camera becomes available on a subsequent connectable advertisement") {
             store.cameras[0].connectionState == .discovered
         }
-        precondition(store.cameras.count == 1 && store.cameras[0].name == cameraName)
-        precondition(store.cameras[0].model == .insta360X3 && store.cameras[0].insta360UsesSDK == true)
+        precondition(store.cameras.count == 1 && store.cameras[0].name == name)
+        precondition(store.cameras[0].model == model && store.cameras[0].insta360UsesSDK == model.supportsInsta360SDK)
         precondition(store.cameras[0].recordingState == .unknown && !store.cameras[0].isPaired)
 
-        discover("X3", connectable: false)
+        peripheral.name = shortenedName
+        discover("amba_boss", connectable: false, rssi: -65)
         await waitUntil("A nonconnectable scan must update the recovered row") {
-            store.cameras[0].connectionState == .disconnected
+            store.cameras[0].connectionState == .disconnected && store.cameras[0].rssi == -65
         }
-        precondition(store.cameras[0].name == cameraName,
-            "A model-only scan must not replace the identifier before pairing")
+        precondition(store.cameras[0].name == name && store.cameras[0].model == model,
+            "A shortened peripheral name must preserve the model and identifier before pairing")
+    }
+
+    private static func checkNewerInsta360IdentitySurvivesWeakScan() async {
+        let scanner = BLECameraScanner()
+        let store = CameraStore(scanner: scanner, demoMode: true)
+        let central = CBCentralManager.instances.last!
+        let peripheral = CBPeripheral()
+        store.cameras = [
+            DiscoveredCamera(id: peripheral.identifier, name: "GO 3 ABC123", brand: .insta360, model: .insta360Go3,
+                rssi: -50, capabilities: [.record], connectionState: .disconnected, recordingState: .unknown,
+                isPaired: true, isSelected: false, lastSeen: Date())
+        ]
+        scanner.rememberKnownCameras(store.cameras)
+
+        func discover(_ localName: String?, peripheralName: String?, rssi: NSNumber) {
+            peripheral.name = peripheralName
+            var advertisement: [String: Any] = [
+                CBAdvertisementDataServiceUUIDsKey: [Insta360BLEUUID.directControl],
+                CBAdvertisementDataIsConnectable: false,
+            ]
+            advertisement[CBAdvertisementDataLocalNameKey] = localName
+            scanner.centralManager(central, didDiscover: peripheral, advertisementData: advertisement, rssi: rssi)
+        }
+
+        let fullName = "GO 3S ABC123"
+        discover(fullName, peripheralName: "amba_boss", rssi: -65)
+        await waitUntil("A full name must update the paired camera") {
+            store.cameras[0].name == fullName && store.cameras[0].model == .insta360Go3S
+        }
+
+        discover("amba_boss", peripheralName: "GO 3S", rssi: -80)
+        await waitUntil("The model-only scan must refresh signal strength") { store.cameras[0].rssi == -80 }
+        precondition(store.cameras[0].name == fullName && store.cameras[0].model == .insta360Go3S,
+            "A model-only scan must preserve the most recent full identity")
+
+        discover(nil, peripheralName: nil, rssi: -95)
+        await waitUntil("The nameless scan must refresh signal strength") { store.cameras[0].rssi == -95 }
+        precondition(store.cameras[0].name == fullName && store.cameras[0].model == .insta360Go3S,
+            "A nameless scan must preserve the most recent full identity")
     }
 
     private static func checkPreservedSDKModes(_ store: CameraStore) async {

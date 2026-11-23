@@ -388,12 +388,9 @@ enum Insta360RemoteProtocol {
 }
 
 struct Insta360CameraNameClassifier {
-    // Use when both names refer to the same model on the same peripheral.
-    static func preferredName(_ observed: String, retainingIdentifierFrom known: String) -> String {
-        guard observed != known, !isCredibleCameraName(observed), isCredibleCameraName(known) else {
-            return observed
-        }
-        return known
+    // Compare names for the same peripheral. A short name can also lose the model suffix.
+    static func shouldKeepKnownIdentity(observed: String, known: String) -> Bool {
+        observed != known && !isCredibleCameraName(observed) && isCredibleCameraName(known)
     }
 
     static func isCredibleCameraName(_ name: String) -> Bool {

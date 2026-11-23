@@ -108,15 +108,16 @@ enum CameraDiscoveryRegression {
         precondition(discover("amba_boss", hasService: false) == nil)
 
         scanner.rememberKnownCameras([
-            DiscoveredCamera(id: peripheral.identifier, name: cameraName, brand: .insta360, model: .insta360X3,
+            DiscoveredCamera(id: peripheral.identifier, name: "GO 3S ABC123", brand: .insta360, model: .insta360Go3S,
                 rssi: -50, capabilities: [.record], connectionState: .disconnected, recordingState: .unknown,
                 isPaired: true, isSelected: false, lastSeen: Date())
         ])
-        let remembered = discover("amba_boss")
-        precondition(remembered?.model == .insta360X3 && remembered?.name == cameraName,
-            "A generic scan must preserve the remembered identity for the same peripheral")
-        peripheral.name = "X3"
-        precondition(discover("amba_boss")?.name == cameraName,
-            "A model-only peripheral name must not replace the remembered camera identifier")
+        let generic = discover("amba_boss", hasService: false)
+        precondition(generic?.brand == .insta360 && generic?.model == CameraModel.unknown && generic?.name == "amba_boss",
+            "A paired profile can identify the brand of a generic scan")
+        peripheral.name = "GO 3"
+        let shortened = discover("amba_boss", hasService: false)
+        precondition(shortened?.model == .insta360Go3 && shortened?.name == "GO 3",
+            "The store must see the name and model the scan actually observed")
     }
 }
