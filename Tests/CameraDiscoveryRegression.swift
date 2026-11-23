@@ -107,16 +107,24 @@ enum CameraDiscoveryRegression {
             "The shared service and generic name do not establish a model")
         precondition(discover("amba_boss", hasService: false) == nil)
 
-        scanner.rememberKnownCameras([
-            DiscoveredCamera(id: peripheral.identifier, name: cameraName, brand: .insta360, model: .insta360X3,
-                rssi: -50, capabilities: [.record], connectionState: .disconnected, recordingState: .unknown,
-                isPaired: true, isSelected: false, lastSeen: Date())
-        ])
-        let remembered = discover("amba_boss")
-        precondition(remembered?.model == .insta360X3 && remembered?.name == cameraName,
-            "A generic scan must preserve the remembered identity for the same peripheral")
-        peripheral.name = "X3"
-        precondition(discover("amba_boss")?.name == cameraName,
-            "A model-only peripheral name must not replace the remembered camera identifier")
+        let rememberedNames: [(name: String, model: CameraModel, shortenedName: String)] = [
+            (cameraName, .insta360X3, "X3"),
+            ("GO 3S ABC123", .insta360Go3S, "GO 3"),
+        ]
+        for identity in rememberedNames {
+            scanner.rememberKnownCameras([
+                DiscoveredCamera(id: peripheral.identifier, name: identity.name, brand: .insta360, model: identity.model,
+                    rssi: -50, capabilities: [.record], connectionState: .disconnected, recordingState: .unknown,
+                    isPaired: true, isSelected: false, lastSeen: Date())
+            ])
+            peripheral.name = "amba_boss"
+            let remembered = discover("amba_boss")
+            precondition(remembered?.model == identity.model && remembered?.name == identity.name,
+                "A generic scan must preserve the remembered identity for the same peripheral")
+            peripheral.name = identity.shortenedName
+            let shortened = discover("amba_boss")
+            precondition(shortened?.model == identity.model && shortened?.name == identity.name,
+                "A shortened peripheral name must preserve the remembered model and identifier")
+        }
     }
 }

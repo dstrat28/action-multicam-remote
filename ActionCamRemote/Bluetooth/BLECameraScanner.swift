@@ -431,10 +431,12 @@ private extension BLECameraScanner {
             inferredModel = inferDJIModel(from: name)
         case .insta360:
             let modelName = insta360ModelName([advertisedName, peripheral.name], hasCameraEvidence: true)
-            name = modelName ?? known.name
-            inferredModel = modelName.map(Insta360CameraNameClassifier.model(for:)) ?? .unknown
-            if inferredModel == known.model {
-                name = Insta360CameraNameClassifier.preferredName(name, retainingIdentifierFrom: known.name)
+            if let modelName, !Insta360CameraNameClassifier.shouldKeepKnownIdentity(observed: modelName, known: known.name) {
+                name = modelName
+                inferredModel = Insta360CameraNameClassifier.model(for: modelName)
+            } else {
+                name = known.name
+                inferredModel = .unknown
             }
         case .unknown:
             inferredModel = .unknown
