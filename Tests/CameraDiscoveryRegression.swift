@@ -107,24 +107,17 @@ enum CameraDiscoveryRegression {
             "The shared service and generic name do not establish a model")
         precondition(discover("amba_boss", hasService: false) == nil)
 
-        let rememberedNames: [(name: String, model: CameraModel, shortenedName: String)] = [
-            (cameraName, .insta360X3, "X3"),
-            ("GO 3S ABC123", .insta360Go3S, "GO 3"),
-        ]
-        for identity in rememberedNames {
-            scanner.rememberKnownCameras([
-                DiscoveredCamera(id: peripheral.identifier, name: identity.name, brand: .insta360, model: identity.model,
-                    rssi: -50, capabilities: [.record], connectionState: .disconnected, recordingState: .unknown,
-                    isPaired: true, isSelected: false, lastSeen: Date())
-            ])
-            peripheral.name = "amba_boss"
-            let remembered = discover("amba_boss")
-            precondition(remembered?.model == identity.model && remembered?.name == identity.name,
-                "A generic scan must preserve the remembered identity for the same peripheral")
-            peripheral.name = identity.shortenedName
-            let shortened = discover("amba_boss")
-            precondition(shortened?.model == identity.model && shortened?.name == identity.name,
-                "A shortened peripheral name must preserve the remembered model and identifier")
-        }
+        scanner.rememberKnownCameras([
+            DiscoveredCamera(id: peripheral.identifier, name: "GO 3S ABC123", brand: .insta360, model: .insta360Go3S,
+                rssi: -50, capabilities: [.record], connectionState: .disconnected, recordingState: .unknown,
+                isPaired: true, isSelected: false, lastSeen: Date())
+        ])
+        let generic = discover("amba_boss", hasService: false)
+        precondition(generic?.brand == .insta360 && generic?.model == CameraModel.unknown && generic?.name == "amba_boss",
+            "A paired profile can identify the brand of a generic scan")
+        peripheral.name = "GO 3"
+        let shortened = discover("amba_boss", hasService: false)
+        precondition(shortened?.model == .insta360Go3 && shortened?.name == "GO 3",
+            "The store must see the name and model the scan actually observed")
     }
 }

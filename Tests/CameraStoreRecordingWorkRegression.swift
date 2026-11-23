@@ -87,6 +87,7 @@ enum CameraStoreRecordingWorkRegression {
         await checkPreservedSDKModes(store)
         await checkInsta360DiscoveryRecovery(name: "X3 ABC123", model: .insta360X3, shortenedName: "X3")
         await checkInsta360DiscoveryRecovery(name: "GO 3S ABC123", model: .insta360Go3S, shortenedName: "GO 3")
+        await checkNewerInsta360IdentitySurvivesWeakScan()
         print("Store recording-work checks passed: SDK mode preservation, quick transitions, pairing, discovery and disconnect.")
     }
 
@@ -128,6 +129,45 @@ enum CameraStoreRecordingWorkRegression {
         }
         precondition(store.cameras[0].name == name && store.cameras[0].model == model,
             "A shortened peripheral name must preserve the model and identifier before pairing")
+    }
+
+    private static func checkNewerInsta360IdentitySurvivesWeakScan() async {
+        let scanner = BLECameraScanner()
+        let store = CameraStore(scanner: scanner, demoMode: true)
+        let central = CBCentralManager.instances.last!
+        let peripheral = CBPeripheral()
+        store.cameras = [
+            DiscoveredCamera(id: peripheral.identifier, name: "GO 3 ABC123", brand: .insta360, model: .insta360Go3,
+                rssi: -50, capabilities: [.record], connectionState: .disconnected, recordingState: .unknown,
+                isPaired: true, isSelected: false, lastSeen: Date())
+        ]
+        scanner.rememberKnownCameras(store.cameras)
+
+        func discover(_ localName: String?, peripheralName: String?, rssi: NSNumber) {
+            peripheral.name = peripheralName
+            var advertisement: [String: Any] = [
+                CBAdvertisementDataServiceUUIDsKey: [Insta360BLEUUID.directControl],
+                CBAdvertisementDataIsConnectable: false,
+            ]
+            advertisement[CBAdvertisementDataLocalNameKey] = localName
+            scanner.centralManager(central, didDiscover: peripheral, advertisementData: advertisement, rssi: rssi)
+        }
+
+        let fullName = "GO 3S ABC123"
+        discover(fullName, peripheralName: "amba_boss", rssi: -65)
+        await waitUntil("A full name must update the paired camera") {
+            store.cameras[0].name == fullName && store.cameras[0].model == .insta360Go3S
+        }
+
+        discover("amba_boss", peripheralName: "GO 3S", rssi: -80)
+        await waitUntil("The model-only scan must refresh signal strength") { store.cameras[0].rssi == -80 }
+        precondition(store.cameras[0].name == fullName && store.cameras[0].model == .insta360Go3S,
+            "A model-only scan must preserve the most recent full identity")
+
+        discover(nil, peripheralName: nil, rssi: -95)
+        await waitUntil("The nameless scan must refresh signal strength") { store.cameras[0].rssi == -95 }
+        precondition(store.cameras[0].name == fullName && store.cameras[0].model == .insta360Go3S,
+            "A nameless scan must preserve the most recent full identity")
     }
 
     private static func checkPreservedSDKModes(_ store: CameraStore) async {

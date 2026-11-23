@@ -421,7 +421,7 @@ private extension BLECameraScanner {
         var name = preferredCameraName(
             advertisedName: advertisedName,
             peripheralName: peripheral.name,
-            fallback: known.name
+            fallback: known.brand == .insta360 ? "Unnamed Camera" : known.name
         )
         let inferredModel: CameraModel
         switch known.brand {
@@ -431,27 +431,24 @@ private extension BLECameraScanner {
             inferredModel = inferDJIModel(from: name)
         case .insta360:
             let modelName = insta360ModelName([advertisedName, peripheral.name], hasCameraEvidence: true)
-            if let modelName, !Insta360CameraNameClassifier.shouldKeepKnownIdentity(observed: modelName, known: known.name) {
-                name = modelName
-                inferredModel = Insta360CameraNameClassifier.model(for: modelName)
-            } else {
-                name = known.name
-                inferredModel = .unknown
-            }
+            // The store can have a newer identity than the remembered scanner profile.
+            name = modelName ?? name
+            inferredModel = modelName.map(Insta360CameraNameClassifier.model(for:)) ?? .unknown
         case .unknown:
             inferredModel = .unknown
         }
 
+        let model = known.brand != .insta360 && inferredModel == .unknown ? known.model : inferredModel
         return DiscoveredCameraCandidate(
             id: peripheral.identifier,
             name: name,
             brand: known.brand,
-            model: inferredModel == .unknown ? known.model : inferredModel,
+            model: model,
             rssi: rssi,
             capabilities: known.capabilities,
             isAwake: inferAwakeState(
                 for: known.brand,
-                cameraModel: inferredModel == .unknown ? known.model : inferredModel,
+                cameraModel: model,
                 from: advertisementData,
                 advertisedServices: services
             ),
