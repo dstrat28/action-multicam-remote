@@ -5,11 +5,13 @@ import WatchConnectivity
 final class CameraStore {
     var cameras: [DiscoveredCamera] = []
     var readyConnectedCameras: [DiscoveredCamera] { cameras.filter { $0.connectionState == .connected } }
+    var stopState = CameraStopState()
     var canAddHighlight = false
     var reconnectRequests: [Bool] = []
     func requestWatchCameraReconnect(scanRetry: Bool) { reconnectRequests.append(scanRetry) }
     func startWatchRecording() -> Bool { true }
     func stopWatchRecording() -> Bool { true }
+    func showsRecordingStatus(for camera: DiscoveredCamera) -> Bool { stopState.showsRecordingStatus(for: camera) }
     func addHighlight() {}
 }
 
@@ -105,6 +107,7 @@ enum WatchCameraTelemetryRegression {
         precondition(watch.cameras[0].storageState == nil && watch.cameras[0].batteryPercent == nil)
         precondition(watch.isRecording && watch.cameras[0].isRecording,
                      "Missing optional metadata must not remove the camera or its recording status")
+        await checkWatchStopProgress(store: store, phone: phone, watch: watch)
 
         var oldPhone: [String: Any] = ["id": "legacy", "name": "GoPro", "model": "HERO13 Black",
             "batteryBars": 3, "storageFreeMB": 1024, "storageTotalMB": 2048, "storageState": "Ready"]
@@ -121,7 +124,38 @@ enum WatchCameraTelemetryRegression {
         precondition(WatchCamera(snapshot: oldPhone)?.storageProgress == nil)
         await checkInitialWatchConnection()
         await checkWatchScanRetryWindow()
-        print("Watch camera telemetry passed: actual phone/Watch round trips, all brands, partial/empty/full/missing volumes, legacy compatibility and battery/power.")
+        print("Watch camera checks passed: phone/Watch telemetry, legacy compatibility, and Stop progress.")
+    }
+
+    private static func checkWatchStopProgress(store: CameraStore, phone: WatchConnectivityController,
+                                               watch: WatchSessionModel) async {
+        let session = WCSession.default
+        session.activationState = .activated
+        defer { session.activationState = .notActivated }
+        let id = store.cameras[0].id
+        store.cameras[0].brand = .dji
+        store.cameras[0].model = .djiOsmoAction6
+
+        watch.stop()
+        precondition(watch.pendingCommand == "stop")
+        store.stopState.begin(id, at: 0, timeout: 15)
+        // DJI reports Unknown before a trailing Recording update and real Stopped confirmation.
+        store.cameras[0].recordingState = .unknown
+        watch.session(session, didReceiveApplicationContext: await snapshot(from: phone))
+        await waitUntil { watch.cameras.first?.isRecording == false }
+        precondition(watch.isRecording && watch.pendingCommand == "stop",
+            "Unknown during Stop must keep the Watch on the Stopping controls")
+
+        store.cameras[0].recordingState = .recording
+        watch.session(session, didReceiveApplicationContext: await snapshot(from: phone))
+        await waitUntil { watch.cameras.first?.isRecording == true }
+        precondition(watch.pendingCommand == "stop",
+            "Trailing Recording status must keep the Stop request pending")
+
+        store.cameras[0].recordingState = .stopped
+        precondition(store.stopState.observe(id, state: .stopped, canClearActiveRecording: true))
+        watch.session(session, didReceiveApplicationContext: await snapshot(from: phone))
+        await waitUntil { !watch.isRecording && watch.pendingCommand == nil }
     }
 
     private static func checkInitialWatchConnection() async {
