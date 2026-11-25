@@ -1802,6 +1802,7 @@ struct CameraStopState {
         var resultID: UUID?
         var expiresAt: TimeInterval
         var hasSentResult = false
+        var djiRSDKRetryAfter: TimeInterval?
     }
     private var entries: [UUID: Entry] = [:]
     private var unconfirmedCameraIDs: Set<UUID> = []
@@ -1833,6 +1834,17 @@ struct CameraStopState {
         guard entries[cameraID] == nil else { return }
         unconfirmedCameraIDs.remove(cameraID)
         entries[cameraID] = Entry(expiresAt: now + timeout)
+    }
+
+    mutating func armDJIRSDKRetry(for cameraID: UUID, at now: TimeInterval) {
+        entries[cameraID]?.djiRSDKRetryAfter = now + 5
+    }
+
+    mutating func consumeDJIRSDKRetry(for cameraID: UUID, at now: TimeInterval) -> Bool {
+        guard let entry = entries[cameraID], let retryAfter = entry.djiRSDKRetryAfter,
+              now >= retryAfter, now < entry.expiresAt else { return false }
+        entries[cameraID]?.djiRSDKRetryAfter = nil
+        return true
     }
 
     mutating func attach(_ result: CameraCommandResult) {
@@ -1871,6 +1883,7 @@ struct CameraStopState {
     @discardableResult
     mutating func queueReplay(_ camera: DiscoveredCamera, at now: TimeInterval) -> Bool {
         begin(camera.id, at: now, timeout: Self.confirmationTimeout(for: camera))
+        entries[camera.id]?.djiRSDKRetryAfter = nil
         return replayCameraIDs.insert(camera.id).inserted
     }
 

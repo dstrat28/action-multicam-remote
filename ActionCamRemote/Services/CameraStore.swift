@@ -1114,7 +1114,7 @@ final class CameraStore {
             pendingStartCameraIDs.remove(camera.id)
             cancelWakeRetry(for: camera.id)
             savedStopReconnectAttemptedIDs.remove(camera.id)
-            protectStopTransition(for: camera)
+            protectStopTransition(for: camera, isUserRequested: true)
         }
 
         send(.stopRecording, to: targets)
@@ -1226,7 +1226,7 @@ final class CameraStore {
             return
         }
 
-        protectStopTransition(for: camera)
+        protectStopTransition(for: camera, isUserRequested: true)
         send(.stopRecording, to: [camera])
     }
 
@@ -1937,8 +1937,11 @@ private extension CameraStore {
         camera.behavior.kind == .djiOsmoPocket3 ? pocket3StartStateGuardInterval : defaultStartStateGuardInterval
     }
 
-    func protectStopTransition(for camera: DiscoveredCamera) {
+    func protectStopTransition(for camera: DiscoveredCamera, isUserRequested: Bool = false) {
         beginStopping(for: camera)
+        if isUserRequested, !isDemoMode, camera.behavior.usesDJIRSDKControl {
+            stopState.armDJIRSDKRetry(for: camera.id, at: ProcessInfo.processInfo.systemUptime)
+        }
         ignoreRecordingUntilByCameraID[camera.id] = Date().addingTimeInterval(stopStateGuardInterval(for: camera))
         ignoreStoppedUntilByCameraID.removeValue(forKey: camera.id)
     }
@@ -3579,6 +3582,7 @@ private extension CameraStore {
             shouldPersist = shouldPersist || cameras[index].isPaired
         }
 
+        let camera = cameras[index]
         if shouldSort {
             sortCamerasForEditing()
         }
@@ -3587,6 +3591,12 @@ private extension CameraStore {
             persistPairedCameras()
         }
 
+        if recordingStateToApply == .recording, update.replacesDJIRSDKStatus, update.powerState == .awake,
+           camera.isConnected, !camera.isInPhotoMode,
+           stopState.consumeDJIRSDKRetry(for: id, at: ProcessInfo.processInfo.systemUptime) {
+            appendLog("\(camera.name): camera still reports recording; retrying Stop on the current connection.")
+            send(.stopRecording, to: [camera])
+        }
     }
 
     func updateCamera(_ id: UUID, state: CameraConnectionState, detail: String?) {
