@@ -131,31 +131,63 @@ enum WatchCameraTelemetryRegression {
                                                watch: WatchSessionModel) async {
         let session = WCSession.default
         session.activationState = .activated
-        defer { session.activationState = .notActivated }
+        session.isReachable = true
+        defer {
+            session.isReachable = false
+            session.activationState = .notActivated
+        }
         let id = store.cameras[0].id
         store.cameras[0].brand = .dji
         store.cameras[0].model = .djiOsmoAction6
+        store.canAddHighlight = true
+        watch.session(session, didReceiveApplicationContext: await snapshot(from: phone))
+        await waitUntil { watch.canAddHighlight }
 
         watch.stop()
         precondition(watch.pendingCommand == "stop")
+        precondition(!watch.canAddHighlight, "Hide Highlight as soon as Stop is tapped")
+        let sentCount = session.sentMessages.count
+        watch.highlight()
+        precondition(session.sentMessages.count == sentCount, "A pending Stop must block Highlight commands")
         store.stopState.begin(id, at: 0, timeout: 15)
         // DJI reports Unknown before a trailing Recording update and real Stopped confirmation.
         store.cameras[0].recordingState = .unknown
+        store.canAddHighlight = false
         watch.session(session, didReceiveApplicationContext: await snapshot(from: phone))
         await waitUntil { watch.cameras.first?.isRecording == false }
         precondition(watch.isRecording && watch.pendingCommand == "stop",
             "Unknown during Stop must keep the Watch on the Stopping controls")
 
         store.cameras[0].recordingState = .recording
+        // A phone without the Highlight fix can still send this older availability signal.
+        store.canAddHighlight = true
         watch.session(session, didReceiveApplicationContext: await snapshot(from: phone))
         await waitUntil { watch.cameras.first?.isRecording == true }
         precondition(watch.pendingCommand == "stop",
             "Trailing Recording status must keep the Stop request pending")
+        precondition(!watch.canAddHighlight, "Trailing Recording status must not bring Highlight back")
 
         store.cameras[0].recordingState = .stopped
+        store.canAddHighlight = false
         precondition(store.stopState.observe(id, state: .stopped, canClearActiveRecording: true))
         watch.session(session, didReceiveApplicationContext: await snapshot(from: phone))
         await waitUntil { !watch.isRecording && watch.pendingCommand == nil }
+        precondition(!watch.canAddHighlight)
+
+        store.cameras[0].recordingState = .recording
+        store.canAddHighlight = true
+        watch.session(session, didReceiveApplicationContext: await snapshot(from: phone))
+        await waitUntil { watch.canAddHighlight }
+        watch.stop()
+        let rejectedStop: [String: Any] = [
+            "commandID": session.sentMessages.last!["commandID"]!,
+            "commandAccepted": false,
+            "recording": true,
+            "highlightAvailable": true,
+        ]
+        watch.session(session, didReceiveApplicationContext: rejectedStop)
+        await waitUntil { watch.pendingCommand == nil }
+        precondition(watch.canAddHighlight, "Highlight must return if Stop is rejected while recording")
     }
 
     private static func checkInitialWatchConnection() async {

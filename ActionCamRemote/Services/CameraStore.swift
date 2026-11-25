@@ -409,8 +409,8 @@ final class CameraStore {
     }
 
     var recordingHighlightCameras: [DiscoveredCamera] {
-        readyConnectedCameras.filter {
-            $0.supportsHighlight && $0.recordingState == .recording
+        readyConnectedCameras.filter { camera in
+            camera.supportsHighlight && camera.recordingState == .recording && !isCameraStopping(camera)
         }
     }
 

@@ -483,6 +483,7 @@ enum CameraStoreRecordingWorkRegression {
         await waitUntil("The DJI camera must be connected and recording") {
             store.cameras[0].isConnected && store.cameras[0].recordingState == .recording
         }
+        precondition(store.canAddHighlight)
         store.stopRecording(store.cameras[0])
         precondition(recordActions() == [1], "The original Stop must be sent once")
         if scenario == .stillRecording {
@@ -492,6 +493,8 @@ enum CameraStoreRecordingWorkRegression {
             }
             status(recording: true, power: 0, checksum: [0x46, 0xE4, 0xE5, 0x1B], on: firstClient)
             await waitUntil("The camera must report that recording continues") { store.cameras[0].recordingState == .recording }
+            precondition(!store.canAddHighlight && !store.addHighlight(),
+                "A camera finishing Stop must not receive Highlight despite trailing Recording status")
             precondition(recordActions() == [1], "Early Recording status must give Stop time to finish")
 
             // The Action 6 remains connected while reporting recording over Bluetooth.

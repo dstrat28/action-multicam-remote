@@ -102,7 +102,7 @@ final class WatchSessionModel: NSObject, ObservableObject {
     @Published private(set) var hasReceivedState = false
     @Published private(set) var isCommandPending = false
     @Published private(set) var pendingCommand: String?
-    @Published private(set) var canAddHighlight = false
+    @Published private var highlightAvailable = false
     @Published private(set) var statusMessage: String?
     private var expectedRecordingState: Bool?
     private var latestStateVersion: TimeInterval = 0
@@ -112,6 +112,10 @@ final class WatchSessionModel: NSObject, ObservableObject {
 
     var unavailableStatusTitle: String {
         statusMessage ?? (hasReceivedState ? "No cameras connected" : "Connecting…")
+    }
+
+    var canAddHighlight: Bool {
+        highlightAvailable && pendingCommand != "stop"
     }
 
     override init() {
@@ -138,6 +142,7 @@ final class WatchSessionModel: NSObject, ObservableObject {
     }
 
     func highlight() {
+        guard canAddHighlight else { return }
         send(command: "highlight", expectedRecordingState: nil)
     }
 
@@ -268,7 +273,7 @@ final class WatchSessionModel: NSObject, ObservableObject {
         cameras = cameraDictionaries.compactMap(WatchCamera.init(snapshot:))
         isRecording = context[Key.recording] as? Bool
             ?? cameras.contains(where: \.isRecording)
-        canAddHighlight = context[Key.highlightAvailable] as? Bool ?? false
+        highlightAvailable = context[Key.highlightAvailable] as? Bool ?? false
 
         if let pendingCommandID,
            context[Key.commandID] as? String == pendingCommandID {
