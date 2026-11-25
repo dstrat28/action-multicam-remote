@@ -26,7 +26,7 @@ xcodebuild \
   build
 ```
 
-For signed device builds, use your own Apple development team and unique bundle identifiers for all three targets. Update the Watch app's `WKCompanionAppBundleIdentifier` to match the iPhone app. You do not need access to the publisher's team.
+For signed device builds, use your own Apple development team and unique bundle identifiers for all targets. Update the Watch app's `WKCompanionAppBundleIdentifier` to match the iPhone app. Keep the Watch complication's bundle identifier prefixed with the Watch app's bundle identifier followed by a period. You do not need access to the publisher's team.
 
 After configuring signing and identifiers in Xcode, a physical-device build without CarPlay can use:
 
@@ -80,3 +80,4 @@ The repository's bundle identifiers belong to the published app and do not grant
 - `ActionCamRemote/UI`: SwiftUI app surfaces.
 - `MulticamLiveActivity`: Lock Screen and Dynamic Island Live Activity extension.
 - `MulticamWatchApp`: Apple Watch remote UI and WatchConnectivity session model.
+- `MulticamWatchComplication`: Watch face launcher for the Apple Watch app.

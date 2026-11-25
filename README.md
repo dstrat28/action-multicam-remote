@@ -10,6 +10,7 @@ Control multiple GoPro, DJI, and Insta360 action cameras over Bluetooth from you
 - Take photos, switch capture modes, and select saved GoPro presets.
 - View recording, battery, and storage status where supported.
 - Control recording from Apple Watch, CarPlay, or a Live Activity on the Lock Screen and Dynamic Island.
+- Add the Multicam complication to a watch face for quick access to the Apple Watch remote.
 - Add highlight markers to GoPro and DJI Action 4/5/6 recordings.
 - Send optional iPhone GPS telemetry to compatible DJI cameras.
 - Manage cameras and nicknames, enable larger controls, and send feedback with diagnostics from Settings.
