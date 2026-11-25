@@ -59,7 +59,7 @@ final class BLECameraScanner: NSObject {
     private lazy var centralManager = CBCentralManager(delegate: self, queue: nil)
     private var wantsScanning = false
     private var discoveryPaused = false
-    private var scansForDJIReconnect = false
+    private var watchReconnectServices: Set<CBUUID> = []
     private var peripheralsByID: [UUID: CBPeripheral] = [:]
     private var clientsByID: [UUID: any BLECameraDeviceClient] = [:]
     private var forcedReconnectOptionsByID: [UUID: [String: Any]] = [:]
@@ -94,25 +94,33 @@ final class BLECameraScanner: NSObject {
             return
         }
 
-        // iOS background discovery requires a filter for an advertised service.
+        // Filter by advertised services so Watch reconnect can scan in the background.
         centralManager.scanForPeripherals(
-            withServices: scansForDJIReconnect ? [DJIRSDKBLEUUID.service] : nil,
+            withServices: watchReconnectServices.isEmpty ? nil : Array(watchReconnectServices),
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
         )
-        onEvent?(.log(scansForDJIReconnect
-            ? "Scanning for DJI Bluetooth advertisements for Watch reconnect."
-            : "Scanning for GoPro, DJI, and Insta360 Bluetooth advertisements."))
+        onEvent?(.log(watchReconnectServices.isEmpty
+            ? "Scanning for GoPro, DJI, and Insta360 Bluetooth advertisements."
+            : "Scanning for saved cameras for Watch reconnect."))
     }
 
-    func startDJIReconnectScan() {
-        guard !wantsScanning || !scansForDJIReconnect else { return }
-        scansForDJIReconnect = true
+    func startWatchReconnectScan(for brands: Set<CameraBrand>) {
+        let services = Set(brands.compactMap { brand -> CBUUID? in
+            switch brand {
+            case .gopro: GoProBLEUUID.serviceControlAndQuery
+            case .dji: DJIRSDKBLEUUID.service
+            case .insta360: Insta360BLEUUID.directControl
+            case .unknown: nil
+            }
+        })
+        guard !services.isEmpty, !wantsScanning || watchReconnectServices != services else { return }
+        watchReconnectServices = services
         start()
     }
 
     func restoreUnfilteredScan() {
-        guard scansForDJIReconnect else { return }
-        scansForDJIReconnect = false
+        guard !watchReconnectServices.isEmpty else { return }
+        watchReconnectServices.removeAll()
         if wantsScanning {
             start()
         }

@@ -89,23 +89,29 @@ enum CameraStoreRecordingWorkRegression {
         await checkInsta360DiscoveryRecovery(name: "X3 ABC123", model: .insta360X3, shortenedName: "X3")
         await checkInsta360DiscoveryRecovery(name: "GO 3S ABC123", model: .insta360Go3S, shortenedName: "GO 3")
         await checkNewerInsta360IdentitySurvivesWeakScan()
-        await checkWatchAction6Reconnect()
+        await checkWatchCameraReconnect()
         print("Store recording-work checks passed: SDK mode preservation, quick transitions, pairing, discovery, disconnect and Watch reconnect.")
     }
 
-    private static func checkWatchAction6Reconnect() async {
+    private static func checkWatchCameraReconnect() async {
         let scanner = BLECameraScanner()
         let store = CameraStore(scanner: scanner, demoMode: true)
         store.isDemoMode = false
-        let peripheral = CBPeripheral()
-        peripheral.state = .disconnected
-        let camera = DiscoveredCamera(id: peripheral.identifier, name: "Osmo Action 6", brand: .dji,
-            model: .djiOsmoAction6, rssi: -50, capabilities: [.record, .status], connectionState: .disconnected,
-            recordingState: .unknown, isPaired: true, isSelected: false, lastSeen: .distantPast)
-        store.cameras = [camera]
+        let models: [CameraModel] = [.djiOsmoAction6, .djiOsmoAction5Pro, .goproHero13Black, .insta360X6, .insta360Go3S]
+        let peripherals = models.map { _ in
+            let peripheral = CBPeripheral()
+            peripheral.state = .disconnected
+            return peripheral
+        }
+        store.cameras = zip(models, peripherals).map { model, peripheral in
+            DiscoveredCamera(id: peripheral.identifier, name: model.rawValue, brand: model.brand,
+                model: model, rssi: -50, capabilities: [.record, .status], connectionState: .disconnected,
+                recordingState: .unknown, isPaired: true, isSelected: false, lastSeen: .distantPast)
+        }
         scanner.rememberKnownCameras(store.cameras)
         store.startScanning()
         let central = CBCentralManager.instances.last!
+        let remoteManagersBeforeRefresh = CBPeripheralManager.instances.count
 
         store.requestWatchCameraReconnect()
         precondition(central.scannedServices == nil, "Watch refresh must preserve foreground discovery")
@@ -113,26 +119,40 @@ enum CameraStoreRecordingWorkRegression {
         UIApplication.shared.applicationState = .background
         defer { UIApplication.shared.applicationState = .active }
         store.requestWatchCameraReconnect()
-        precondition(central.scannedServices == [CBUUID(string: "FFF0")], "Background discovery must filter for the Action 6 service")
+        let scanServices = ["FFF0", "FEA6", "BE80"]
+        precondition(Set(central.scannedServices ?? []) == Set(scanServices.map(CBUUID.init(string:))),
+            "Background discovery must include the services for all saved camera brands")
+        precondition(CBPeripheralManager.instances.count == remoteManagersBeforeRefresh + 1
+            && CBPeripheralManager.instances.last?.services.map(\.uuid) == [CBUUID(string: "CE80")],
+            "The saved GO 3S must use the GPS Remote peripheral service")
         let scanCount = central.scanCount
         store.requestWatchCameraReconnect()
         precondition(central.scanCount == scanCount && central.connectCount == 0,
             "Repeated refreshes must preserve the scan and wait for a fresh advertisement")
 
-        // A background advertisement may omit the local name. The known camera
-        // identifier and a connectable advertisement are sufficient to retry it.
-        scanner.centralManager(central, didDiscover: peripheral, advertisementData: [
-            CBAdvertisementDataServiceUUIDsKey: [CBUUID(string: "FFF0")],
-            CBAdvertisementDataIsConnectable: NSNumber(value: true),
-        ], rssi: -65)
-        await waitUntil("The saved Action 6 must reconnect after a fresh connectable advertisement") {
-            central.connectCount == 1
+        // Background advertisements can omit the local name. For GoPro,
+        // include the manufacturer bytes marking the camera as awake.
+        for (peripheral, service) in zip(peripherals, ["FFF0", "FFF0", "FEA6", "BE80"]) {
+            var advertisement: [String: Any] = [
+                CBAdvertisementDataServiceUUIDsKey: [CBUUID(string: service)],
+                CBAdvertisementDataIsConnectable: true,
+            ]
+            if service == "FEA6" {
+                advertisement[CBAdvertisementDataManufacturerDataKey] = Data([0x02, 0xF2, 0x00, 0x01])
+            }
+            scanner.centralManager(central, didDiscover: peripheral, advertisementData: advertisement, rssi: -65)
+        }
+        await waitUntil("Both DJI models and GoPro must attempt BLE reconnection, and X6 must reconnect through the SDK") {
+            central.connectCount == 3
+                && store.cameras.first(where: { $0.model == .insta360X6 })?.isConnected == true
         }
         precondition(store.commandResults.isEmpty, "Refreshing from the Watch must not issue a recording command")
 
-        store.disconnect(camera)
+        for camera in store.cameras {
+            store.disconnect(camera)
+        }
         await waitUntil("Manual Disconnect must settle before the next Watch refresh") {
-            store.cameras[0].connectionState == .disconnected
+            store.cameras.allSatisfy { $0.connectionState == .disconnected }
         }
         UIApplication.shared.applicationState = .active
         store.resumeCameraConnections()

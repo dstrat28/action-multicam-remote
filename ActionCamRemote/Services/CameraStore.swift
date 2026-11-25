@@ -499,16 +499,25 @@ final class CameraStore {
     }
 
     func requestWatchCameraReconnect() {
-        guard !isDemoMode,
-              UIApplication.shared.applicationState != .active,
-              pairedCameras.contains(where: {
-                  $0.isKnownAction6
-                      && $0.connectionState != .connected
-                      && $0.connectionState != .connecting
-                      && !userDisconnectedCameraIDs.contains($0.id)
-              }) else { return }
+        guard !isDemoMode, UIApplication.shared.applicationState != .active else { return }
 
-        scanner.startDJIReconnectScan()
+        let reconnectCandidates = pairedCameras.filter {
+            $0.isSupportedByApp
+                && $0.connectionState != .connected
+                && $0.connectionState != .connecting
+                && !userDisconnectedCameraIDs.contains($0.id)
+        }
+        guard !reconnectCandidates.isEmpty else { return }
+
+        var centralBrands: Set<CameraBrand> = []
+        for camera in reconnectCandidates {
+            if camera.usesInsta360GPSRemote {
+                insta360RemoteService().requestConnection(cameraID: camera.id, cameraName: camera.name)
+            } else {
+                centralBrands.insert(camera.brand)
+            }
+        }
+        scanner.startWatchReconnectScan(for: centralBrands)
         refreshCameraDiscoveryActivity()
     }
 
