@@ -93,6 +93,7 @@ final class WatchSessionModel: NSObject, ObservableObject {
         static let commandAccepted = "commandAccepted"
         static let cameras = "cameras"
         static let recording = "recording"
+        static let stopConfirmationDeadline = "stopConfirmationDeadline"
         static let highlightAvailable = "highlightAvailable"
         static let stateVersion = "stateVersion"
     }
@@ -102,17 +103,23 @@ final class WatchSessionModel: NSObject, ObservableObject {
     @Published private(set) var hasReceivedState = false
     @Published private(set) var isCommandPending = false
     @Published private(set) var pendingCommand: String?
-    @Published private(set) var canAddHighlight = false
+    @Published private var highlightAvailable = false
+    @Published private var phoneStopDeadline: Date?
     @Published private(set) var statusMessage: String?
     private var expectedRecordingState: Bool?
     private var latestStateVersion: TimeInterval = 0
     private var pendingCommandID: String?
     private var commandTimeoutTask: Task<Void, Never>?
+    private var phoneStopTimeoutTask: Task<Void, Never>?
     private var initialStateTimeoutTask: Task<Void, Never>?
 
     var unavailableStatusTitle: String {
         statusMessage ?? (hasReceivedState ? "No cameras connected" : "Connecting…")
     }
+
+    var isStopping: Bool { pendingCommand == "stop" || phoneStopDeadline != nil }
+
+    var canAddHighlight: Bool { highlightAvailable && !isStopping }
 
     override init() {
         super.init()
@@ -134,10 +141,12 @@ final class WatchSessionModel: NSObject, ObservableObject {
     }
 
     func stop() {
+        guard !isStopping else { return }
         send(command: "stop", expectedRecordingState: false)
     }
 
     func highlight() {
+        guard canAddHighlight else { return }
         send(command: "highlight", expectedRecordingState: nil)
     }
 
@@ -172,10 +181,10 @@ final class WatchSessionModel: NSObject, ObservableObject {
                 Task { @MainActor in
                     guard let self else { return }
                     self.apply(reply)
+                    guard self.pendingCommandID == commandID else { return }
                     if reply["accepted"] as? Bool != true {
                         self.finishPendingCommand(message: "Try again")
-                    } else if expectedRecordingState == nil,
-                              self.pendingCommandID == commandID {
+                    } else if expectedRecordingState == nil {
                         self.finishPendingCommand(message: nil)
                     }
                 }
@@ -206,6 +215,20 @@ final class WatchSessionModel: NSObject, ObservableObject {
         isCommandPending = false
         pendingCommand = nil
         statusMessage = message
+    }
+
+    private func updatePhoneStopDeadline(_ deadline: Date?) {
+        let activeDeadline = deadline.flatMap { $0 > Date() ? $0 : nil }
+        guard phoneStopDeadline != activeDeadline else { return }
+        phoneStopDeadline = activeDeadline
+        phoneStopTimeoutTask?.cancel()
+        phoneStopTimeoutTask = nil
+        guard let activeDeadline else { return }
+        phoneStopTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(max(0, activeDeadline.timeIntervalSinceNow)))
+            guard !Task.isCancelled else { return }
+            self?.updatePhoneStopDeadline(nil)
+        }
     }
 
     func refreshWhileActive(retryInterval: Duration = .seconds(4)) async {
@@ -268,7 +291,9 @@ final class WatchSessionModel: NSObject, ObservableObject {
         cameras = cameraDictionaries.compactMap(WatchCamera.init(snapshot:))
         isRecording = context[Key.recording] as? Bool
             ?? cameras.contains(where: \.isRecording)
-        canAddHighlight = context[Key.highlightAvailable] as? Bool ?? false
+        highlightAvailable = context[Key.highlightAvailable] as? Bool ?? false
+        let wasPhoneStopping = phoneStopDeadline != nil
+        updatePhoneStopDeadline(context[Key.stopConfirmationDeadline] as? Date)
 
         if let pendingCommandID,
            context[Key.commandID] as? String == pendingCommandID {
@@ -280,6 +305,14 @@ final class WatchSessionModel: NSObject, ObservableObject {
             if context[Key.commandAccepted] as? Bool == true,
                expectedRecordingState == nil {
                 finishPendingCommand(message: nil)
+                return
+            }
+        }
+
+        if pendingCommand == "stop" {
+            if phoneStopDeadline != nil { return }
+            if wasPhoneStopping, isRecording {
+                finishPendingCommand(message: "Try again")
                 return
             }
         }
@@ -347,9 +380,10 @@ extension WatchSessionModel: WCSessionDelegate {
         didFinish userInfoTransfer: WCSessionUserInfoTransfer,
         error: Error?
     ) {
-        guard error != nil else { return }
+        guard error != nil, let commandID = userInfoTransfer.userInfo[Key.commandID] as? String else { return }
 
         Task { @MainActor [weak self] in
+            guard self?.pendingCommandID == commandID else { return }
             self?.finishPendingCommand(message: "Try again")
         }
     }

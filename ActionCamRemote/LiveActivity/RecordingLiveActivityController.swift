@@ -1,24 +1,30 @@
 import ActivityKit
 import Foundation
+import UIKit
 
 @MainActor
 final class RecordingLiveActivityController {
     private let staleInterval: TimeInterval = 30
     private var activity: Activity<RecordingActivityAttributes>?
+    private var hasRestoredActivity = false
     private var activeCameraIDs: Set<UUID> = []
     private var isStopping = false
     private var latestCameras: [DiscoveredCamera] = []
     private var stoppingResetTask: Task<Void, Never>?
 
-    init() {
-        activity = Activity<RecordingActivityAttributes>.activities.first
-    }
-
     func reconcile(cameras: [DiscoveredCamera]) {
         latestCameras = cameras
+        let isForeground = UIApplication.shared.applicationState == .active
+        // A Watch command can wake the phone process. Defer synchronous
+        // ActivityKit calls until the phone app is active.
+        if isForeground, !hasRestoredActivity {
+            hasRestoredActivity = true
+            activity = Activity<RecordingActivityAttributes>.activities.first
+        }
         let recordingCameras = cameras.filter { $0.recordingState == .recording }
 
         if !recordingCameras.isEmpty {
+            guard activity != nil || isForeground else { return }
             activeCameraIDs.formUnion(recordingCameras.map(\.id))
             let state = contentState(cameras: cameras, recordingCameras: recordingCameras)
 

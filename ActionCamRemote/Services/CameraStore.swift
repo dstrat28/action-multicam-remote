@@ -392,6 +392,10 @@ final class CameraStore {
         stopState.isWaiting(camera.id)
     }
 
+    func stopConfirmationDeadline(for camera: DiscoveredCamera) -> Date? {
+        stopState.confirmationDeadline(for: camera.id)
+    }
+
     func isCameraStopUnconfirmed(_ camera: DiscoveredCamera) -> Bool {
         stopState.isUnconfirmed(for: camera)
     }
@@ -409,8 +413,8 @@ final class CameraStore {
     }
 
     var recordingHighlightCameras: [DiscoveredCamera] {
-        readyConnectedCameras.filter {
-            $0.supportsHighlight && $0.recordingState == .recording
+        readyConnectedCameras.filter { camera in
+            camera.supportsHighlight && camera.recordingState == .recording && !isCameraStopping(camera)
         }
     }
 
@@ -541,6 +545,7 @@ final class CameraStore {
     func resumeCameraConnections() {
         guard !isDemoMode else { return }
 
+        recordingLiveActivityController.reconcile(cameras: cameras)
         watchPeripheralProbeDeadline = nil
         scanner.restoreUnfilteredScan()
         insta360Remote?.reconcileKnownSessions()
@@ -1114,7 +1119,7 @@ final class CameraStore {
             pendingStartCameraIDs.remove(camera.id)
             cancelWakeRetry(for: camera.id)
             savedStopReconnectAttemptedIDs.remove(camera.id)
-            protectStopTransition(for: camera)
+            protectStopTransition(for: camera, isUserRequested: true)
         }
 
         send(.stopRecording, to: targets)
@@ -1226,7 +1231,7 @@ final class CameraStore {
             return
         }
 
-        protectStopTransition(for: camera)
+        protectStopTransition(for: camera, isUserRequested: true)
         send(.stopRecording, to: [camera])
     }
 
@@ -1937,8 +1942,11 @@ private extension CameraStore {
         camera.behavior.kind == .djiOsmoPocket3 ? pocket3StartStateGuardInterval : defaultStartStateGuardInterval
     }
 
-    func protectStopTransition(for camera: DiscoveredCamera) {
+    func protectStopTransition(for camera: DiscoveredCamera, isUserRequested: Bool = false) {
         beginStopping(for: camera)
+        if isUserRequested, !isDemoMode, camera.behavior.usesDJIRSDKControl {
+            stopState.prepareDJIRSDKRetry(for: camera.id)
+        }
         ignoreRecordingUntilByCameraID[camera.id] = Date().addingTimeInterval(stopStateGuardInterval(for: camera))
         ignoreStoppedUntilByCameraID.removeValue(forKey: camera.id)
     }
@@ -3169,6 +3177,7 @@ private extension CameraStore {
 
     func handleBLECommandCompletion(_ result: CameraCommandResult) {
         recordBLECommandOutcome(result)
+        stopState.acknowledgeDJIRSDKStop(result, at: ProcessInfo.processInfo.systemUptime)
         let hasUnconfirmedStop = stopState.hasIntent(result.cameraID)
         if result.command == .stopRecording, result.status != .sent, result.status != .queued {
             finishStopFeedback(for: result.cameraID, matching: result.id)
@@ -3579,6 +3588,7 @@ private extension CameraStore {
             shouldPersist = shouldPersist || cameras[index].isPaired
         }
 
+        let camera = cameras[index]
         if shouldSort {
             sortCamerasForEditing()
         }
@@ -3587,6 +3597,12 @@ private extension CameraStore {
             persistPairedCameras()
         }
 
+        if recordingStateToApply == .recording, update.replacesDJIRSDKStatus, update.powerState == .awake,
+           camera.isConnected, !camera.isInPhotoMode,
+           stopState.consumeDJIRSDKRetry(for: id, at: ProcessInfo.processInfo.systemUptime) {
+            appendLog("\(camera.name): camera still reports recording; retrying Stop on the current connection.")
+            send(.stopRecording, to: [camera])
+        }
     }
 
     func updateCamera(_ id: UUID, state: CameraConnectionState, detail: String?) {

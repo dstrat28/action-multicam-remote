@@ -8,6 +8,13 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
         case skipped
     }
 
+    private static let rSDKConnectionResponseLabel = "protocol connect response"
+
+    private enum RSDKStatusSubscription {
+        case awaitingAcknowledgement(UInt16)
+        case acknowledgementReceived
+    }
+
     private struct PendingRSDKWrite {
         var packet: Data
         var label: String
@@ -34,7 +41,7 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
     private var hasCompletedLegacyDumlHandshake = false
     private var hasReportedLegacyDumlReady = false
     private var hasReportedRSDKReady = false
-    private var hasSentRSDKStatusSubscription = false
+    private var rSDKStatusSubscription: RSDKStatusSubscription?
     private var pendingRSDKWrites: [PendingRSDKWrite] = []
     private var commandTracker = DJICommandTracker()
     private var commandDeadlineTimer: Timer?
@@ -168,7 +175,7 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
         hasCompletedLegacyDumlHandshake = false
         hasReportedLegacyDumlReady = false
         hasReportedRSDKReady = false
-        hasSentRSDKStatusSubscription = false
+        rSDKStatusSubscription = nil
         pendingRSDKWrites.removeAll()
         pendingNanoWrites.removeAll()
         isNanoWriteScheduled = false
@@ -879,7 +886,7 @@ private extension DJIExperimentalBLEClient {
 
     func sendRSDKConnectionResponse(to peripheral: CBPeripheral, sequenceNumber: UInt16, cameraReserved: UInt8) {
         let packet = DJIRSDKPacket.connectionResponse(sequenceNumber: sequenceNumber, cameraReserved: cameraReserved)
-        writeRSDK(packet, to: peripheral, label: "protocol connect response")
+        writeRSDK(packet, to: peripheral, label: Self.rSDKConnectionResponseLabel)
     }
 
     func sendRSDKStatusSubscription(to peripheral: CBPeripheral, shouldLog: Bool) {
@@ -889,8 +896,10 @@ private extension DJIExperimentalBLEClient {
         if !shouldLog {
             silentRSDKStatusSubscriptionSequences.insert(seq)
         }
-        writeRSDK(packet, to: peripheral, label: "status subscription", shouldLog: shouldLog)
-        hasSentRSDKStatusSubscription = true
+        let disposition = writeRSDK(packet, to: peripheral, label: "status subscription", shouldLog: shouldLog)
+        if disposition != .skipped {
+            rSDKStatusSubscription = .awaitingAcknowledgement(seq)
+        }
     }
 
     func sendRSDKVersionQuery(to peripheral: CBPeripheral) {
@@ -1249,6 +1258,14 @@ private extension DJIExperimentalBLEClient {
         case (0x1D, 0x05, true):
             let resultCode = frame.payload.first
             let wasSilentHeartbeat = silentRSDKStatusSubscriptionSequences.remove(frame.sequenceNumber) != nil
+            if case let .awaitingAcknowledgement(sequence)? = rSDKStatusSubscription,
+               frame.sequenceNumber == sequence, let resultCode {
+                rSDKStatusSubscription = .acknowledgementReceived
+                if resultCode == 0x00 {
+                    // Streaming is active. Drop obsolete replies ahead of capture commands.
+                    pendingRSDKWrites.removeAll { $0.label == Self.rSDKConnectionResponseLabel }
+                }
+            }
             if !wasSilentHeartbeat {
                 let resultLabel = resultCode == 0x00 ? "success" : "error \(resultCode.map { "0x\($0.hexByte)" } ?? "missing code")"
                 onLog("\(cameraName): DJI R SDK status subscription ACK \(resultLabel).")
@@ -1275,7 +1292,7 @@ private extension DJIExperimentalBLEClient {
             onLog("\(cameraName): DJI R SDK protocol handshake complete via \(source).")
         }
 
-        if !hasSentRSDKStatusSubscription {
+        if rSDKStatusSubscription == nil {
             sendRSDKStatusSubscription(to: peripheral, shouldLog: true)
         }
 
