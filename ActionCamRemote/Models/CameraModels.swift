@@ -1806,6 +1806,7 @@ struct CameraStopState {
     private struct Entry {
         var resultID: UUID?
         var expiresAt: TimeInterval
+        var confirmationDeadline: Date
         var hasSentResult = false
         var djiRSDKRetry: DJIRSDKRetry?
     }
@@ -1815,6 +1816,7 @@ struct CameraStopState {
     var hasPendingFeedback: Bool { !entries.isEmpty }
 
     func isWaiting(_ cameraID: UUID) -> Bool { entries[cameraID] != nil }
+    func confirmationDeadline(for cameraID: UUID) -> Date? { entries[cameraID]?.confirmationDeadline }
     func isUnconfirmed(_ cameraID: UUID) -> Bool { unconfirmedCameraIDs.contains(cameraID) }
     func needsReplay(_ cameraID: UUID) -> Bool { replayCameraIDs.contains(cameraID) }
     func hasIntent(_ cameraID: UUID) -> Bool {
@@ -1838,7 +1840,7 @@ struct CameraStopState {
     mutating func begin(_ cameraID: UUID, at now: TimeInterval, timeout: TimeInterval) {
         guard entries[cameraID] == nil else { return }
         unconfirmedCameraIDs.remove(cameraID)
-        entries[cameraID] = Entry(expiresAt: now + timeout)
+        entries[cameraID] = Entry(expiresAt: now + timeout, confirmationDeadline: Date().addingTimeInterval(timeout))
     }
 
     mutating func prepareDJIRSDKRetry(for cameraID: UUID) {
@@ -1872,7 +1874,9 @@ struct CameraStopState {
               let entry = entries[result.cameraID], entry.resultID == result.id, !entry.hasSentResult else { return false }
         // Bluetooth backpressure can queue Stop. Its shutter cooldown starts
         // on actual transmission, and duplicate completions cannot extend it.
-        entries[result.cameraID]?.expiresAt = now + Self.confirmationTimeout(for: camera)
+        let timeout = Self.confirmationTimeout(for: camera)
+        entries[result.cameraID]?.expiresAt = now + timeout
+        entries[result.cameraID]?.confirmationDeadline = Date().addingTimeInterval(timeout)
         entries[result.cameraID]?.hasSentResult = true
         return true
     }

@@ -12,7 +12,9 @@ final class CameraStore {
     func startWatchRecording() -> Bool { true }
     func stopWatchRecording() -> Bool { true }
     func showsRecordingStatus(for camera: DiscoveredCamera) -> Bool { stopState.showsRecordingStatus(for: camera) }
-    func isCameraStopping(_ camera: DiscoveredCamera) -> Bool { stopState.isWaiting(camera.id) }
+    func stopConfirmationDeadline(for camera: DiscoveredCamera) -> Date? {
+        stopState.confirmationDeadline(for: camera.id)
+    }
     func addHighlight() {}
 }
 
@@ -125,6 +127,8 @@ enum WatchCameraTelemetryRegression {
         precondition(WatchCamera(snapshot: oldPhone)?.storageProgress == nil)
         await checkInitialWatchConnection()
         await checkWatchScanRetryWindow()
+        await checkExpiredPhoneStop()
+        await checkQueuedCommandFailure()
         print("Watch camera checks passed: phone/Watch telemetry, legacy compatibility, and Stop progress.")
     }
 
@@ -154,7 +158,12 @@ enum WatchCameraTelemetryRegression {
         // DJI reports Unknown before a trailing Recording update and real Stopped confirmation.
         store.cameras[0].recordingState = .unknown
         store.canAddHighlight = false
-        watch.session(session, didReceiveApplicationContext: await snapshot(from: phone))
+        let pendingSnapshot = await snapshot(from: phone)
+        let stopDeadline = pendingSnapshot["stopConfirmationDeadline"] as? Date
+        precondition(stopDeadline != nil, "The phone must publish its confirmation deadline")
+        let encoded = try! PropertyListSerialization.data(fromPropertyList: pendingSnapshot, format: .binary, options: 0)
+        let received = try! PropertyListSerialization.propertyList(from: encoded, options: [], format: nil)
+        watch.session(session, didReceiveApplicationContext: received as! [String: Any])
         await waitUntil { watch.cameras.first?.isRecording == false }
         precondition(watch.isRecording && watch.isStopping && watch.pendingCommand == "stop",
             "Unknown during Stop must keep the Watch on the Stopping controls")
@@ -162,7 +171,10 @@ enum WatchCameraTelemetryRegression {
         store.cameras[0].recordingState = .recording
         // Exercise the Watch's guard even if a snapshot advertises Highlight.
         store.canAddHighlight = true
-        watch.session(session, didReceiveApplicationContext: await snapshot(from: phone))
+        let recordingSnapshot = await snapshot(from: phone)
+        precondition(recordingSnapshot["stopConfirmationDeadline"] as? Date == stopDeadline,
+            "Recording updates must leave the Stop deadline unchanged")
+        watch.session(session, didReceiveApplicationContext: recordingSnapshot)
         await waitUntil { watch.cameras.first?.isRecording == true }
         precondition(watch.pendingCommand == "stop",
             "Trailing Recording status must keep the Stop request pending")
@@ -196,6 +208,63 @@ enum WatchCameraTelemetryRegression {
         watch.session(session, didReceiveApplicationContext: rejectedStop)
         await waitUntil { watch.pendingCommand == nil }
         precondition(watch.canAddHighlight, "Highlight must return if Stop is rejected while recording")
+    }
+
+    private static func checkExpiredPhoneStop() async {
+        let session = WCSession.default
+        WCSession.supported = true
+        defer {
+            WCSession.supported = false
+            session.receivedApplicationContext = [:]
+        }
+
+        let expired = Date().addingTimeInterval(-90)
+        session.receivedApplicationContext = [
+            "recording": true, "stopping": true, "stopConfirmationDeadline": expired,
+            "stateVersion": expired.timeIntervalSinceReferenceDate,
+        ]
+        let watch = WatchSessionModel()
+        precondition(watch.hasReceivedState && watch.isRecording && !watch.isStopping,
+            "Reopening with an expired snapshot must leave Stop available")
+
+        let now = Date()
+        let pending: [String: Any] = [
+            "recording": true, "stopping": true, "stopConfirmationDeadline": now.addingTimeInterval(0.4),
+            "stateVersion": now.timeIntervalSinceReferenceDate,
+        ]
+        watch.session(session, didReceiveApplicationContext: pending)
+        await waitUntil { watch.isStopping }
+        await waitUntil { !watch.isStopping }
+        watch.session(session, didReceiveApplicationContext: pending)
+        try? await Task.sleep(for: .milliseconds(100))
+        precondition(!watch.isStopping, "A repeated snapshot must not restart an expired Stop")
+    }
+
+    private static func checkQueuedCommandFailure() async {
+        let session = WCSession.default
+        WCSession.supported = true
+        session.activationState = .activated
+        session.isReachable = false
+        session.receivedApplicationContext = ["recording": true, "highlightAvailable": true]
+        defer {
+            WCSession.supported = false
+            session.activationState = .notActivated
+            session.receivedApplicationContext = [:]
+        }
+
+        let watch = WatchSessionModel()
+        watch.highlight()
+        let highlight = session.userInfoTransfers.last!
+        watch.stop()
+        let stop = session.userInfoTransfers.last!
+        precondition(watch.isStopping && highlight !== stop)
+
+        let error = NSError(domain: "WatchConnectivity fixture", code: 1)
+        watch.session(session, didFinish: highlight, error: error)
+        try? await Task.sleep(for: .milliseconds(100))
+        precondition(watch.isStopping, "An older transfer failure must not clear the newer Stop")
+        watch.session(session, didFinish: stop, error: error)
+        await waitUntil { !watch.isStopping && watch.statusMessage == "Try again" }
     }
 
     private static func checkInitialWatchConnection() async {

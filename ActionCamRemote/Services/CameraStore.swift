@@ -392,6 +392,10 @@ final class CameraStore {
         stopState.isWaiting(camera.id)
     }
 
+    func stopConfirmationDeadline(for camera: DiscoveredCamera) -> Date? {
+        stopState.confirmationDeadline(for: camera.id)
+    }
+
     func isCameraStopUnconfirmed(_ camera: DiscoveredCamera) -> Bool {
         stopState.isUnconfirmed(for: camera)
     }

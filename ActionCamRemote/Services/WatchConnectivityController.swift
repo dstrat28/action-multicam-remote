@@ -34,6 +34,7 @@ final class WatchConnectivityController: NSObject {
         static let remainingPhotos = "remainingPhotos"
         static let recording = "recording"
         static let stopping = "stopping"
+        static let stopConfirmationDeadline = "stopConfirmationDeadline"
         static let highlightAvailable = "highlightAvailable"
         static let stateVersion = "stateVersion"
     }
@@ -149,12 +150,16 @@ final class WatchConnectivityController: NSObject {
         let recordingControlCameras = store.cameras.filter { camera in
             camera.supportsBatchRecord && store.showsRecordingStatus(for: camera)
         }
+        let stopDeadline = recordingControlCameras.compactMap { store.stopConfirmationDeadline(for: $0) }.max()
         var snapshot: [String: Any] = [
             Key.cameras: cameras,
             Key.recording: !recordingControlCameras.isEmpty,
-            Key.stopping: recordingControlCameras.contains(where: store.isCameraStopping),
+            Key.stopping: stopDeadline != nil,
             Key.highlightAvailable: store.canAddHighlight,
         ]
+        if let stopDeadline {
+            snapshot[Key.stopConfirmationDeadline] = stopDeadline
+        }
         if let lastCommandID, let lastCommandAccepted {
             snapshot[Key.commandID] = lastCommandID
             snapshot[Key.commandAccepted] = lastCommandAccepted
