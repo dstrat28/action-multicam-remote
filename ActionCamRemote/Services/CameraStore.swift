@@ -84,6 +84,7 @@ final class CameraStore {
     @ObservationIgnored private var connectionTimeoutTasksByCameraID: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var availabilityTimeoutTasksByCameraID: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var reconnectTasksByCameraID: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var stopRecoveryDisconnectIDs: Set<UUID> = []
     @ObservationIgnored private var watchNanoReconnectTasksByCameraID: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var watchPeripheralProbeDeadline: ContinuousClock.Instant?
     @ObservationIgnored private var manualPairRetryTasksByCameraID: [UUID: Task<Void, Never>] = [:]
@@ -629,6 +630,7 @@ final class CameraStore {
     }
 
     private func connect(_ requestedCamera: DiscoveredCamera, isWatchPeripheralProbe: Bool) {
+        guard !stopRecoveryDisconnectIDs.contains(requestedCamera.id) else { return }
         var camera = cameras.first(where: { $0.id == requestedCamera.id }) ?? requestedCamera
         let selection = camera.resolvedInsta360SDKSelection()
         if camera.brand == .insta360, let previous = camera.insta360UsesSDK, previous != selection {
@@ -654,7 +656,13 @@ final class CameraStore {
             return
         }
 
-        if !isWatchPeripheralProbe, let deferredDJIMessage = djiConnectionDeferralMessage(for: camera) {
+        let deferredDJIMessage = isWatchPeripheralProbe ? nil : djiConnectionDeferralMessage(for: camera)
+        let isSavedStopReconnect = deferredDJIMessage != nil
+            && camera.isPaired && camera.behavior.usesDJIRSDKControl
+            && stopState.needsReplay(camera.id)
+            && !sleepingDJICameraIDs.contains(camera.id)
+            && scanner.bluetoothState == .poweredOn && scanner.peripheral(for: camera.id) != nil
+        if let deferredDJIMessage, !isSavedStopReconnect {
             appendLog("\(camera.name): \(deferredDJIMessage)")
             setCameraDiagnostic(deferredDJIMessage, for: camera)
             clearPendingStartIfDJIUnavailable(for: camera)
@@ -821,7 +829,7 @@ final class CameraStore {
                     events.deliver { [weak self] in self?.appendLog(message) }
                 },
                 isInitialPairing: !camera.isPaired,
-                requiresAwakeRSDKStatus: isWatchPeripheralProbe,
+                requiresAwakeRSDKStatus: isWatchPeripheralProbe || isSavedStopReconnect,
                 onCommandCompleted: { [weak self] result in
                     events.deliver({ [weak self] in self?.handleBLECommandCompletion(result) },
                         onDiscard: { [weak self] in self?.recordBLECommandOutcome(result) })
@@ -877,6 +885,10 @@ final class CameraStore {
         do {
             clients[camera.id] = client
             lastConnectionAttemptByID[camera.id] = Date()
+            if stopState.needsReplay(camera.id) {
+                // Publish before queued advertisements can try the same recovery.
+                updateCamera(camera.id, state: .connecting, detail: nil)
+            }
             // The camera may still be powering on when the Watch requests the link.
             scheduleConnectionTimeout(
                 for: camera.id,
@@ -1293,6 +1305,14 @@ private extension CameraStore {
         case let .discovered(candidate):
             merge(candidate)
         case let .connectionChanged(id, state):
+            if stopRecoveryDisconnectIDs.contains(id) {
+                switch state {
+                case .disconnected, .failed, .reconnecting:
+                    stopRecoveryDisconnectIDs.remove(id)
+                default:
+                    return
+                }
+            }
             if pendingInsta360GPSFallbackIDs.contains(id) {
                 switch state {
                 case .disconnected, .failed:
@@ -1755,7 +1775,8 @@ private extension CameraStore {
         currentAdvertisementAwake: Bool? = nil,
         hadExplicitNanoWakeIntent: Bool = false
     ) -> Bool {
-        guard !userDisconnectedCameraIDs.contains(camera.id) else { return false }
+        guard !userDisconnectedCameraIDs.contains(camera.id),
+              !stopRecoveryDisconnectIDs.contains(camera.id) else { return false }
 
         if camera.brand == .insta360 {
             let hasQueuedCommand = pendingStartCameraIDs.contains(camera.id)
@@ -3142,11 +3163,13 @@ private extension CameraStore {
         setCameraDiagnostic(result.message, for: camera)
         if action == .reconnectToStop, !isDemoMode {
             queueStopRecording(for: camera, reason: result.message)
-            // Close the stalled link so the existing protocol-ready path can
-            // issue a fresh Stop after reconnect. The transport never replays it.
-            scanner.disconnect(from: camera.id)
-            clients[camera.id] = nil
-            updateCamera(camera.id, state: .disconnected, detail: result.message)
+            // A transport failure can arrive before its disconnect callback.
+            // Close a stalled link once and let the callback release recovery.
+            if scanner.peripheral(for: camera.id)?.state == .connected,
+               stopRecoveryDisconnectIDs.insert(camera.id).inserted {
+                updateCamera(camera.id, state: .reconnecting, detail: nil)
+                scanner.disconnect(from: camera.id)
+            }
         }
     }
 

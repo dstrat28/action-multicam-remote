@@ -95,6 +95,7 @@ enum CameraStoreRecordingWorkRegression {
         await checkWatchRescanAfterConnectionFailure()
         await checkWatchRescanAfterSleepingGoPro()
         await checkWatchNanoReconnect()
+        await checkDJIStopRecoveryAfterMissingAcknowledgement()
         print("Store recording-work checks passed: SDK mode preservation, quick transitions, pairing, discovery, disconnect and Watch reconnect.")
     }
 
@@ -384,6 +385,105 @@ enum CameraStoreRecordingWorkRegression {
         store.requestWatchCameraReconnect(now: openedAt.addingTimeInterval(8), scanRetry: true)
         precondition(central.scanCount == firstScanCount + 1 && central.connectCount == 1,
             "A scan retry must leave an in-progress GoPro connection alone")
+    }
+
+    private static func checkDJIStopRecoveryAfterMissingAcknowledgement() async {
+        let scanner = BLECameraScanner()
+        let store = CameraStore(scanner: scanner, demoMode: true)
+        store.isDemoMode = false
+        let peripheral = CBPeripheral()
+        peripheral.state = .disconnected
+        let camera = DiscoveredCamera(id: peripheral.identifier, name: "Osmo Action 4", brand: .dji,
+            model: .djiOsmoAction4, rssi: -50, capabilities: [.record, .status], connectionState: .disconnected,
+            recordingState: .unknown, isPaired: true, isSelected: false, lastSeen: .distantPast)
+        store.cameras = [camera]
+        scanner.rememberKnownCameras(store.cameras)
+        store.startScanning()
+        let central = CBCentralManager.instances.last!
+        central.rememberedPeripherals = [peripheral]
+        UIApplication.shared.applicationState = .background
+        defer { UIApplication.shared.applicationState = .active }
+
+        let notify = CBCharacteristic(uuid: DJIRSDKBLEUUID.notifyCharacteristic, properties: [.notify])
+        let writer = CBCharacteristic(uuid: DJIRSDKBLEUUID.writeCharacteristic, properties: [.writeWithoutResponse])
+        let service = CBService(uuid: DJIRSDKBLEUUID.service, characteristics: [notify, writer])
+        peripheral.services = [service]
+
+        // Synthetic R SDK frames with valid checksums.
+        let verification = "aa 33 00 02 00 00 00 00 01 00 98 2f 00 19 00 00 ff 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 00 00 00 f9 f6 0e 5b"
+        func openLink() -> DJIExperimentalBLEClient {
+            peripheral.state = .connected
+            scanner.centralManager(central, didConnect: peripheral)
+            let client = peripheral.delegate as! DJIExperimentalBLEClient
+            client.peripheral(peripheral, didDiscoverCharacteristicsFor: service, error: nil)
+            notify.value = Data(verification.split(separator: " ").map { UInt8($0, radix: 16)! })
+            client.peripheral(peripheral, didUpdateValueFor: notify, error: nil)
+            return client
+        }
+        func status(recording: Bool, power: UInt8, checksum: [UInt8], on client: DJIExperimentalBLEClient) {
+            var payload = Data(repeating: 0, count: 38)
+            payload[0] = 1
+            payload[1] = recording ? 3 : 1
+            payload[28] = power
+            notify.value = Data([0xAA, 0x38, 0, 0, 0, 0, 0, 0, 1, 0, 0xC8, 0xDF, 0x1D, 0x02])
+                + payload + Data(checksum)
+            client.peripheral(peripheral, didUpdateValueFor: notify, error: nil)
+        }
+        func advertise() {
+            for _ in 0..<12 {
+                scanner.centralManager(central, didDiscover: peripheral, advertisementData: [
+                    CBAdvertisementDataServiceUUIDsKey: [DJIRSDKBLEUUID.service],
+                    CBAdvertisementDataIsConnectable: true,
+                ], rssi: -50)
+            }
+        }
+        func recordActions() -> [UInt8] {
+            peripheral.writes.compactMap { entry in
+                let frame = entry.data
+                guard frame.count >= 19, frame[12] == 0x1D, frame[13] == 0x03 else { return nil }
+                return frame[18]
+            }
+        }
+
+        store.requestWatchCameraReconnect()
+        precondition(central.connectCount == 1)
+        let firstClient = openLink()
+        status(recording: true, power: 0, checksum: [0x46, 0xE4, 0xE5, 0x1B], on: firstClient)
+        await waitUntil("The Action 4 must be connected and recording") {
+            store.cameras[0].isConnected && store.cameras[0].recordingState == .recording
+        }
+        store.stopRecording(store.cameras[0])
+        precondition(recordActions() == [1], "The original Stop must be sent once")
+        await waitUntil("An unacknowledged Stop should close the stalled BLE link") {
+            central.disconnectCount == 1 && store.cameras[0].connectionState == .reconnecting
+        }
+        peripheral.state = .disconnecting
+        advertise()
+        await waitUntil("Advertisements must be processed during link teardown") {
+            store.cameras[0].lastConnectableSeen != nil
+        }
+        precondition(central.connectCount == 1 && peripheral.delegate === firstClient,
+            "Discovery must not replace the client before Bluetooth reports the disconnect")
+
+        // The next connection must also work when the phone sees no fresh advertisement.
+        store.cameras[0].lastConnectableSeen = nil
+        peripheral.state = .disconnected
+        scanner.centralManager(central, didDisconnectPeripheral: peripheral, error: nil)
+        await waitUntil("The queued Stop must reconnect through the saved R SDK peripheral") {
+            central.connectCount == 2 && store.cameras[0].connectionState == .connecting
+        }
+        precondition(recordActions() == [1], "A BLE connection attempt must not send Stop")
+        let retryClient = openLink()
+        status(recording: true, power: 255, checksum: [0x52, 0x33, 0xA2, 0xFA], on: retryClient)
+        await waitUntil("The reconnect must process the unknown power status") {
+            store.cameras[0].recordingState == .recording
+        }
+        precondition(!store.cameras[0].isConnected && recordActions() == [1])
+        status(recording: true, power: 0, checksum: [0x46, 0xE4, 0xE5, 0x1B], on: retryClient)
+        await waitUntil("The awake control session must send the queued Stop once") { recordActions() == [1, 1] }
+        status(recording: false, power: 0, checksum: [0x39, 0xCC, 0x74, 0xC1], on: retryClient)
+        await waitUntil("Camera status must confirm Stop") { store.cameras[0].recordingState == .stopped }
+        precondition(central.connectCount == 2 && recordActions() == [1, 1])
     }
 
     private static func checkWatchNanoReconnect() async {
