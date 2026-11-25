@@ -1,6 +1,7 @@
 import CoreBluetooth
 import Foundation
 import INSCameraServiceSDK
+import UIKit
 
 @main
 @MainActor
@@ -88,7 +89,377 @@ enum CameraStoreRecordingWorkRegression {
         await checkInsta360DiscoveryRecovery(name: "X3 ABC123", model: .insta360X3, shortenedName: "X3")
         await checkInsta360DiscoveryRecovery(name: "GO 3S ABC123", model: .insta360Go3S, shortenedName: "GO 3")
         await checkNewerInsta360IdentitySurvivesWeakScan()
-        print("Store recording-work checks passed: SDK mode preservation, quick transitions, pairing, discovery and disconnect.")
+        await checkWatchCameraReconnect()
+        await checkWatchReconnectWithSavedPeripherals()
+        await checkWatchReconnectAfterDJISleep()
+        await checkWatchRescanAfterConnectionFailure()
+        await checkWatchRescanAfterSleepingGoPro()
+        await checkWatchNanoReconnect()
+        print("Store recording-work checks passed: SDK mode preservation, quick transitions, pairing, discovery, disconnect and Watch reconnect.")
+    }
+
+    private static func checkWatchCameraReconnect() async {
+        let scanner = BLECameraScanner()
+        let store = CameraStore(scanner: scanner, demoMode: true)
+        store.isDemoMode = false
+        let models: [CameraModel] = [.djiOsmoAction6, .djiOsmoAction5Pro, .goproHero13Black, .insta360X6, .insta360Go3S]
+        let peripherals = models.map { _ in
+            let peripheral = CBPeripheral()
+            peripheral.state = .disconnected
+            return peripheral
+        }
+        store.cameras = zip(models, peripherals).map { model, peripheral in
+            DiscoveredCamera(id: peripheral.identifier, name: model.rawValue, brand: model.brand,
+                model: model, rssi: -50, capabilities: [.record, .status], connectionState: .disconnected,
+                recordingState: .unknown, isPaired: true, isSelected: false, lastSeen: .distantPast)
+        }
+        scanner.rememberKnownCameras(store.cameras)
+        store.startScanning()
+        let central = CBCentralManager.instances.last!
+        let remoteManagersBeforeRefresh = CBPeripheralManager.instances.count
+
+        store.requestWatchCameraReconnect()
+        precondition(central.scannedServices == nil, "Watch refresh must preserve foreground discovery")
+
+        UIApplication.shared.applicationState = .background
+        defer { UIApplication.shared.applicationState = .active }
+        store.requestWatchCameraReconnect()
+        let scanServices = ["FFF0", "FEA6", "BE80"]
+        precondition(Set(central.scannedServices ?? []) == Set(scanServices.map(CBUUID.init(string:))),
+            "Background discovery must include the services for all saved camera brands")
+        precondition(CBPeripheralManager.instances.count == remoteManagersBeforeRefresh + 1
+            && CBPeripheralManager.instances.last?.services.map(\.uuid) == [CBUUID(string: "CE80")],
+            "The saved GO 3S must use the GPS Remote peripheral service")
+        let scanCount = central.scanCount
+        store.requestWatchCameraReconnect()
+        precondition(central.scanCount == scanCount && central.connectCount == 0,
+            "Repeated refreshes must preserve the scan and wait for a fresh advertisement")
+
+        // Background advertisements can omit the local name. For GoPro,
+        // include the manufacturer bytes marking the camera as awake.
+        for (peripheral, service) in zip(peripherals, ["FFF0", "FFF0", "FEA6", "BE80"]) {
+            var advertisement: [String: Any] = [
+                CBAdvertisementDataServiceUUIDsKey: [CBUUID(string: service)],
+                CBAdvertisementDataIsConnectable: true,
+            ]
+            if service == "FEA6" {
+                advertisement[CBAdvertisementDataManufacturerDataKey] = Data([0x02, 0xF2, 0x00, 0x01])
+            }
+            scanner.centralManager(central, didDiscover: peripheral, advertisementData: advertisement, rssi: -65)
+        }
+        await waitUntil("Both DJI models and GoPro must attempt BLE reconnection, and X6 must reconnect through the SDK") {
+            central.connectCount == 3
+                && store.cameras.first(where: { $0.model == .insta360X6 })?.isConnected == true
+        }
+        precondition(store.commandResults.isEmpty, "Refreshing from the Watch must not issue a recording command")
+
+        for camera in store.cameras {
+            store.disconnect(camera)
+        }
+        await waitUntil("Manual Disconnect must settle before the next Watch refresh") {
+            store.cameras.allSatisfy { $0.connectionState == .disconnected }
+        }
+        UIApplication.shared.applicationState = .active
+        store.resumeCameraConnections()
+        precondition(central.scannedServices == nil, "Foreground recovery must restore unfiltered discovery")
+        UIApplication.shared.applicationState = .background
+        store.requestWatchCameraReconnect()
+        precondition(central.scannedServices == nil, "Watch refresh must respect manual Disconnect")
+    }
+
+    private static func checkWatchRescanAfterConnectionFailure() async {
+        let scanner = BLECameraScanner()
+        let store = CameraStore(scanner: scanner, demoMode: true)
+        store.isDemoMode = false
+        UIApplication.shared.applicationState = .background
+        defer { UIApplication.shared.applicationState = .active }
+
+        let peripheral = CBPeripheral()
+        peripheral.state = .disconnected
+        store.cameras = [
+            DiscoveredCamera(id: peripheral.identifier, name: "Osmo Action 6", brand: .dji, model: .djiOsmoAction6,
+                rssi: -55, capabilities: [.record, .status], connectionState: .disconnected, recordingState: .unknown,
+                isPaired: true, isSelected: false, lastSeen: .distantPast)
+        ]
+        scanner.rememberKnownCameras(store.cameras)
+        store.requestWatchCameraReconnect()
+        let central = CBCentralManager.instances.last!
+        let scanCount = central.scanCount
+        let stopCount = central.stopCount
+        scanner.centralManager(central, didDiscover: peripheral, advertisementData: [
+            CBAdvertisementDataServiceUUIDsKey: [CBUUID(string: "FFF0")],
+            CBAdvertisementDataIsConnectable: true,
+        ], rssi: -65)
+        await waitUntil("The first background discovery must attempt to connect") { central.connectCount == 1 }
+        scanner.centralManager(central, didFailToConnect: peripheral, error: nil)
+        await waitUntil("The failed passive connection must release its client") { peripheral.delegate == nil }
+
+        let failedAt = Date()
+        store.requestWatchCameraReconnect(now: failedAt.addingTimeInterval(4))
+        precondition(central.scanCount == scanCount && central.stopCount == stopCount,
+            "Reopening during the connection cooldown must not consume another background discovery")
+        let reopenedAt = failedAt.addingTimeInterval(13)
+        store.requestWatchCameraReconnect(now: reopenedAt)
+        precondition(central.scanCount == scanCount + 1 && central.stopCount == stopCount + 1,
+            "Reopening after cooldown must restart discovery even with the same Bluetooth service")
+        store.requestWatchCameraReconnect(now: reopenedAt.addingTimeInterval(0.1))
+        precondition(central.scanCount == scanCount + 1 && central.connectCount == 2,
+            "Reopening after cooldown can retry the remembered link; a duplicate refresh must not retry it")
+    }
+
+    private static func checkWatchReconnectWithSavedPeripherals() async {
+        let scanner = BLECameraScanner()
+        let store = CameraStore(scanner: scanner, demoMode: true)
+        store.isDemoMode = false
+        let models: [CameraModel] = [.djiOsmoAction6, .djiOsmoAction5Pro, .djiOsmoNano, .goproHero13Black]
+        let peripherals = models.map { _ in
+            let peripheral = CBPeripheral()
+            peripheral.state = .disconnected
+            return peripheral
+        }
+        store.cameras = zip(models, peripherals).map { model, peripheral in
+            DiscoveredCamera(id: peripheral.identifier, name: model.rawValue, brand: model.brand,
+                model: model, rssi: -50, capabilities: [.record, .status], connectionState: .disconnected,
+                recordingState: .unknown, isPaired: true, isSelected: false, lastSeen: .distantPast)
+        }
+
+        store.startScanning()
+        let central = CBCentralManager.instances.last!
+        central.rememberedPeripherals = peripherals
+        store.requestWatchCameraReconnect()
+        precondition(central.connectCount == 0, "Foreground reconnect still requires discovery")
+
+        UIApplication.shared.applicationState = .background
+        defer { UIApplication.shared.applicationState = .active }
+        central.state = .unknown
+        store.requestWatchCameraReconnect(scanRetry: true)
+        central.state = .poweredOn
+        scanner.centralManagerDidUpdateState(central)
+        await waitUntil("Bluetooth must start the requested scan") { store.bluetoothStateLabel == "Powered On" }
+        precondition(central.connectCount == 0, "Starting Bluetooth for a scan retry must not start a direct probe")
+
+        central.state = .unknown
+        store.requestWatchCameraReconnect()
+        precondition(central.connectCount == 0, "The Watch can request reconnect before Bluetooth is ready")
+
+        central.state = .poweredOn
+        scanner.centralManagerDidUpdateState(central)
+        await waitUntil("Watch reconnect must try the saved R SDK links without advertisements") {
+            central.connectCount == 2
+        }
+        precondition(Set(central.connectionRequests) == Set(peripherals.prefix(2).map(\.identifier)),
+            "GoPro and Nano must still wait for an advertisement")
+        store.requestWatchCameraReconnect()
+        precondition(central.connectCount == 2, "A repeated refresh must keep the pending probes")
+        precondition(store.cameras.allSatisfy { $0.connectionState == .disconnected },
+            "A BLE connection attempt must stay invisible until the camera protocol confirms readiness")
+        precondition(store.commandResults.isEmpty, "Refreshing from the Watch must not issue a recording command")
+    }
+
+    private static func checkWatchReconnectAfterDJISleep() async {
+        let scanner = BLECameraScanner()
+        let store = CameraStore(scanner: scanner, demoMode: true)
+        store.isDemoMode = false
+        let peripheral = CBPeripheral()
+        peripheral.state = .disconnected
+        store.cameras = [
+            DiscoveredCamera(id: peripheral.identifier, name: "Osmo Action 6", brand: .dji, model: .djiOsmoAction6,
+                rssi: -55, capabilities: [.record, .status], connectionState: .disconnected, recordingState: .unknown,
+                isPaired: true, isSelected: false, lastSeen: .distantPast)
+        ]
+        scanner.rememberKnownCameras(store.cameras)
+        store.startScanning()
+        let central = CBCentralManager.instances.last!
+        central.rememberedPeripherals = [peripheral]
+        UIApplication.shared.applicationState = .background
+        defer { UIApplication.shared.applicationState = .active }
+
+        let notify = CBCharacteristic(uuid: DJIRSDKBLEUUID.notifyCharacteristic, properties: [.notify])
+        peripheral.services = [CBService(uuid: DJIRSDKBLEUUID.service, characteristics: [notify])]
+        func connectAndGetClient() -> DJIExperimentalBLEClient {
+            peripheral.state = .connected
+            scanner.centralManager(central, didConnect: peripheral)
+            return peripheral.delegate as! DJIExperimentalBLEClient
+        }
+        func status(_ powerMode: UInt8, checksum: [UInt8], on client: DJIExperimentalBLEClient) {
+            // A synthetic R SDK status push with a fixed header and known CRCs.
+            let header = Data([0xAA, 0x38, 0, 0, 0, 0, 0, 0, 1, 0, 0xC8, 0xDF, 0x1D, 0x02])
+            var payload = Data(repeating: 0, count: 38)
+            payload[28] = powerMode
+            notify.value = header + payload + Data(checksum)
+            client.peripheral(peripheral, didUpdateValueFor: notify, error: nil)
+        }
+
+        store.requestWatchCameraReconnect()
+        precondition(central.connectCount == 1)
+        let firstClient = peripheral.delegate as! DJIExperimentalBLEClient
+        peripheral.state = .connecting
+
+        // Foreground resume clears the retry cooldown while the Watch probe is pending.
+        UIApplication.shared.applicationState = .active
+        store.resumeCameraConnections()
+        scanner.centralManager(central, didDiscover: peripheral, advertisementData: [
+            CBAdvertisementDataServiceUUIDsKey: [DJIRSDKBLEUUID.service],
+            CBAdvertisementDataIsConnectable: true,
+        ], rssi: -55)
+        await waitUntil("The late advertisement must reach the store") { store.cameras[0].lastConnectableSeen != nil }
+        precondition(central.connectCount == 1 && peripheral.delegate === firstClient,
+            "Discovery must keep the original Watch probe after the cooldown is cleared")
+        store.resumeCameraConnections()
+        precondition(central.connectCount == 1 && peripheral.delegate === firstClient,
+            "Remembered-camera reconnect must also keep the original Watch probe")
+        UIApplication.shared.applicationState = .background
+
+        _ = connectAndGetClient()
+        store.cameras[0].lastSeen = .distantPast
+        status(255, checksum: [0xD0, 0xF1, 0x4B, 0x2D], on: firstClient)
+        await waitUntil("The original probe must receive the unknown power status") {
+            store.cameras[0].lastSeen > .distantPast
+        }
+        precondition(store.readyConnectedCameras.isEmpty, "Unknown power is not evidence that the camera is awake")
+        status(0, checksum: [0xC4, 0x26, 0x0C, 0xCC], on: firstClient)
+        await waitUntil("The first Watch connection must report the awake camera") { store.cameras[0].isConnected }
+        status(3, checksum: [0xC7, 0x9D, 0x3B, 0x27], on: firstClient)
+        await waitUntil("The sleeping camera must disconnect") {
+            store.cameras[0].connectionState == .disconnected && central.disconnectCount == 1
+        }
+        peripheral.state = .disconnected
+        scanner.centralManager(central, didDisconnectPeripheral: peripheral, error: nil)
+        await waitUntil("The transport disconnect must reach the store") {
+            store.eventLog.contains { $0.hasSuffix("BLE disconnected.") }
+        }
+
+        let sleptAt = Date()
+        store.requestWatchCameraReconnect(now: sleptAt.addingTimeInterval(4))
+        precondition(central.connectCount == 1, "A Watch reopen must respect the sleep cooldown")
+        store.requestWatchCameraReconnect(now: sleptAt.addingTimeInterval(13), scanRetry: true)
+        precondition(central.connectCount == 1, "An automatic scan retry must not probe a sleeping camera")
+        store.requestWatchCameraReconnect(now: sleptAt.addingTimeInterval(14))
+        precondition(central.connectCount == 2,
+            "A later Watch open must try the saved device after sleep without needing an advertisement")
+        store.requestWatchCameraReconnect(now: sleptAt.addingTimeInterval(15))
+        precondition(central.connectCount == 2, "Duplicate refresh must not start another probe")
+
+        let retryClient = connectAndGetClient()
+        status(0, checksum: [0xC4, 0x26, 0x0C, 0xCC], on: retryClient)
+        await waitUntil("The second Watch connection must wait for awake status") { store.cameras[0].isConnected }
+        precondition(store.commandResults.isEmpty, "The reconnect must issue no recording command")
+    }
+
+    private static func checkWatchRescanAfterSleepingGoPro() async {
+        let scanner = BLECameraScanner()
+        let store = CameraStore(scanner: scanner, demoMode: true)
+        store.isDemoMode = false
+        let peripheral = CBPeripheral()
+        peripheral.state = .disconnected
+        store.cameras = [
+            DiscoveredCamera(id: peripheral.identifier, name: "GoPro HERO13 Black", brand: .gopro,
+                model: .goproHero13Black, rssi: -55, capabilities: [.record, .status],
+                connectionState: .disconnected, recordingState: .unknown, isPaired: true,
+                isSelected: false, lastSeen: .distantPast)
+        ]
+        scanner.rememberKnownCameras(store.cameras)
+        UIApplication.shared.applicationState = .background
+        defer { UIApplication.shared.applicationState = .active }
+        let openedAt = Date()
+        store.requestWatchCameraReconnect(now: openedAt)
+        let central = CBCentralManager.instances.last!
+        let firstScanCount = central.scanCount
+
+        func discover(awake: Bool) {
+            scanner.centralManager(central, didDiscover: peripheral, advertisementData: [
+                CBAdvertisementDataServiceUUIDsKey: [GoProBLEUUID.serviceControlAndQuery],
+                CBAdvertisementDataIsConnectable: true,
+                CBAdvertisementDataManufacturerDataKey: Data([0x02, 0xF2, 0, awake ? 1 : 0]),
+            ], rssi: -55)
+        }
+        discover(awake: false)
+        await waitUntil("The first scan reports the GoPro is asleep") { store.cameras[0].advertisementAwake == false }
+        precondition(central.connectCount == 0, "A Watch refresh must never wake a sleeping GoPro")
+
+        store.requestWatchCameraReconnect(now: openedAt.addingTimeInterval(4), scanRetry: true)
+        precondition(central.scanCount == firstScanCount + 1 && central.connectCount == 0)
+        discover(awake: true)
+        await waitUntil("The new scan must connect when the GoPro advertises awake") { central.connectCount == 1 }
+        store.requestWatchCameraReconnect(now: openedAt.addingTimeInterval(8), scanRetry: true)
+        precondition(central.scanCount == firstScanCount + 1 && central.connectCount == 1,
+            "A scan retry must leave an in-progress GoPro connection alone")
+    }
+
+    private static func checkWatchNanoReconnect() async {
+        let scanner = BLECameraScanner()
+        let store = CameraStore(scanner: scanner, demoMode: true)
+        store.isDemoMode = false
+        UIApplication.shared.applicationState = .background
+        defer { UIApplication.shared.applicationState = .active }
+
+        func savedCamera(_ model: CameraModel, id: UUID = UUID()) -> DiscoveredCamera {
+            DiscoveredCamera(id: id, name: model.rawValue, brand: model.brand, model: model,
+                rssi: -55, capabilities: [.record, .status], connectionState: .disconnected,
+                recordingState: .unknown, isPaired: true, isSelected: false, lastSeen: .distantPast)
+        }
+
+        var recordingNano = savedCamera(.djiOsmoNano)
+        recordingNano.connectionState = .connected
+        recordingNano.recordingState = .recording
+        store.cameras = [recordingNano, savedCamera(.goproHero13Black)]
+        store.startScanning()
+        store.requestWatchCameraReconnect()
+        let central = CBCentralManager.instances.last!
+        precondition(Set(central.scannedServices?.map(\.uuidString) ?? []) == ["FEA6", "FFF0"],
+            "The Watch scan must retain the connected Nano’s sleep advertisements during GoPro reconnect")
+
+        let awakeNano = CBPeripheral()
+        let sleepingNano = CBPeripheral()
+        let disconnectedNano = CBPeripheral()
+        for peripheral in [awakeNano, sleepingNano, disconnectedNano] {
+            peripheral.state = .disconnected
+            store.cameras.append(savedCamera(.djiOsmoNano, id: peripheral.identifier))
+        }
+        scanner.rememberKnownCameras(store.cameras)
+        func discover(_ peripheral: CBPeripheral, awake: Bool) {
+            scanner.centralManager(central, didDiscover: peripheral, advertisementData: [
+                CBAdvertisementDataServiceUUIDsKey: [CBUUID(string: "FFF0")],
+                CBAdvertisementDataIsConnectable: true,
+                CBAdvertisementDataManufacturerDataKey: Data([0xAA, 0x08, 0x19, 0, 0xFA, 0, 0, 0, 0, 0, 0, awake ? 0x02 : 0x03]),
+            ], rssi: -65)
+        }
+        discover(awakeNano, awake: true)
+        discover(sleepingNano, awake: true)
+        discover(disconnectedNano, awake: true)
+        await waitUntil("All three awake advertisements must reach the store before cancellation") {
+            store.cameras.filter { $0.advertisementAwake == true }.count == 3
+        }
+        precondition(central.connectCount == 0, "Nano must still wait for the awake settle time")
+        discover(sleepingNano, awake: false)
+        store.disconnect(savedCamera(.djiOsmoNano, id: disconnectedNano.identifier))
+
+        await waitUntil("One awake advertisement must be enough to attempt a background Nano link") {
+            central.connectCount == 1
+        }
+        precondition(sleepingNano.delegate == nil && disconnectedNano.delegate == nil)
+        precondition(!store.readyConnectedCameras.contains { $0.id == awakeNano.identifier },
+            "The passive link must wait for the Nano protocol to confirm readiness")
+
+        awakeNano.state = .connected
+        scanner.centralManager(central, didConnect: awakeNano)
+        let client = awakeNano.delegate as! DJIExperimentalBLEClient
+        let notify = CBCharacteristic(uuid: CBUUID(string: "FFF4"), properties: [.notify])
+        let writer = CBCharacteristic(uuid: CBUUID(string: "FFF5"), properties: [.writeWithoutResponse])
+        let service = CBService(uuid: CBUUID(string: "FFF0"), characteristics: [notify, writer])
+        client.peripheral(awakeNano, didDiscoverCharacteristicsFor: service, error: nil)
+        var payload = Data(repeating: 0, count: 60)
+        payload[0] = 0x40
+        payload[4] = 1
+        payload[57] = 1
+        notify.value = DJINanoProtocol.frame(sequenceNumber: 100, source: 1, destination: 2,
+            flags: 0, commandSet: 2, commandID: 0x80, payload: payload)
+        client.peripheral(awakeNano, didUpdateValueFor: notify, error: nil)
+        await waitUntil("One advertisement plus real Nano protocol status must expose a ready camera") {
+            store.readyConnectedCameras.contains { $0.id == awakeNano.identifier }
+        }
+        precondition(store.cameras.first(where: { $0.id == recordingNano.id })?.recordingState == .recording)
+        precondition(store.commandResults.isEmpty, "A Watch reconnect must issue no recording command")
     }
 
     private static func checkInsta360DiscoveryRecovery(name: String, model: CameraModel, shortenedName: String) async {

@@ -1,6 +1,12 @@
 import CoreBluetooth
 import Foundation
 
+enum DJIRSDKBLEUUID {
+    static let service = CBUUID(string: "FFF0")
+    static let notifyCharacteristic = CBUUID(string: "FFF4")
+    static let writeCharacteristic = CBUUID(string: "FFF5")
+}
+
 protocol BLECameraDeviceClient: AnyObject, CBPeripheralDelegate {
     var cameraID: UUID { get }
     var cameraName: String { get }

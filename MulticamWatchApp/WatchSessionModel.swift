@@ -88,6 +88,7 @@ struct WatchCamera: Identifiable, Equatable {
 final class WatchSessionModel: NSObject, ObservableObject {
     private enum Key {
         static let command = "command"
+        static let scanRetry = "scanRetry"
         static let commandID = "commandID"
         static let commandAccepted = "commandAccepted"
         static let cameras = "cameras"
@@ -107,6 +108,11 @@ final class WatchSessionModel: NSObject, ObservableObject {
     private var latestStateVersion: TimeInterval = 0
     private var pendingCommandID: String?
     private var commandTimeoutTask: Task<Void, Never>?
+    private var initialStateTimeoutTask: Task<Void, Never>?
+
+    var unavailableStatusTitle: String {
+        statusMessage ?? (hasReceivedState ? "No cameras connected" : "Connecting…")
+    }
 
     override init() {
         super.init()
@@ -120,6 +126,7 @@ final class WatchSessionModel: NSObject, ObservableObject {
         session.delegate = self
         session.activate()
         apply(session.receivedApplicationContext)
+        waitForInitialStateIfNeeded()
     }
 
     func record() {
@@ -201,12 +208,25 @@ final class WatchSessionModel: NSObject, ObservableObject {
         statusMessage = message
     }
 
-    private func requestLatestState() {
+    func refreshWhileActive(retryInterval: Duration = .seconds(4)) async {
+        guard !Task.isCancelled else { return }
+        requestLatestState()
+        // The first background scan may find a camera while it is still asleep.
+        for _ in 0..<3 {
+            do { try await Task.sleep(for: retryInterval) } catch { return }
+            guard !Task.isCancelled else { return }
+            requestLatestState(scanRetry: true)
+        }
+    }
+
+    func requestLatestState(scanRetry: Bool = false) {
+        guard WCSession.isSupported() else { return }
+        waitForInitialStateIfNeeded()
         let session = WCSession.default
         guard session.activationState == .activated, session.isReachable else { return }
 
         session.sendMessage(
-            [Key.command: "refresh"],
+            [Key.command: "refresh", Key.scanRetry: scanRetry],
             replyHandler: { [weak self] reply in
                 Task { @MainActor in
                     self?.apply(reply)
@@ -214,6 +234,23 @@ final class WatchSessionModel: NSObject, ObservableObject {
             },
             errorHandler: nil
         )
+    }
+
+    private func waitForInitialStateIfNeeded() {
+        guard !hasReceivedState, initialStateTimeoutTask == nil else { return }
+        statusMessage = nil
+        initialStateTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(8))
+            guard !Task.isCancelled else { return }
+            self?.reportInitialStateFailure()
+        }
+    }
+
+    private func reportInitialStateFailure() {
+        guard !hasReceivedState else { return }
+        initialStateTimeoutTask?.cancel()
+        initialStateTimeoutTask = nil
+        statusMessage = "Open iPhone app"
     }
 
     private func apply(_ context: [String: Any]) {
@@ -224,6 +261,8 @@ final class WatchSessionModel: NSObject, ObservableObject {
             latestStateVersion = stateVersion
         }
 
+        initialStateTimeoutTask?.cancel()
+        initialStateTimeoutTask = nil
         hasReceivedState = true
         let cameraDictionaries = context[Key.cameras] as? [[String: Any]] ?? []
         cameras = cameraDictionaries.compactMap(WatchCamera.init(snapshot:))
@@ -260,11 +299,12 @@ extension WatchSessionModel: WCSessionDelegate {
         error: Error?
     ) {
         Task { @MainActor [weak self] in
-            if error != nil {
-                self?.statusMessage = "Open iPhone app"
-            }
             self?.apply(session.receivedApplicationContext)
-            self?.requestLatestState()
+            if error == nil {
+                self?.requestLatestState()
+            } else {
+                self?.reportInitialStateFailure()
+            }
         }
     }
 
