@@ -267,6 +267,7 @@ enum CameraStoreRecordingWorkRegression {
                 rssi: -55, capabilities: [.record, .status], connectionState: .disconnected, recordingState: .unknown,
                 isPaired: true, isSelected: false, lastSeen: .distantPast)
         ]
+        scanner.rememberKnownCameras(store.cameras)
         store.startScanning()
         let central = CBCentralManager.instances.last!
         central.rememberedPeripherals = [peripheral]
@@ -291,7 +292,31 @@ enum CameraStoreRecordingWorkRegression {
 
         store.requestWatchCameraReconnect()
         precondition(central.connectCount == 1)
-        let firstClient = connectAndGetClient()
+        let firstClient = peripheral.delegate as! DJIExperimentalBLEClient
+        peripheral.state = .connecting
+
+        // Foreground resume clears the retry cooldown while the Watch probe is pending.
+        UIApplication.shared.applicationState = .active
+        store.resumeCameraConnections()
+        scanner.centralManager(central, didDiscover: peripheral, advertisementData: [
+            CBAdvertisementDataServiceUUIDsKey: [DJIRSDKBLEUUID.service],
+            CBAdvertisementDataIsConnectable: true,
+        ], rssi: -55)
+        await waitUntil("The late advertisement must reach the store") { store.cameras[0].lastConnectableSeen != nil }
+        precondition(central.connectCount == 1 && peripheral.delegate === firstClient,
+            "Discovery must keep the original Watch probe after the cooldown is cleared")
+        store.resumeCameraConnections()
+        precondition(central.connectCount == 1 && peripheral.delegate === firstClient,
+            "Remembered-camera reconnect must also keep the original Watch probe")
+        UIApplication.shared.applicationState = .background
+
+        _ = connectAndGetClient()
+        store.cameras[0].lastSeen = .distantPast
+        status(255, checksum: [0xD0, 0xF1, 0x4B, 0x2D], on: firstClient)
+        await waitUntil("The original probe must receive the unknown power status") {
+            store.cameras[0].lastSeen > .distantPast
+        }
+        precondition(store.readyConnectedCameras.isEmpty, "Unknown power is not evidence that the camera is awake")
         status(0, checksum: [0xC4, 0x26, 0x0C, 0xCC], on: firstClient)
         await waitUntil("The first Watch connection must report the awake camera") { store.cameras[0].isConnected }
         status(3, checksum: [0xC7, 0x9D, 0x3B, 0x27], on: firstClient)
@@ -316,10 +341,6 @@ enum CameraStoreRecordingWorkRegression {
         precondition(central.connectCount == 2, "Duplicate refresh must not start another probe")
 
         let retryClient = connectAndGetClient()
-        store.cameras[0].lastSeen = .distantPast
-        status(255, checksum: [0xD0, 0xF1, 0x4B, 0x2D], on: retryClient)
-        await waitUntil("The retry must receive the unknown power status") { store.cameras[0].lastSeen > .distantPast }
-        precondition(store.readyConnectedCameras.isEmpty, "Unknown power is not evidence that the camera is awake")
         status(0, checksum: [0xC4, 0x26, 0x0C, 0xCC], on: retryClient)
         await waitUntil("The second Watch connection must wait for awake status") { store.cameras[0].isConnected }
         precondition(store.commandResults.isEmpty, "The reconnect must issue no recording command")

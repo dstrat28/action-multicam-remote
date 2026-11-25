@@ -1787,6 +1787,8 @@ private extension CameraStore {
             }
 
             if !hasQueuedCommand {
+                // A passive probe stays hidden from the UI until the camera is ready.
+                guard !passiveDJIProbeCameraIDs.contains(camera.id) else { return false }
                 if let lastAttempt = lastConnectionAttemptByID[camera.id],
                    now.timeIntervalSince(lastAttempt) < autoConnectRetryCooldownInterval {
                     return false
