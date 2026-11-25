@@ -499,7 +499,7 @@ final class CameraStore {
         clients[id]?.setRecordingElapsedVisible(!sources.isEmpty)
     }
 
-    func requestWatchCameraReconnect() {
+    func requestWatchCameraReconnect(now: Date = .now) {
         guard !isDemoMode, UIApplication.shared.applicationState != .active else { return }
 
         let savedCameras = pairedCameras.filter {
@@ -515,7 +515,12 @@ final class CameraStore {
         }
         // Connected cameras can still need advertisements for sleep or link recovery.
         let centralBrands = Set(savedCameras.lazy.filter { !$0.usesInsta360GPSRemote }.map(\.brand))
-        scanner.startWatchReconnectScan(for: centralBrands)
+        let canRestartScan = reconnectCandidates.contains { camera in
+            !camera.usesInsta360GPSRemote
+                && !passiveDJIProbeCameraIDs.contains(camera.id)
+                && nextAutomaticConnectionAttempt(for: camera.id) <= now
+        }
+        scanner.startWatchReconnectScan(for: centralBrands, canRestart: canRestartScan, now: now)
         refreshCameraDiscoveryActivity()
     }
 
@@ -1681,8 +1686,7 @@ private extension CameraStore {
         // evidence after the existing settle time and any reconnect cooldown.
         let retryAt = max(
             awakeSince.addingTimeInterval(nanoAwakeConfirmationInterval),
-            autoConnectSuppressedUntilByCameraID[id] ?? .distantPast,
-            (lastConnectionAttemptByID[id] ?? .distantPast).addingTimeInterval(autoConnectRetryCooldownInterval)
+            nextAutomaticConnectionAttempt(for: id)
         )
         let delay = max(0, retryAt.timeIntervalSince(now))
         guard delay < availabilityFreshnessInterval else { return }
@@ -1709,6 +1713,13 @@ private extension CameraStore {
             self.beginPassiveDJIProbeIfNeeded(for: camera)
             self.connect(camera)
         }
+    }
+
+    func nextAutomaticConnectionAttempt(for id: UUID) -> Date {
+        max(
+            autoConnectSuppressedUntilByCameraID[id] ?? .distantPast,
+            (lastConnectionAttemptByID[id] ?? .distantPast).addingTimeInterval(autoConnectRetryCooldownInterval)
+        )
     }
 
     func canAttemptAutoConnect(

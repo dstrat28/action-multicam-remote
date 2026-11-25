@@ -60,6 +60,7 @@ final class BLECameraScanner: NSObject {
     private var wantsScanning = false
     private var discoveryPaused = false
     private var watchReconnectServices: Set<CBUUID> = []
+    private var watchReconnectScanStartedAt = Date.distantPast
     private var peripheralsByID: [UUID: CBPeripheral] = [:]
     private var clientsByID: [UUID: any BLECameraDeviceClient] = [:]
     private var forcedReconnectOptionsByID: [UUID: [String: Any]] = [:]
@@ -87,7 +88,7 @@ final class BLECameraScanner: NSObject {
         centralManager.state
     }
 
-    func start() {
+    func start(now: Date = .now) {
         wantsScanning = true
         guard !discoveryPaused else { return }
         guard centralManager.state == .poweredOn else {
@@ -100,12 +101,15 @@ final class BLECameraScanner: NSObject {
             withServices: watchReconnectServices.isEmpty ? nil : Array(watchReconnectServices),
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
         )
+        if !watchReconnectServices.isEmpty {
+            watchReconnectScanStartedAt = now
+        }
         onEvent?(.log(watchReconnectServices.isEmpty
             ? "Scanning for GoPro, DJI, and Insta360 Bluetooth advertisements."
             : "Scanning for saved cameras for Watch reconnect."))
     }
 
-    func startWatchReconnectScan(for brands: Set<CameraBrand>) {
+    func startWatchReconnectScan(for brands: Set<CameraBrand>, canRestart: Bool, now: Date) {
         let services = Set(brands.compactMap { brand -> CBUUID? in
             switch brand {
             case .gopro: GoProBLEUUID.serviceControlAndQuery
@@ -114,9 +118,16 @@ final class BLECameraScanner: NSObject {
             case .unknown: nil
             }
         })
-        guard !services.isEmpty, !wantsScanning || watchReconnectServices != services else { return }
+        guard !services.isEmpty else { return }
+        if wantsScanning, watchReconnectServices == services {
+            // Coalesce the activation and reachability refreshes at Watch launch.
+            guard canRestart, now.timeIntervalSince(watchReconnectScanStartedAt) >= 2,
+                  !discoveryPaused, centralManager.state == .poweredOn else { return }
+            // A new scan lets Core Bluetooth report a peripheral it already found.
+            centralManager.stopScan()
+        }
         watchReconnectServices = services
-        start()
+        start(now: now)
     }
 
     func restoreUnfilteredScan() {

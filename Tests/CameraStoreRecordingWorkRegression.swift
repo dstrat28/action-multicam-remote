@@ -90,6 +90,7 @@ enum CameraStoreRecordingWorkRegression {
         await checkInsta360DiscoveryRecovery(name: "GO 3S ABC123", model: .insta360Go3S, shortenedName: "GO 3")
         await checkNewerInsta360IdentitySurvivesWeakScan()
         await checkWatchCameraReconnect()
+        await checkWatchRescanAfterConnectionFailure()
         await checkWatchNanoReconnect()
         print("Store recording-work checks passed: SDK mode preservation, quick transitions, pairing, discovery, disconnect and Watch reconnect.")
     }
@@ -161,6 +162,46 @@ enum CameraStoreRecordingWorkRegression {
         UIApplication.shared.applicationState = .background
         store.requestWatchCameraReconnect()
         precondition(central.scannedServices == nil, "Watch refresh must respect manual Disconnect")
+    }
+
+    private static func checkWatchRescanAfterConnectionFailure() async {
+        let scanner = BLECameraScanner()
+        let store = CameraStore(scanner: scanner, demoMode: true)
+        store.isDemoMode = false
+        UIApplication.shared.applicationState = .background
+        defer { UIApplication.shared.applicationState = .active }
+
+        let peripheral = CBPeripheral()
+        peripheral.state = .disconnected
+        store.cameras = [
+            DiscoveredCamera(id: peripheral.identifier, name: "Osmo Action 6", brand: .dji, model: .djiOsmoAction6,
+                rssi: -55, capabilities: [.record, .status], connectionState: .disconnected, recordingState: .unknown,
+                isPaired: true, isSelected: false, lastSeen: .distantPast)
+        ]
+        scanner.rememberKnownCameras(store.cameras)
+        store.requestWatchCameraReconnect()
+        let central = CBCentralManager.instances.last!
+        let scanCount = central.scanCount
+        let stopCount = central.stopCount
+        scanner.centralManager(central, didDiscover: peripheral, advertisementData: [
+            CBAdvertisementDataServiceUUIDsKey: [CBUUID(string: "FFF0")],
+            CBAdvertisementDataIsConnectable: true,
+        ], rssi: -65)
+        await waitUntil("The first background discovery must attempt to connect") { central.connectCount == 1 }
+        scanner.centralManager(central, didFailToConnect: peripheral, error: nil)
+        await waitUntil("The failed passive connection must release its client") { peripheral.delegate == nil }
+
+        let failedAt = Date()
+        store.requestWatchCameraReconnect(now: failedAt.addingTimeInterval(4))
+        precondition(central.scanCount == scanCount && central.stopCount == stopCount,
+            "Reopening during the connection cooldown must not consume another background discovery")
+        let reopenedAt = failedAt.addingTimeInterval(13)
+        store.requestWatchCameraReconnect(now: reopenedAt)
+        precondition(central.scanCount == scanCount + 1 && central.stopCount == stopCount + 1,
+            "Reopening after cooldown must restart discovery even with the same Bluetooth service")
+        store.requestWatchCameraReconnect(now: reopenedAt.addingTimeInterval(0.1))
+        precondition(central.scanCount == scanCount + 1 && central.connectCount == 1,
+            "A duplicate launch refresh must keep the new scan and wait for a fresh advertisement")
     }
 
     private static func checkWatchNanoReconnect() async {
