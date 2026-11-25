@@ -5,6 +5,7 @@ import Foundation
 @MainActor
 enum DJIStopFeedbackRegression {
     static func main() async {
+        checkRSDKRecordingAfterVerificationBurst()
         let peripheral = CBPeripheral()
         let characteristic = CBCharacteristic(uuid: CBUUID(string: "FFF1"), properties: [.writeWithoutResponse, .notify])
         let service = CBService(uuid: CBUUID(string: "FFF0"), characteristics: [characteristic])
@@ -105,7 +106,58 @@ enum DJIStopFeedbackRegression {
         client.didDisconnect(error: nil)
         await checkNanoPolling()
         await checkPairingRejection()
-        print("DJI checks passed: Nano Stop acceptance/confirmation and connection-scoped pairing rejection.")
+        print("DJI checks passed: R SDK verification backlog, Nano Stop confirmation, and pairing rejection.")
+    }
+
+    private static func checkRSDKRecordingAfterVerificationBurst() {
+        let peripheral = CBPeripheral()
+        let notify = CBCharacteristic(uuid: CBUUID(string: "FFF4"), properties: [.notify])
+        let writer = CBCharacteristic(uuid: CBUUID(string: "FFF5"), properties: [.writeWithoutResponse])
+        let service = CBService(uuid: CBUUID(string: "FFF0"), characteristics: [notify, writer])
+        let client = DJIExperimentalBLEClient(cameraID: UUID(), cameraName: "Osmo Action 6",
+            cameraModel: .djiOsmoAction6, peripheral: peripheral, onStatus: { _, _, _ in },
+            onCameraStatus: { _, _ in }, onProtocolActivity: { _ in }, onNanoPairingStatus: { _, _ in },
+            hasConfirmedAwakeNanoAdvertisement: false, onLog: { _ in },
+            onPairingRejected: { _, _ in preconditionFailure("Unexpected verification rejection") })
+        client.peripheral(peripheral, didDiscoverCharacteristicsFor: service, error: nil)
+
+        func receive(_ hex: String) {
+            notify.value = Data(hex.split(whereSeparator: \.isWhitespace).map { UInt8($0, radix: 16)! })
+            client.peripheral(peripheral, didUpdateValueFor: notify, error: nil)
+        }
+        let verification = """
+            aa 33 00 02 00 00 00 00 01 00 98 2f 00 19 55 ff 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 00 00 00 a0 79 a5 fa
+            """
+        let repeatVerification = """
+            aa 33 00 02 00 00 00 00 02 00 98 df 00 19 55 ff 00 00 00 00 00 00 00 00 00 00
+            00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 00 00 00 e8 4b a4 85
+            """
+
+        receive(verification)
+        precondition(peripheral.writes.suffix(2).map { $0.data[13] } == [0x19, 0x05],
+            "Verification must respond and subscribe to camera status")
+
+        peripheral.canSendWriteWithoutResponse = false
+        receive(repeatVerification)
+        receive("aa 13 00 20 00 00 00 00 1e 00 0b dc 1d 05 01 5c 6f 4c 3f")
+        peripheral.canSendWriteWithoutResponse = true
+        client.peripheralIsReady(toSendWriteWithoutResponse: peripheral)
+        precondition(peripheral.writes.last?.data[13] == 0x19,
+            "A rejected subscription must preserve queued verification responses")
+
+        peripheral.canSendWriteWithoutResponse = false
+        for _ in 0..<20 { receive(repeatVerification) }
+        receive("aa 13 00 20 00 00 00 00 1e 00 0b dc 1d 05 00 ca 5f 4b 48")
+        let writesBeforeStart = peripheral.writes.count
+        precondition(client.send(.startRecording).status == .sent)
+        precondition(peripheral.writes.count == writesBeforeStart)
+        peripheral.canSendWriteWithoutResponse = true
+        client.peripheralIsReady(toSendWriteWithoutResponse: peripheral)
+        let newWrites = peripheral.writes.dropFirst(writesBeforeStart)
+        precondition(newWrites.map { $0.data[13] } == [0x03],
+            "A confirmed subscription must clear obsolete verification writes so Start sends next")
+        client.didDisconnect(error: nil)
     }
 
     private static func checkNanoPolling() async {

@@ -8,6 +8,8 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
         case skipped
     }
 
+    private static let rSDKConnectionResponseLabel = "protocol connect response"
+
     private struct PendingRSDKWrite {
         var packet: Data
         var label: String
@@ -879,7 +881,7 @@ private extension DJIExperimentalBLEClient {
 
     func sendRSDKConnectionResponse(to peripheral: CBPeripheral, sequenceNumber: UInt16, cameraReserved: UInt8) {
         let packet = DJIRSDKPacket.connectionResponse(sequenceNumber: sequenceNumber, cameraReserved: cameraReserved)
-        writeRSDK(packet, to: peripheral, label: "protocol connect response")
+        writeRSDK(packet, to: peripheral, label: Self.rSDKConnectionResponseLabel)
     }
 
     func sendRSDKStatusSubscription(to peripheral: CBPeripheral, shouldLog: Bool) {
@@ -1249,6 +1251,11 @@ private extension DJIExperimentalBLEClient {
         case (0x1D, 0x05, true):
             let resultCode = frame.payload.first
             let wasSilentHeartbeat = silentRSDKStatusSubscriptionSequences.remove(frame.sequenceNumber) != nil
+            if resultCode == 0x00, hasSentRSDKStatusSubscription {
+                // The camera accepted status streaming. Old verification replies can
+                // otherwise stay ahead of capture commands in the Bluetooth queue.
+                pendingRSDKWrites.removeAll { $0.label == Self.rSDKConnectionResponseLabel }
+            }
             if !wasSilentHeartbeat {
                 let resultLabel = resultCode == 0x00 ? "success" : "error \(resultCode.map { "0x\($0.hexByte)" } ?? "missing code")"
                 onLog("\(cameraName): DJI R SDK status subscription ACK \(resultLabel).")
