@@ -989,7 +989,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.ds.ActionCamRemote.watchkitapp.Complication;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ds.ActionCamRemote.watchkitapp.MulticamComplication;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;
@@ -1015,7 +1015,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				PRODUCT_BUNDLE_IDENTIFIER = com.ds.ActionCamRemote.watchkitapp.Complication;
+				PRODUCT_BUNDLE_IDENTIFIER = com.ds.ActionCamRemote.watchkitapp.MulticamComplication;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
 				SKIP_INSTALL = YES;
