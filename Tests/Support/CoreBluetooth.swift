@@ -103,13 +103,18 @@ public final class CBCentralManager {
     public static var instances: [CBCentralManager] = []
     public var state = CBManagerState.poweredOn
     public private(set) var scanCount = 0
+    public private(set) var scannedServices: [CBUUID]?
+    public private(set) var connectCount = 0
     public private(set) var stopCount = 0
     public private(set) var disconnectCount = 0
     public init(delegate: CBCentralManagerDelegate?, queue: DispatchQueue?) { Self.instances.append(self) }
-    public func scanForPeripherals(withServices services: [CBUUID]?, options: [String: Any]?) { scanCount += 1 }
+    public func scanForPeripherals(withServices services: [CBUUID]?, options: [String: Any]?) {
+        scannedServices = services
+        scanCount += 1
+    }
     public func stopScan() { stopCount += 1 }
     public func retrievePeripherals(withIdentifiers ids: [UUID]) -> [CBPeripheral] { [] }
-    public func connect(_ peripheral: CBPeripheral, options: [String: Any]?) {}
+    public func connect(_ peripheral: CBPeripheral, options: [String: Any]?) { connectCount += 1 }
     public func cancelPeripheralConnection(_ peripheral: CBPeripheral) { disconnectCount += 1 }
 }
 public final class CBPeripheralManager {

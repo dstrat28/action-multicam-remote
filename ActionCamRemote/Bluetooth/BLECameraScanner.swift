@@ -59,6 +59,7 @@ final class BLECameraScanner: NSObject {
     private lazy var centralManager = CBCentralManager(delegate: self, queue: nil)
     private var wantsScanning = false
     private var discoveryPaused = false
+    private var scansForDJIReconnect = false
     private var peripheralsByID: [UUID: CBPeripheral] = [:]
     private var clientsByID: [UUID: any BLECameraDeviceClient] = [:]
     private var forcedReconnectOptionsByID: [UUID: [String: Any]] = [:]
@@ -93,11 +94,28 @@ final class BLECameraScanner: NSObject {
             return
         }
 
+        // iOS background discovery requires a filter for an advertised service.
         centralManager.scanForPeripherals(
-            withServices: nil,
+            withServices: scansForDJIReconnect ? [DJIRSDKBLEUUID.service] : nil,
             options: [CBCentralManagerScanOptionAllowDuplicatesKey: true]
         )
-        onEvent?(.log("Scanning for GoPro, DJI, and Insta360 Bluetooth advertisements."))
+        onEvent?(.log(scansForDJIReconnect
+            ? "Scanning for DJI Bluetooth advertisements for Watch reconnect."
+            : "Scanning for GoPro, DJI, and Insta360 Bluetooth advertisements."))
+    }
+
+    func startDJIReconnectScan() {
+        guard !wantsScanning || !scansForDJIReconnect else { return }
+        scansForDJIReconnect = true
+        start()
+    }
+
+    func restoreUnfilteredScan() {
+        guard scansForDJIReconnect else { return }
+        scansForDJIReconnect = false
+        if wantsScanning {
+            start()
+        }
     }
 
     func stop() {

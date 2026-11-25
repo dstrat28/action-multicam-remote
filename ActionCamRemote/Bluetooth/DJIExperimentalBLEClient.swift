@@ -2585,12 +2585,6 @@ private struct DJISequencedCommand {
     var data: Data
 }
 
-private enum DJIRSDKBLEUUID {
-    static let service = CBUUID(string: "FFF0")
-    static let notifyCharacteristic = CBUUID(string: "FFF4")
-    static let writeCharacteristic = CBUUID(string: "FFF5")
-}
-
 private enum DJIRSDKCommandType {
     static let noResponse: UInt8 = 0x00
     static let responseOrNot: UInt8 = 0x01

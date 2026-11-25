@@ -76,6 +76,7 @@ final class WatchConnectivityController: NSObject {
             store.addHighlight()
             return true
         case .refresh:
+            store.requestWatchCameraReconnect()
             return true
         }
     }

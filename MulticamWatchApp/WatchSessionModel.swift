@@ -201,7 +201,7 @@ final class WatchSessionModel: NSObject, ObservableObject {
         statusMessage = message
     }
 
-    private func requestLatestState() {
+    func requestLatestState() {
         let session = WCSession.default
         guard session.activationState == .activated, session.isReachable else { return }
 

@@ -498,9 +498,24 @@ final class CameraStore {
         clients[id]?.setRecordingElapsedVisible(!sources.isEmpty)
     }
 
+    func requestWatchCameraReconnect() {
+        guard !isDemoMode,
+              UIApplication.shared.applicationState != .active,
+              pairedCameras.contains(where: {
+                  $0.isKnownAction6
+                      && $0.connectionState != .connected
+                      && $0.connectionState != .connecting
+                      && !userDisconnectedCameraIDs.contains($0.id)
+              }) else { return }
+
+        scanner.startDJIReconnectScan()
+        refreshCameraDiscoveryActivity()
+    }
+
     func resumeCameraConnections() {
         guard !isDemoMode else { return }
 
+        scanner.restoreUnfilteredScan()
         insta360Remote?.reconcileKnownSessions()
 
         let retryCandidates = pairedCameras.filter {

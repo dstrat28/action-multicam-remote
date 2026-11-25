@@ -1,6 +1,7 @@
 import CoreBluetooth
 import Foundation
 import INSCameraServiceSDK
+import UIKit
 
 @main
 @MainActor
@@ -88,7 +89,57 @@ enum CameraStoreRecordingWorkRegression {
         await checkInsta360DiscoveryRecovery(name: "X3 ABC123", model: .insta360X3, shortenedName: "X3")
         await checkInsta360DiscoveryRecovery(name: "GO 3S ABC123", model: .insta360Go3S, shortenedName: "GO 3")
         await checkNewerInsta360IdentitySurvivesWeakScan()
-        print("Store recording-work checks passed: SDK mode preservation, quick transitions, pairing, discovery and disconnect.")
+        await checkWatchAction6Reconnect()
+        print("Store recording-work checks passed: SDK mode preservation, quick transitions, pairing, discovery, disconnect and Watch reconnect.")
+    }
+
+    private static func checkWatchAction6Reconnect() async {
+        let scanner = BLECameraScanner()
+        let store = CameraStore(scanner: scanner, demoMode: true)
+        store.isDemoMode = false
+        let peripheral = CBPeripheral()
+        peripheral.state = .disconnected
+        let camera = DiscoveredCamera(id: peripheral.identifier, name: "Osmo Action 6", brand: .dji,
+            model: .djiOsmoAction6, rssi: -50, capabilities: [.record, .status], connectionState: .disconnected,
+            recordingState: .unknown, isPaired: true, isSelected: false, lastSeen: .distantPast)
+        store.cameras = [camera]
+        scanner.rememberKnownCameras(store.cameras)
+        store.startScanning()
+        let central = CBCentralManager.instances.last!
+
+        store.requestWatchCameraReconnect()
+        precondition(central.scannedServices == nil, "Watch refresh must preserve foreground discovery")
+
+        UIApplication.shared.applicationState = .background
+        defer { UIApplication.shared.applicationState = .active }
+        store.requestWatchCameraReconnect()
+        precondition(central.scannedServices == [CBUUID(string: "FFF0")], "Background discovery must filter for the Action 6 service")
+        let scanCount = central.scanCount
+        store.requestWatchCameraReconnect()
+        precondition(central.scanCount == scanCount && central.connectCount == 0,
+            "Repeated refreshes must preserve the scan and wait for a fresh advertisement")
+
+        // A background advertisement may omit the local name. The known camera
+        // identifier and a connectable advertisement are sufficient to retry it.
+        scanner.centralManager(central, didDiscover: peripheral, advertisementData: [
+            CBAdvertisementDataServiceUUIDsKey: [CBUUID(string: "FFF0")],
+            CBAdvertisementDataIsConnectable: NSNumber(value: true),
+        ], rssi: -65)
+        await waitUntil("The saved Action 6 must reconnect after a fresh connectable advertisement") {
+            central.connectCount == 1
+        }
+        precondition(store.commandResults.isEmpty, "Refreshing from the Watch must not issue a recording command")
+
+        store.disconnect(camera)
+        await waitUntil("Manual Disconnect must settle before the next Watch refresh") {
+            store.cameras[0].connectionState == .disconnected
+        }
+        UIApplication.shared.applicationState = .active
+        store.resumeCameraConnections()
+        precondition(central.scannedServices == nil, "Foreground recovery must restore unfiltered discovery")
+        UIApplication.shared.applicationState = .background
+        store.requestWatchCameraReconnect()
+        precondition(central.scannedServices == nil, "Watch refresh must respect manual Disconnect")
     }
 
     private static func checkInsta360DiscoveryRecovery(name: String, model: CameraModel, shortenedName: String) async {

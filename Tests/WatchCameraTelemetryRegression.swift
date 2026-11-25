@@ -6,6 +6,8 @@ final class CameraStore {
     var cameras: [DiscoveredCamera] = []
     var readyConnectedCameras: [DiscoveredCamera] { cameras.filter { $0.connectionState == .connected } }
     var canAddHighlight = false
+    var reconnectRequests = 0
+    func requestWatchCameraReconnect() { reconnectRequests += 1 }
     func startWatchRecording() -> Bool { true }
     func stopWatchRecording() -> Bool { true }
     func addHighlight() {}
@@ -18,6 +20,8 @@ enum WatchCameraTelemetryRegression {
         let store = CameraStore()
         let phone = WatchConnectivityController(store: store)
         let watch = WatchSessionModel()
+        _ = await snapshot(from: phone)
+        precondition(store.reconnectRequests == 1, "A Watch refresh must request background camera discovery")
         let inner = CameraStorageVolume(location: .internalStorage, freeMB: 32_768, totalMB: 65_536)
         let sd = CameraStorageVolume(location: .sdCard, freeMB: 51_200, totalMB: 131_072)
         let cases: [(CameraModel, CameraTelemetry)] = [
