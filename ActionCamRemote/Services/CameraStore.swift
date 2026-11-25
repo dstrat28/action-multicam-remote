@@ -84,6 +84,8 @@ final class CameraStore {
     @ObservationIgnored private var connectionTimeoutTasksByCameraID: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var availabilityTimeoutTasksByCameraID: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var reconnectTasksByCameraID: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var stopRecoveryDisconnectIDs: Set<UUID> = []
+    @ObservationIgnored private var savedStopReconnectAttemptedIDs: Set<UUID> = []
     @ObservationIgnored private var watchNanoReconnectTasksByCameraID: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var watchPeripheralProbeDeadline: ContinuousClock.Instant?
     @ObservationIgnored private var manualPairRetryTasksByCameraID: [UUID: Task<Void, Never>] = [:]
@@ -629,6 +631,7 @@ final class CameraStore {
     }
 
     private func connect(_ requestedCamera: DiscoveredCamera, isWatchPeripheralProbe: Bool) {
+        guard !stopRecoveryDisconnectIDs.contains(requestedCamera.id) else { return }
         var camera = cameras.first(where: { $0.id == requestedCamera.id }) ?? requestedCamera
         let selection = camera.resolvedInsta360SDKSelection()
         if camera.brand == .insta360, let previous = camera.insta360UsesSDK, previous != selection {
@@ -654,7 +657,24 @@ final class CameraStore {
             return
         }
 
-        if !isWatchPeripheralProbe, let deferredDJIMessage = djiConnectionDeferralMessage(for: camera) {
+        let deferredDJIMessage = isWatchPeripheralProbe ? nil : djiConnectionDeferralMessage(for: camera)
+        let hasTriedSavedStopReconnect = savedStopReconnectAttemptedIDs.contains(camera.id)
+        let isSavedStopReconnect = deferredDJIMessage != nil
+            && camera.isPaired && camera.behavior.usesDJIRSDKControl
+            && stopState.needsReplay(camera.id)
+            && !hasTriedSavedStopReconnect
+            && !sleepingDJICameraIDs.contains(camera.id)
+            && scanner.bluetoothState == .poweredOn && scanner.peripheral(for: camera.id) != nil
+        if let deferredDJIMessage, !isSavedStopReconnect {
+            if hasTriedSavedStopReconnect, stopState.needsReplay(camera.id) {
+                guard camera.connectionState != .connecting else { return }
+                // Keep Stop pending for normal discovery without probing the saved peripheral again.
+                reconnectTasksByCameraID.removeValue(forKey: camera.id)?.cancel()
+                stopState.markUnconfirmed(camera.id)
+                stopProgressTimerIfIdle()
+                setCameraDiagnostic("Stop could not be confirmed. Check the camera before recording again.", for: camera)
+                return
+            }
             appendLog("\(camera.name): \(deferredDJIMessage)")
             setCameraDiagnostic(deferredDJIMessage, for: camera)
             clearPendingStartIfDJIUnavailable(for: camera)
@@ -821,7 +841,7 @@ final class CameraStore {
                     events.deliver { [weak self] in self?.appendLog(message) }
                 },
                 isInitialPairing: !camera.isPaired,
-                requiresAwakeRSDKStatus: isWatchPeripheralProbe,
+                requiresAwakeRSDKStatus: isWatchPeripheralProbe || isSavedStopReconnect,
                 onCommandCompleted: { [weak self] result in
                     events.deliver({ [weak self] in self?.handleBLECommandCompletion(result) },
                         onDiscard: { [weak self] in self?.recordBLECommandOutcome(result) })
@@ -877,6 +897,13 @@ final class CameraStore {
         do {
             clients[camera.id] = client
             lastConnectionAttemptByID[camera.id] = Date()
+            if isSavedStopReconnect {
+                savedStopReconnectAttemptedIDs.insert(camera.id)
+            }
+            if stopState.needsReplay(camera.id) {
+                // Publish before queued advertisements can try the same recovery.
+                updateCamera(camera.id, state: .connecting, detail: nil)
+            }
             // The camera may still be powering on when the Watch requests the link.
             scheduleConnectionTimeout(
                 for: camera.id,
@@ -1086,6 +1113,7 @@ final class CameraStore {
             cancelStartRecording(for: camera.id)
             pendingStartCameraIDs.remove(camera.id)
             cancelWakeRetry(for: camera.id)
+            savedStopReconnectAttemptedIDs.remove(camera.id)
             protectStopTransition(for: camera)
         }
 
@@ -1191,6 +1219,7 @@ final class CameraStore {
         pendingStartCameraIDs.remove(camera.id)
         pendingStartConnectionFailuresByCameraID.removeValue(forKey: camera.id)
         cancelWakeRetry(for: camera.id)
+        savedStopReconnectAttemptedIDs.remove(camera.id)
         guard camera.connectionState == .connected else {
             queueStopRecording(for: camera, reason: "Camera is not connected.")
             scheduleReconnect(for: camera.id, attemptsRemaining: pendingStopReconnectAttempts(for: camera))
@@ -1293,6 +1322,14 @@ private extension CameraStore {
         case let .discovered(candidate):
             merge(candidate)
         case let .connectionChanged(id, state):
+            if stopRecoveryDisconnectIDs.contains(id) {
+                switch state {
+                case .disconnected, .failed, .reconnecting:
+                    stopRecoveryDisconnectIDs.remove(id)
+                default:
+                    return
+                }
+            }
             if pendingInsta360GPSFallbackIDs.contains(id) {
                 switch state {
                 case .disconnected, .failed:
@@ -1755,7 +1792,8 @@ private extension CameraStore {
         currentAdvertisementAwake: Bool? = nil,
         hadExplicitNanoWakeIntent: Bool = false
     ) -> Bool {
-        guard !userDisconnectedCameraIDs.contains(camera.id) else { return false }
+        guard !userDisconnectedCameraIDs.contains(camera.id),
+              !stopRecoveryDisconnectIDs.contains(camera.id) else { return false }
 
         if camera.brand == .insta360 {
             let hasQueuedCommand = pendingStartCameraIDs.contains(camera.id)
@@ -1934,6 +1972,7 @@ private extension CameraStore {
 
     func settleStopIntent(for id: UUID) {
         stopState.settle(id)
+        savedStopReconnectAttemptedIDs.remove(id)
         stopProgressTimerIfIdle()
     }
 
@@ -2091,6 +2130,12 @@ private extension CameraStore {
                 let isPassiveDJIProbe = self.passiveDJIProbeCameraIDs.contains(id)
                 guard latest.connectionState == .connecting || isPassiveDJIProbe else {
                     self.connectionTimeoutTasksByCameraID[id] = nil
+                    return
+                }
+
+                if self.stopState.needsReplay(id), latest.brand == .dji || latest.brand == .gopro {
+                    self.setCameraDiagnostic("Camera connection timed out while confirming Stop.", for: latest)
+                    self.disconnectForStopRecovery(from: id)
                     return
                 }
 
@@ -2621,6 +2666,7 @@ private extension CameraStore {
                 if latest.connectionState != .connecting {
                     self.appendLog("\(latest.name): trying to reconnect.")
                     self.connect(latest)
+                    guard !Task.isCancelled else { return }
                 }
 
                 if attemptsRemaining > 1 {
@@ -3142,11 +3188,21 @@ private extension CameraStore {
         setCameraDiagnostic(result.message, for: camera)
         if action == .reconnectToStop, !isDemoMode {
             queueStopRecording(for: camera, reason: result.message)
-            // Close the stalled link so the existing protocol-ready path can
-            // issue a fresh Stop after reconnect. The transport never replays it.
-            scanner.disconnect(from: camera.id)
-            clients[camera.id] = nil
-            updateCamera(camera.id, state: .disconnected, detail: result.message)
+            // A transport failure can arrive before its disconnect callback.
+            // Close a stalled link once and let the callback release recovery.
+            if scanner.peripheral(for: camera.id)?.state == .connected {
+                disconnectForStopRecovery(from: camera.id)
+            }
+        }
+    }
+
+    func disconnectForStopRecovery(from id: UUID) {
+        guard stopRecoveryDisconnectIDs.insert(id).inserted else { return }
+        invalidateClientEventSession(for: id)
+        updateCamera(id, state: .reconnecting, detail: nil)
+        let state = scanner.peripheral(for: id)?.state
+        if state == .connected || state == .connecting {
+            scanner.disconnect(from: id)
         }
     }
 
