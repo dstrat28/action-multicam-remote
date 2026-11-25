@@ -43,7 +43,6 @@ private struct LauncherView: View {
             case .accessoryCorner:
                 Image(systemName: "video.fill")
                     .font(.title3)
-                    .widgetLabel("Multicam")
             case .accessoryRectangular:
                 Label("Multicam", systemImage: "video.fill")
                     .font(.headline)
