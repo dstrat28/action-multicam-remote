@@ -68,6 +68,7 @@ final class CameraStore {
     @ObservationIgnored private let defaultConnectionTimeoutDelay: Duration = .seconds(9)
     @ObservationIgnored private let goProProtocolConnectionTimeoutDelay: Duration = .seconds(15)
     @ObservationIgnored private let action6PassiveConnectionTimeoutDelay: Duration = .seconds(6)
+    @ObservationIgnored private let watchSavedPeripheralTimeoutDelay: Duration = .seconds(20)
     @ObservationIgnored private let nanoPassiveConnectionTimeoutDelay: Duration = .seconds(15)
     @ObservationIgnored private let djiProtocolConnectionTimeoutDelay: Duration = .seconds(32)
     @ObservationIgnored private let defaultStartStateGuardInterval: TimeInterval = 5
@@ -521,6 +522,7 @@ final class CameraStore {
                 && nextAutomaticConnectionAttempt(for: camera.id) <= now
         }
         scanner.startWatchReconnectScan(for: centralBrands, canRestart: canRestartScan, now: now)
+        probeSavedDJICamerasForWatch(reconnectCandidates, now: now)
         refreshCameraDiscoveryActivity()
     }
 
@@ -612,6 +614,10 @@ final class CameraStore {
     }
 
     func connect(_ requestedCamera: DiscoveredCamera) {
+        connect(requestedCamera, isWatchPeripheralProbe: false)
+    }
+
+    private func connect(_ requestedCamera: DiscoveredCamera, isWatchPeripheralProbe: Bool) {
         var camera = cameras.first(where: { $0.id == requestedCamera.id }) ?? requestedCamera
         let selection = camera.resolvedInsta360SDKSelection()
         if camera.brand == .insta360, let previous = camera.insta360UsesSDK, previous != selection {
@@ -637,7 +643,7 @@ final class CameraStore {
             return
         }
 
-        if let deferredDJIMessage = djiConnectionDeferralMessage(for: camera) {
+        if !isWatchPeripheralProbe, let deferredDJIMessage = djiConnectionDeferralMessage(for: camera) {
             appendLog("\(camera.name): \(deferredDJIMessage)")
             setCameraDiagnostic(deferredDJIMessage, for: camera)
             clearPendingStartIfDJIUnavailable(for: camera)
@@ -859,7 +865,11 @@ final class CameraStore {
         do {
             clients[camera.id] = client
             lastConnectionAttemptByID[camera.id] = Date()
-            scheduleConnectionTimeout(for: camera.id)
+            // The camera may still be powering on when the Watch requests the link.
+            scheduleConnectionTimeout(
+                for: camera.id,
+                minimumDelay: isWatchPeripheralProbe ? watchSavedPeripheralTimeoutDelay : .zero
+            )
             let shouldForceGoProWakeConnection = camera.brand == .gopro
                 && (pendingStartCameraIDs.contains(camera.id)
                     || explicitGoProWakeCameraIDs.contains(camera.id))
@@ -1261,6 +1271,9 @@ private extension CameraStore {
             bluetoothStateLabel = state.displayName
             appendLog("Bluetooth state: \(state.displayName)")
             if state == .poweredOn {
+                if scanner.isWatchReconnectScanning {
+                    requestWatchCameraReconnect()
+                }
                 connectRememberedCamerasIfResolvable()
             }
         case let .discovered(candidate):
@@ -1934,6 +1947,25 @@ private extension CameraStore {
         ignoreRecordingUntilByCameraID.removeValue(forKey: id)
     }
 
+    func probeSavedDJICamerasForWatch(_ candidates: [DiscoveredCamera], now: Date) {
+        guard scanner.bluetoothState == .poweredOn, !cameraDiscoveryPausedForRecording else { return }
+        for camera in candidates where camera.behavior.usesDJIRSDKControl {
+            // Background scans can miss advertisements. With the saved peripheral,
+            // the passive R SDK probe can verify awake status over the link instead.
+            guard clients[camera.id] == nil,
+                  !sleepingDJICameraIDs.contains(camera.id),
+                  !pendingStartCameraIDs.contains(camera.id),
+                  !stopState.needsReplay(camera.id),
+                  !hasFreshDJIConnectableAdvertisement(for: camera, now: now),
+                  (availabilitySuppressedUntilByCameraID[camera.id] ?? .distantPast) <= now,
+                  nextAutomaticConnectionAttempt(for: camera.id) <= now,
+                  scanner.peripheral(for: camera.id) != nil else { continue }
+            appendLog("\(camera.name): trying saved Bluetooth peripheral for Watch reconnect.")
+            beginPassiveDJIProbeIfNeeded(for: camera)
+            connect(camera, isWatchPeripheralProbe: true)
+        }
+    }
+
     func connectRememberedCamerasIfResolvable() {
         guard scanner.bluetoothState == .poweredOn else { return }
         let now = Date()
@@ -1957,7 +1989,7 @@ private extension CameraStore {
 
         passiveDJIProbeCameraIDs.insert(camera.id)
         setCameraDiagnostic(
-            "Silently checking the DJI advertisement; the card stays Not Connected until the camera confirms it is awake.",
+            "Silently checking the DJI connection; the card stays Not Connected until the camera confirms it is awake.",
             for: camera
         )
     }
@@ -2029,9 +2061,9 @@ private extension CameraStore {
         scanner.start()
     }
 
-    func scheduleConnectionTimeout(for id: UUID) {
+    func scheduleConnectionTimeout(for id: UUID, minimumDelay: Duration = .zero) {
         connectionTimeoutTasksByCameraID[id]?.cancel()
-        let delay = connectionTimeoutDelay(for: id)
+        let delay = max(connectionTimeoutDelay(for: id), minimumDelay)
         connectionTimeoutTasksByCameraID[id] = Task { [weak self] in
             try? await Task.sleep(for: delay)
             guard !Task.isCancelled else { return }

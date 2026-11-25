@@ -102,9 +102,11 @@ public protocol CBCentralManagerDelegate: AnyObject {}
 public final class CBCentralManager {
     public static var instances: [CBCentralManager] = []
     public var state = CBManagerState.poweredOn
+    public var rememberedPeripherals: [CBPeripheral] = []
     public private(set) var scanCount = 0
     public private(set) var scannedServices: [CBUUID]?
-    public private(set) var connectCount = 0
+    public private(set) var connectionRequests: [UUID] = []
+    public var connectCount: Int { connectionRequests.count }
     public private(set) var stopCount = 0
     public private(set) var disconnectCount = 0
     public init(delegate: CBCentralManagerDelegate?, queue: DispatchQueue?) { Self.instances.append(self) }
@@ -113,8 +115,12 @@ public final class CBCentralManager {
         scanCount += 1
     }
     public func stopScan() { stopCount += 1 }
-    public func retrievePeripherals(withIdentifiers ids: [UUID]) -> [CBPeripheral] { [] }
-    public func connect(_ peripheral: CBPeripheral, options: [String: Any]?) { connectCount += 1 }
+    public func retrievePeripherals(withIdentifiers ids: [UUID]) -> [CBPeripheral] {
+        rememberedPeripherals.filter { ids.contains($0.identifier) }
+    }
+    public func connect(_ peripheral: CBPeripheral, options: [String: Any]?) {
+        connectionRequests.append(peripheral.identifier)
+    }
     public func cancelPeripheralConnection(_ peripheral: CBPeripheral) { disconnectCount += 1 }
 }
 public final class CBPeripheralManager {
