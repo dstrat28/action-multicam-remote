@@ -1941,7 +1941,7 @@ private extension CameraStore {
     func protectStopTransition(for camera: DiscoveredCamera, isUserRequested: Bool = false) {
         beginStopping(for: camera)
         if isUserRequested, !isDemoMode, camera.behavior.usesDJIRSDKControl {
-            stopState.armDJIRSDKRetry(for: camera.id, at: ProcessInfo.processInfo.systemUptime)
+            stopState.prepareDJIRSDKRetry(for: camera.id)
         }
         ignoreRecordingUntilByCameraID[camera.id] = Date().addingTimeInterval(stopStateGuardInterval(for: camera))
         ignoreStoppedUntilByCameraID.removeValue(forKey: camera.id)
@@ -3173,6 +3173,7 @@ private extension CameraStore {
 
     func handleBLECommandCompletion(_ result: CameraCommandResult) {
         recordBLECommandOutcome(result)
+        stopState.acknowledgeDJIRSDKStop(result, at: ProcessInfo.processInfo.systemUptime)
         let hasUnconfirmedStop = stopState.hasIntent(result.cameraID)
         if result.command == .stopRecording, result.status != .sent, result.status != .queued {
             finishStopFeedback(for: result.cameraID, matching: result.id)

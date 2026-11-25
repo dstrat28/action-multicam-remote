@@ -1798,11 +1798,16 @@ struct CameraStopState {
         return camera.usesInsta360GPSRemote ? Insta360RemoteProtocol.stopFeedbackCooldown : 15
     }
 
+    private enum DJIRSDKRetry {
+        case awaitingAcknowledgement
+        case waitingUntil(TimeInterval)
+    }
+
     private struct Entry {
         var resultID: UUID?
         var expiresAt: TimeInterval
         var hasSentResult = false
-        var djiRSDKRetryAfter: TimeInterval?
+        var djiRSDKRetry: DJIRSDKRetry?
     }
     private var entries: [UUID: Entry] = [:]
     private var unconfirmedCameraIDs: Set<UUID> = []
@@ -1836,14 +1841,21 @@ struct CameraStopState {
         entries[cameraID] = Entry(expiresAt: now + timeout)
     }
 
-    mutating func armDJIRSDKRetry(for cameraID: UUID, at now: TimeInterval) {
-        entries[cameraID]?.djiRSDKRetryAfter = now + 5
+    mutating func prepareDJIRSDKRetry(for cameraID: UUID) {
+        entries[cameraID]?.djiRSDKRetry = .awaitingAcknowledgement
+    }
+
+    mutating func acknowledgeDJIRSDKStop(_ result: CameraCommandResult, at now: TimeInterval) {
+        guard result.command == .stopRecording, result.status == .sent,
+              let entry = entries[result.cameraID], entry.resultID == result.id,
+              case .awaitingAcknowledgement? = entry.djiRSDKRetry else { return }
+        entries[result.cameraID]?.djiRSDKRetry = .waitingUntil(now + 5)
     }
 
     mutating func consumeDJIRSDKRetry(for cameraID: UUID, at now: TimeInterval) -> Bool {
-        guard let entry = entries[cameraID], let retryAfter = entry.djiRSDKRetryAfter,
+        guard let entry = entries[cameraID], case let .waitingUntil(retryAfter)? = entry.djiRSDKRetry,
               now >= retryAfter, now < entry.expiresAt else { return false }
-        entries[cameraID]?.djiRSDKRetryAfter = nil
+        entries[cameraID]?.djiRSDKRetry = nil
         return true
     }
 
@@ -1883,7 +1895,7 @@ struct CameraStopState {
     @discardableResult
     mutating func queueReplay(_ camera: DiscoveredCamera, at now: TimeInterval) -> Bool {
         begin(camera.id, at: now, timeout: Self.confirmationTimeout(for: camera))
-        entries[camera.id]?.djiRSDKRetryAfter = nil
+        entries[camera.id]?.djiRSDKRetry = nil
         return replayCameraIDs.insert(camera.id).inserted
     }
 

@@ -93,6 +93,7 @@ final class WatchSessionModel: NSObject, ObservableObject {
         static let commandAccepted = "commandAccepted"
         static let cameras = "cameras"
         static let recording = "recording"
+        static let stopping = "stopping"
         static let highlightAvailable = "highlightAvailable"
         static let stateVersion = "stateVersion"
     }
@@ -103,20 +104,22 @@ final class WatchSessionModel: NSObject, ObservableObject {
     @Published private(set) var isCommandPending = false
     @Published private(set) var pendingCommand: String?
     @Published private var highlightAvailable = false
+    @Published private var phoneIsStopping = false
     @Published private(set) var statusMessage: String?
     private var expectedRecordingState: Bool?
     private var latestStateVersion: TimeInterval = 0
     private var pendingCommandID: String?
     private var commandTimeoutTask: Task<Void, Never>?
+    private var phoneStopTimeoutTask: Task<Void, Never>?
     private var initialStateTimeoutTask: Task<Void, Never>?
 
     var unavailableStatusTitle: String {
         statusMessage ?? (hasReceivedState ? "No cameras connected" : "Connecting…")
     }
 
-    var canAddHighlight: Bool {
-        highlightAvailable && pendingCommand != "stop"
-    }
+    var isStopping: Bool { pendingCommand == "stop" || phoneIsStopping }
+
+    var canAddHighlight: Bool { highlightAvailable && !isStopping }
 
     override init() {
         super.init()
@@ -138,6 +141,7 @@ final class WatchSessionModel: NSObject, ObservableObject {
     }
 
     func stop() {
+        guard !isStopping else { return }
         send(command: "stop", expectedRecordingState: false)
     }
 
@@ -177,10 +181,10 @@ final class WatchSessionModel: NSObject, ObservableObject {
                 Task { @MainActor in
                     guard let self else { return }
                     self.apply(reply)
+                    guard self.pendingCommandID == commandID else { return }
                     if reply["accepted"] as? Bool != true {
                         self.finishPendingCommand(message: "Try again")
-                    } else if expectedRecordingState == nil,
-                              self.pendingCommandID == commandID {
+                    } else if expectedRecordingState == nil {
                         self.finishPendingCommand(message: nil)
                     }
                 }
@@ -211,6 +215,21 @@ final class WatchSessionModel: NSObject, ObservableObject {
         isCommandPending = false
         pendingCommand = nil
         statusMessage = message
+    }
+
+    private func updatePhoneStopping(_ isStopping: Bool) {
+        guard phoneIsStopping != isStopping else { return }
+        phoneIsStopping = isStopping
+        phoneStopTimeoutTask?.cancel()
+        phoneStopTimeoutTask = nil
+        guard isStopping else { return }
+        // Leave time for the phone's longest confirmation window even if its
+        // next snapshot never arrives.
+        phoneStopTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(30))
+            guard !Task.isCancelled else { return }
+            self?.updatePhoneStopping(false)
+        }
     }
 
     func refreshWhileActive(retryInterval: Duration = .seconds(4)) async {
@@ -274,6 +293,8 @@ final class WatchSessionModel: NSObject, ObservableObject {
         isRecording = context[Key.recording] as? Bool
             ?? cameras.contains(where: \.isRecording)
         highlightAvailable = context[Key.highlightAvailable] as? Bool ?? false
+        let wasPhoneStopping = phoneIsStopping
+        updatePhoneStopping(context[Key.stopping] as? Bool == true)
 
         if let pendingCommandID,
            context[Key.commandID] as? String == pendingCommandID {
@@ -285,6 +306,14 @@ final class WatchSessionModel: NSObject, ObservableObject {
             if context[Key.commandAccepted] as? Bool == true,
                expectedRecordingState == nil {
                 finishPendingCommand(message: nil)
+                return
+            }
+        }
+
+        if pendingCommand == "stop" {
+            if phoneIsStopping { return }
+            if wasPhoneStopping, isRecording {
+                finishPendingCommand(message: "Try again")
                 return
             }
         }

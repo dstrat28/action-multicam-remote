@@ -121,9 +121,36 @@ enum DJIStopFeedbackRegression {
             onPairingRejected: { _, _ in preconditionFailure("Unexpected verification rejection") })
         client.peripheral(peripheral, didDiscoverCharacteristicsFor: service, error: nil)
 
-        func receive(_ hex: String) {
-            notify.value = Data(hex.split(whereSeparator: \.isWhitespace).map { UInt8($0, radix: 16)! })
+        func receive(_ packet: Data) {
+            notify.value = packet
             client.peripheral(peripheral, didUpdateValueFor: notify, error: nil)
+        }
+        func receiveHex(_ hex: String) {
+            receive(Data(hex.split(whereSeparator: \.isWhitespace).map { UInt8($0, radix: 16)! }))
+        }
+        func subscriptionSequence() -> UInt16 {
+            let request = peripheral.writes.last { $0.data[12] == 0x1D && $0.data[13] == 0x05 }!.data
+            return UInt16(request[8]) | UInt16(request[9]) << 8
+        }
+        func receiveSubscriptionAcknowledgement(sequence: UInt16, resultCode: UInt8) {
+            func checksum<T: FixedWidthInteger>(_ packet: Data, polynomial: T) -> T {
+                var value: T = 0x3AA3
+                for byte in packet {
+                    value ^= T(byte)
+                    for _ in 0..<8 {
+                        value = (value >> 1) ^ (value & 1 == 1 ? polynomial : 0)
+                    }
+                }
+                return value.littleEndian
+            }
+            var frame = Data([0xAA, 0x13, 0, 0x20, 0, 0, 0, 0,
+                UInt8(truncatingIfNeeded: sequence), UInt8(sequence >> 8)])
+            let header = checksum(frame, polynomial: UInt16(0xA001))
+            frame.append(contentsOf: withUnsafeBytes(of: header, Array.init))
+            frame.append(contentsOf: [0x1D, 0x05, resultCode])
+            let packet = checksum(frame, polynomial: UInt32(0xEDB88320))
+            frame.append(contentsOf: withUnsafeBytes(of: packet, Array.init))
+            receive(frame)
         }
         let verification = """
             aa 33 00 02 00 00 00 00 01 00 98 2f 00 19 55 ff 00 00 00 00 00 00 00 00 00 00
@@ -134,21 +161,27 @@ enum DJIStopFeedbackRegression {
             00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 00 00 00 e8 4b a4 85
             """
 
-        receive(verification)
+        receiveHex(verification)
         precondition(peripheral.writes.suffix(2).map { $0.data[13] } == [0x19, 0x05],
             "Verification must respond and subscribe to camera status")
+        let firstSequence = subscriptionSequence()
 
         peripheral.canSendWriteWithoutResponse = false
-        receive(repeatVerification)
-        receive("aa 13 00 20 00 00 00 00 1e 00 0b dc 1d 05 01 5c 6f 4c 3f")
+        receiveHex(repeatVerification)
+        receiveSubscriptionAcknowledgement(sequence: firstSequence &+ 1, resultCode: 0)
+        receiveSubscriptionAcknowledgement(sequence: firstSequence, resultCode: 1)
         peripheral.canSendWriteWithoutResponse = true
         client.peripheralIsReady(toSendWriteWithoutResponse: peripheral)
         precondition(peripheral.writes.last?.data[13] == 0x19,
-            "A rejected subscription must preserve queued verification responses")
+            "Mismatched and rejected acknowledgements must preserve queued verification responses")
+
+        precondition(client.send(.keepAlive).status == .sent)
+        let activeSequence = subscriptionSequence()
+        precondition(activeSequence != firstSequence)
 
         peripheral.canSendWriteWithoutResponse = false
-        for _ in 0..<20 { receive(repeatVerification) }
-        receive("aa 13 00 20 00 00 00 00 1e 00 0b dc 1d 05 00 ca 5f 4b 48")
+        for _ in 0..<20 { receiveHex(repeatVerification) }
+        receiveSubscriptionAcknowledgement(sequence: activeSequence, resultCode: 0)
         let writesBeforeStart = peripheral.writes.count
         precondition(client.send(.startRecording).status == .sent)
         precondition(peripheral.writes.count == writesBeforeStart)

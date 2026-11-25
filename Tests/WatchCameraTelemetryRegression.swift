@@ -12,6 +12,7 @@ final class CameraStore {
     func startWatchRecording() -> Bool { true }
     func stopWatchRecording() -> Bool { true }
     func showsRecordingStatus(for camera: DiscoveredCamera) -> Bool { stopState.showsRecordingStatus(for: camera) }
+    func isCameraStopping(_ camera: DiscoveredCamera) -> Bool { stopState.isWaiting(camera.id) }
     func addHighlight() {}
 }
 
@@ -155,11 +156,11 @@ enum WatchCameraTelemetryRegression {
         store.canAddHighlight = false
         watch.session(session, didReceiveApplicationContext: await snapshot(from: phone))
         await waitUntil { watch.cameras.first?.isRecording == false }
-        precondition(watch.isRecording && watch.pendingCommand == "stop",
+        precondition(watch.isRecording && watch.isStopping && watch.pendingCommand == "stop",
             "Unknown during Stop must keep the Watch on the Stopping controls")
 
         store.cameras[0].recordingState = .recording
-        // A phone without the Highlight fix can still send this older availability signal.
+        // Exercise the Watch's guard even if a snapshot advertises Highlight.
         store.canAddHighlight = true
         watch.session(session, didReceiveApplicationContext: await snapshot(from: phone))
         await waitUntil { watch.cameras.first?.isRecording == true }
@@ -167,11 +168,18 @@ enum WatchCameraTelemetryRegression {
             "Trailing Recording status must keep the Stop request pending")
         precondition(!watch.canAddHighlight, "Trailing Recording status must not bring Highlight back")
 
+        try? await Task.sleep(for: .seconds(12))
+        await waitUntil { watch.pendingCommand == nil }
+        precondition(watch.isStopping && !watch.canAddHighlight,
+            "The phone's pending Stop must outlast the Watch command timeout")
+        watch.stop()
+        precondition(session.sentMessages.count == sentCount, "The Watch must still block duplicate Stop")
+
         store.cameras[0].recordingState = .stopped
         store.canAddHighlight = false
         precondition(store.stopState.observe(id, state: .stopped, canClearActiveRecording: true))
         watch.session(session, didReceiveApplicationContext: await snapshot(from: phone))
-        await waitUntil { !watch.isRecording && watch.pendingCommand == nil }
+        await waitUntil { !watch.isRecording && !watch.isStopping && watch.pendingCommand == nil }
         precondition(!watch.canAddHighlight)
 
         store.cameras[0].recordingState = .recording

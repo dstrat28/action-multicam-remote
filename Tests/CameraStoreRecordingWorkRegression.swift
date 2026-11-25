@@ -484,9 +484,20 @@ enum CameraStoreRecordingWorkRegression {
             store.cameras[0].isConnected && store.cameras[0].recordingState == .recording
         }
         precondition(store.canAddHighlight)
+        peripheral.canSendWriteWithoutResponse = scenario != .stillRecording
         store.stopRecording(store.cameras[0])
-        precondition(recordActions() == [1], "The original Stop must be sent once")
         if scenario == .stillRecording {
+            precondition(recordActions().isEmpty, "Bluetooth backpressure must queue the original Stop")
+            try? await Task.sleep(for: .seconds(2))
+            status(recording: true, power: 0, checksum: [0x46, 0xE4, 0xE5, 0x1B], on: firstClient)
+            try? await Task.sleep(for: .seconds(1.8))
+            peripheral.canSendWriteWithoutResponse = true
+            firstClient.peripheralIsReady(toSendWriteWithoutResponse: peripheral)
+            precondition(recordActions() == [1], "The original Stop must be written once after backpressure")
+            try? await Task.sleep(for: .seconds(1.45))
+            status(recording: true, power: 0, checksum: [0x46, 0xE4, 0xE5, 0x1B], on: firstClient)
+            try? await Task.sleep(for: .milliseconds(100))
+            precondition(recordActions() == [1], "Retry must wait for the original Stop acknowledgement")
             acknowledgeStop(on: firstClient)
             await waitUntil("The first Stop acknowledgement must be received") {
                 store.commandResults.contains { $0.command == .stopRecording && $0.message.contains("acknowledged") }
@@ -500,7 +511,9 @@ enum CameraStoreRecordingWorkRegression {
             // The Action 6 remains connected while reporting recording over Bluetooth.
             try? await Task.sleep(for: .seconds(2.5))
             status(recording: true, power: 0, checksum: [0x46, 0xE4, 0xE5, 0x1B], on: firstClient)
-            try? await Task.sleep(for: .seconds(2.6))
+            try? await Task.sleep(for: .milliseconds(100))
+            precondition(recordActions() == [1], "Allow five seconds after the acknowledgement before retrying")
+            try? await Task.sleep(for: .seconds(2.5))
             status(recording: true, power: 0, checksum: [0x46, 0xE4, 0xE5, 0x1B], on: firstClient)
             await waitUntil("Continued recording must retry Stop on the current connection") { recordActions() == [1, 1] }
             acknowledgeStop(on: firstClient)
@@ -510,6 +523,7 @@ enum CameraStoreRecordingWorkRegression {
             precondition(central.connectCount == 1 && central.disconnectCount == 0 && recordActions() == [1, 1])
             return
         }
+        precondition(recordActions() == [1], "The original Stop must be sent once")
         await waitUntil("An unacknowledged Stop should close the stalled BLE link") {
             central.disconnectCount == 1 && store.cameras[0].connectionState == .reconnecting
         }

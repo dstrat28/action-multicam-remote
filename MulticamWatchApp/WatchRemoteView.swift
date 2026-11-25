@@ -15,7 +15,7 @@ struct WatchRemoteView: View {
     var body: some View {
         NavigationStack(path: $path) {
             Group {
-                if session.isRecording {
+                if session.isRecording || session.isStopping {
                     recordingControlsView
                 } else {
                     remoteView
@@ -238,7 +238,7 @@ struct WatchRemoteView: View {
         } label: {
             HStack(spacing: 7) {
                 ZStack {
-                    if session.pendingCommand == "stop" {
+                    if session.isStopping {
                         ProgressView()
                             .tint(.white)
                             .controlSize(.small)
@@ -248,7 +248,7 @@ struct WatchRemoteView: View {
                 }
                 .frame(width: 18, height: 18)
 
-                Text(session.pendingCommand == "stop" ? "Stopping" : "Stop")
+                Text(session.isStopping ? "Stopping" : "Stop")
                     .lineLimit(1)
                     .minimumScaleFactor(0.82)
             }
@@ -260,8 +260,8 @@ struct WatchRemoteView: View {
         .buttonStyle(.borderedProminent)
         .buttonBorderShape(.roundedRectangle(radius: 14))
         .tint(.red)
-        .disabled(session.pendingCommand == "stop")
-        .accessibilityLabel(session.pendingCommand == "stop" ? "Stopping recording" : "Stop recording")
+        .disabled(session.isStopping)
+        .accessibilityLabel(session.isStopping ? "Stopping recording" : "Stop recording")
         .accessibilityHint("Stops recording on all connected cameras")
     }
 }
