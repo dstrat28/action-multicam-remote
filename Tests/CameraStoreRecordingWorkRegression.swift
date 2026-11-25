@@ -6,8 +6,8 @@ import UIKit
 @main
 @MainActor
 enum CameraStoreRecordingWorkRegression {
-    static func waitUntil(_ message: String, _ predicate: () -> Bool) async {
-        let deadline = ContinuousClock.now.advanced(by: .seconds(4))
+    static func waitUntil(_ message: String, timeout: Duration = .seconds(4), _ predicate: () -> Bool) async {
+        let deadline = ContinuousClock.now.advanced(by: timeout)
         while !predicate(), ContinuousClock.now < deadline {
             try? await Task.sleep(for: .milliseconds(10))
         }
@@ -95,7 +95,8 @@ enum CameraStoreRecordingWorkRegression {
         await checkWatchRescanAfterConnectionFailure()
         await checkWatchRescanAfterSleepingGoPro()
         await checkWatchNanoReconnect()
-        await checkDJIStopRecoveryAfterMissingAcknowledgement()
+        await checkDJIStopRecoveryAfterMissingAcknowledgement(savedReconnectTimesOut: false)
+        await checkDJIStopRecoveryAfterMissingAcknowledgement(savedReconnectTimesOut: true)
         print("Store recording-work checks passed: SDK mode preservation, quick transitions, pairing, discovery, disconnect and Watch reconnect.")
     }
 
@@ -387,7 +388,7 @@ enum CameraStoreRecordingWorkRegression {
             "A scan retry must leave an in-progress GoPro connection alone")
     }
 
-    private static func checkDJIStopRecoveryAfterMissingAcknowledgement() async {
+    private static func checkDJIStopRecoveryAfterMissingAcknowledgement(savedReconnectTimesOut: Bool) async {
         let scanner = BLECameraScanner()
         let store = CameraStore(scanner: scanner, demoMode: true)
         store.isDemoMode = false
@@ -479,11 +480,39 @@ enum CameraStoreRecordingWorkRegression {
             store.cameras[0].recordingState == .recording
         }
         precondition(!store.cameras[0].isConnected && recordActions() == [1])
-        status(recording: true, power: 0, checksum: [0x46, 0xE4, 0xE5, 0x1B], on: retryClient)
+        let readyClient: DJIExperimentalBLEClient
+        if savedReconnectTimesOut {
+            await waitUntil("A stalled recovery must close its BLE link", timeout: .seconds(40)) {
+                central.disconnectCount == 2
+            }
+            peripheral.state = .disconnecting
+            advertise()
+            await waitUntil("Advertisements must be processed during recovery teardown") {
+                store.cameras[0].lastConnectableSeen != nil
+            }
+            precondition(central.connectCount == 2 && peripheral.delegate === retryClient,
+                "The recovery timeout must wait for Bluetooth to finish disconnecting")
+
+            store.cameras[0].lastConnectableSeen = nil
+            peripheral.state = .disconnected
+            scanner.centralManager(central, didDisconnectPeripheral: peripheral, error: nil)
+            await waitUntil("The spent saved-camera attempt must leave Stop unconfirmed") {
+                store.isCameraStopUnconfirmed(store.cameras[0])
+            }
+            precondition(central.connectCount == 2 && recordActions() == [1],
+                "A failed saved-camera attempt must wait for discovery")
+
+            advertise()
+            await waitUntil("Normal discovery can still recover the outstanding Stop") { central.connectCount == 3 }
+            readyClient = openLink()
+        } else {
+            readyClient = retryClient
+        }
+        status(recording: true, power: 0, checksum: [0x46, 0xE4, 0xE5, 0x1B], on: readyClient)
         await waitUntil("The awake control session must send the queued Stop once") { recordActions() == [1, 1] }
-        status(recording: false, power: 0, checksum: [0x39, 0xCC, 0x74, 0xC1], on: retryClient)
+        status(recording: false, power: 0, checksum: [0x39, 0xCC, 0x74, 0xC1], on: readyClient)
         await waitUntil("Camera status must confirm Stop") { store.cameras[0].recordingState == .stopped }
-        precondition(central.connectCount == 2 && recordActions() == [1, 1])
+        precondition(central.connectCount == (savedReconnectTimesOut ? 3 : 2) && recordActions() == [1, 1])
     }
 
     private static func checkWatchNanoReconnect() async {
