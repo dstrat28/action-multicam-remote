@@ -541,6 +541,7 @@ final class CameraStore {
     func resumeCameraConnections() {
         guard !isDemoMode else { return }
 
+        recordingLiveActivityController.reconcile(cameras: cameras)
         watchPeripheralProbeDeadline = nil
         scanner.restoreUnfilteredScan()
         insta360Remote?.reconcileKnownSessions()
