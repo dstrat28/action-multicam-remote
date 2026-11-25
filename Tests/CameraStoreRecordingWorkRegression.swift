@@ -90,6 +90,7 @@ enum CameraStoreRecordingWorkRegression {
         await checkInsta360DiscoveryRecovery(name: "GO 3S ABC123", model: .insta360Go3S, shortenedName: "GO 3")
         await checkNewerInsta360IdentitySurvivesWeakScan()
         await checkWatchCameraReconnect()
+        await checkWatchNanoReconnect()
         print("Store recording-work checks passed: SDK mode preservation, quick transitions, pairing, discovery, disconnect and Watch reconnect.")
     }
 
@@ -160,6 +161,82 @@ enum CameraStoreRecordingWorkRegression {
         UIApplication.shared.applicationState = .background
         store.requestWatchCameraReconnect()
         precondition(central.scannedServices == nil, "Watch refresh must respect manual Disconnect")
+    }
+
+    private static func checkWatchNanoReconnect() async {
+        let scanner = BLECameraScanner()
+        let store = CameraStore(scanner: scanner, demoMode: true)
+        store.isDemoMode = false
+        UIApplication.shared.applicationState = .background
+        defer { UIApplication.shared.applicationState = .active }
+
+        func savedCamera(_ model: CameraModel, id: UUID = UUID()) -> DiscoveredCamera {
+            DiscoveredCamera(id: id, name: model.rawValue, brand: model.brand, model: model,
+                rssi: -55, capabilities: [.record, .status], connectionState: .disconnected,
+                recordingState: .unknown, isPaired: true, isSelected: false, lastSeen: .distantPast)
+        }
+
+        var recordingNano = savedCamera(.djiOsmoNano)
+        recordingNano.connectionState = .connected
+        recordingNano.recordingState = .recording
+        store.cameras = [recordingNano, savedCamera(.goproHero13Black)]
+        store.startScanning()
+        store.requestWatchCameraReconnect()
+        let central = CBCentralManager.instances.last!
+        precondition(Set(central.scannedServices?.map(\.uuidString) ?? []) == ["FEA6", "FFF0"],
+            "The Watch scan must retain the connected Nano’s sleep advertisements during GoPro reconnect")
+
+        let awakeNano = CBPeripheral()
+        let sleepingNano = CBPeripheral()
+        let disconnectedNano = CBPeripheral()
+        for peripheral in [awakeNano, sleepingNano, disconnectedNano] {
+            peripheral.state = .disconnected
+            store.cameras.append(savedCamera(.djiOsmoNano, id: peripheral.identifier))
+        }
+        scanner.rememberKnownCameras(store.cameras)
+        func discover(_ peripheral: CBPeripheral, awake: Bool) {
+            scanner.centralManager(central, didDiscover: peripheral, advertisementData: [
+                CBAdvertisementDataServiceUUIDsKey: [CBUUID(string: "FFF0")],
+                CBAdvertisementDataIsConnectable: true,
+                CBAdvertisementDataManufacturerDataKey: Data([0xAA, 0x08, 0x19, 0, 0xFA, 0, 0, 0, 0, 0, 0, awake ? 0x02 : 0x03]),
+            ], rssi: -65)
+        }
+        discover(awakeNano, awake: true)
+        discover(sleepingNano, awake: true)
+        discover(disconnectedNano, awake: true)
+        await waitUntil("All three awake advertisements must reach the store before cancellation") {
+            store.cameras.filter { $0.advertisementAwake == true }.count == 3
+        }
+        precondition(central.connectCount == 0, "Nano must still wait for the awake settle time")
+        discover(sleepingNano, awake: false)
+        store.disconnect(savedCamera(.djiOsmoNano, id: disconnectedNano.identifier))
+
+        await waitUntil("One awake advertisement must be enough to attempt a background Nano link") {
+            central.connectCount == 1
+        }
+        precondition(sleepingNano.delegate == nil && disconnectedNano.delegate == nil)
+        precondition(!store.readyConnectedCameras.contains { $0.id == awakeNano.identifier },
+            "The passive link must wait for the Nano protocol to confirm readiness")
+
+        awakeNano.state = .connected
+        scanner.centralManager(central, didConnect: awakeNano)
+        let client = awakeNano.delegate as! DJIExperimentalBLEClient
+        let notify = CBCharacteristic(uuid: CBUUID(string: "FFF4"), properties: [.notify])
+        let writer = CBCharacteristic(uuid: CBUUID(string: "FFF5"), properties: [.writeWithoutResponse])
+        let service = CBService(uuid: CBUUID(string: "FFF0"), characteristics: [notify, writer])
+        client.peripheral(awakeNano, didDiscoverCharacteristicsFor: service, error: nil)
+        var payload = Data(repeating: 0, count: 60)
+        payload[0] = 0x40
+        payload[4] = 1
+        payload[57] = 1
+        notify.value = DJINanoProtocol.frame(sequenceNumber: 100, source: 1, destination: 2,
+            flags: 0, commandSet: 2, commandID: 0x80, payload: payload)
+        client.peripheral(awakeNano, didUpdateValueFor: notify, error: nil)
+        await waitUntil("One advertisement plus real Nano protocol status must expose a ready camera") {
+            store.readyConnectedCameras.contains { $0.id == awakeNano.identifier }
+        }
+        precondition(store.cameras.first(where: { $0.id == recordingNano.id })?.recordingState == .recording)
+        precondition(store.commandResults.isEmpty, "A Watch reconnect must issue no recording command")
     }
 
     private static func checkInsta360DiscoveryRecovery(name: String, model: CameraModel, shortenedName: String) async {

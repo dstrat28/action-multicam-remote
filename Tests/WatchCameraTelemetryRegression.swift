@@ -117,7 +117,23 @@ enum WatchCameraTelemetryRegression {
         oldPhone.removeValue(forKey: "storageVolumes")
         oldPhone["storageTotalMB"] = Int(UInt32.max)
         precondition(WatchCamera(snapshot: oldPhone)?.storageProgress == nil)
+        await checkInitialWatchConnection()
         print("Watch camera telemetry passed: actual phone/Watch round trips, all brands, partial/empty/full/missing volumes, legacy compatibility and battery/power.")
+    }
+
+    private static func checkInitialWatchConnection() async {
+        WCSession.supported = true
+        defer { WCSession.supported = false }
+        let watch = WatchSessionModel()
+        let session = WCSession.default
+        precondition(watch.unavailableStatusTitle == "Connecting…")
+        watch.session(session, activationDidCompleteWith: .notActivated,
+            error: NSError(domain: "WatchConnectivity fixture", code: 1))
+        await waitUntil { watch.unavailableStatusTitle == "Open iPhone app" }
+        watch.requestLatestState()
+        precondition(watch.unavailableStatusTitle == "Connecting…")
+        watch.session(session, didReceiveApplicationContext: ["cameras": []])
+        await waitUntil { watch.unavailableStatusTitle == "No cameras connected" }
     }
 
     private static func snapshot(from phone: WatchConnectivityController) async -> [String: Any] {

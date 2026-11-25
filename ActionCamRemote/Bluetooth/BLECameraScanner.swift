@@ -69,6 +69,7 @@ final class BLECameraScanner: NSObject {
     var onEvent: ((BLEScannerEvent) -> Void)?
 
     var isScanningRequested: Bool { wantsScanning }
+    var isWatchReconnectScanning: Bool { wantsScanning && !watchReconnectServices.isEmpty }
 
     func setDiscoveryPaused(_ paused: Bool) {
         guard discoveryPaused != paused else { return }

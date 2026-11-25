@@ -107,6 +107,11 @@ final class WatchSessionModel: NSObject, ObservableObject {
     private var latestStateVersion: TimeInterval = 0
     private var pendingCommandID: String?
     private var commandTimeoutTask: Task<Void, Never>?
+    private var initialStateTimeoutTask: Task<Void, Never>?
+
+    var unavailableStatusTitle: String {
+        statusMessage ?? (hasReceivedState ? "No cameras connected" : "Connecting…")
+    }
 
     override init() {
         super.init()
@@ -120,6 +125,7 @@ final class WatchSessionModel: NSObject, ObservableObject {
         session.delegate = self
         session.activate()
         apply(session.receivedApplicationContext)
+        waitForInitialStateIfNeeded()
     }
 
     func record() {
@@ -202,6 +208,8 @@ final class WatchSessionModel: NSObject, ObservableObject {
     }
 
     func requestLatestState() {
+        guard WCSession.isSupported() else { return }
+        waitForInitialStateIfNeeded()
         let session = WCSession.default
         guard session.activationState == .activated, session.isReachable else { return }
 
@@ -216,6 +224,23 @@ final class WatchSessionModel: NSObject, ObservableObject {
         )
     }
 
+    private func waitForInitialStateIfNeeded() {
+        guard !hasReceivedState, initialStateTimeoutTask == nil else { return }
+        statusMessage = nil
+        initialStateTimeoutTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(8))
+            guard !Task.isCancelled else { return }
+            self?.reportInitialStateFailure()
+        }
+    }
+
+    private func reportInitialStateFailure() {
+        guard !hasReceivedState else { return }
+        initialStateTimeoutTask?.cancel()
+        initialStateTimeoutTask = nil
+        statusMessage = "Open iPhone app"
+    }
+
     private func apply(_ context: [String: Any]) {
         guard !context.isEmpty else { return }
 
@@ -224,6 +249,8 @@ final class WatchSessionModel: NSObject, ObservableObject {
             latestStateVersion = stateVersion
         }
 
+        initialStateTimeoutTask?.cancel()
+        initialStateTimeoutTask = nil
         hasReceivedState = true
         let cameraDictionaries = context[Key.cameras] as? [[String: Any]] ?? []
         cameras = cameraDictionaries.compactMap(WatchCamera.init(snapshot:))
@@ -260,11 +287,12 @@ extension WatchSessionModel: WCSessionDelegate {
         error: Error?
     ) {
         Task { @MainActor [weak self] in
-            if error != nil {
-                self?.statusMessage = "Open iPhone app"
-            }
             self?.apply(session.receivedApplicationContext)
-            self?.requestLatestState()
+            if error == nil {
+                self?.requestLatestState()
+            } else {
+                self?.reportInitialStateFailure()
+            }
         }
     }
 

@@ -68,7 +68,7 @@ struct WatchRemoteView: View {
             .accessibilityHint("Shows connected cameras")
         } else {
             statusLabel(
-                title: unavailableStatusTitle,
+                title: session.unavailableStatusTitle,
                 systemImage: session.hasReceivedState ? "video.slash" : "iphone.slash",
                 showsDisclosure: false
             )
@@ -110,18 +110,6 @@ struct WatchRemoteView: View {
     private var connectedCameraTitle: String {
         let count = session.cameras.count
         return count == 1 ? "1 camera\nconnected" : "\(count) cameras\nconnected"
-    }
-
-    private var unavailableStatusTitle: String {
-        if !session.hasReceivedState {
-            return "Open iPhone\napp"
-        }
-
-        if let statusMessage = session.statusMessage {
-            return statusMessage
-        }
-
-        return "No cameras connected"
     }
 
     private var cameraListView: some View {
