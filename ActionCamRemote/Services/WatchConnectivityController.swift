@@ -12,6 +12,7 @@ final class WatchConnectivityController: NSObject {
 
     private enum Key {
         static let command = "command"
+        static let scanRetry = "scanRetry"
         static let commandID = "commandID"
         static let commandAccepted = "commandAccepted"
         static let cameras = "cameras"
@@ -65,7 +66,7 @@ final class WatchConnectivityController: NSObject {
         refreshTask?.cancel()
     }
 
-    private func handle(_ command: Command) -> Bool {
+    private func handle(_ command: Command, scanRetry: Bool = false) -> Bool {
         switch command {
         case .record:
             return store.startWatchRecording()
@@ -76,7 +77,7 @@ final class WatchConnectivityController: NSObject {
             store.addHighlight()
             return true
         case .refresh:
-            store.requestWatchCameraReconnect()
+            store.requestWatchCameraReconnect(scanRetry: scanRetry)
             return true
         }
     }
@@ -325,7 +326,7 @@ extension WatchConnectivityController: WCSessionDelegate {
                 return
             }
 
-            let accepted = self?.handle(command) ?? false
+            let accepted = self?.handle(command, scanRetry: message[Key.scanRetry] as? Bool == true) ?? false
             if command != .refresh {
                 self?.lastCommandID = message[Key.commandID] as? String
                 self?.lastCommandAccepted = accepted

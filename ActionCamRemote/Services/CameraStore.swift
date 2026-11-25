@@ -85,6 +85,7 @@ final class CameraStore {
     @ObservationIgnored private var availabilityTimeoutTasksByCameraID: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var reconnectTasksByCameraID: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var watchNanoReconnectTasksByCameraID: [UUID: Task<Void, Never>] = [:]
+    @ObservationIgnored private var watchPeripheralProbeDeadline: ContinuousClock.Instant?
     @ObservationIgnored private var manualPairRetryTasksByCameraID: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var connectedStalenessTasksByCameraID: [UUID: Task<Void, Never>] = [:]
     @ObservationIgnored private var modeSwitchAttemptsByCameraID: [UUID: Int] = [:]
@@ -500,7 +501,7 @@ final class CameraStore {
         clients[id]?.setRecordingElapsedVisible(!sources.isEmpty)
     }
 
-    func requestWatchCameraReconnect(now: Date = .now) {
+    func requestWatchCameraReconnect(now: Date = .now, scanRetry: Bool = false) {
         guard !isDemoMode, UIApplication.shared.applicationState != .active else { return }
 
         let savedCameras = pairedCameras.filter {
@@ -511,8 +512,10 @@ final class CameraStore {
         }
         guard !reconnectCandidates.isEmpty else { return }
 
-        for camera in reconnectCandidates where camera.usesInsta360GPSRemote {
-            insta360RemoteService().requestConnection(cameraID: camera.id, cameraName: camera.name)
+        if !scanRetry {
+            for camera in reconnectCandidates where camera.usesInsta360GPSRemote {
+                insta360RemoteService().requestConnection(cameraID: camera.id, cameraName: camera.name)
+            }
         }
         // Connected cameras can still need advertisements for sleep or link recovery.
         let centralBrands = Set(savedCameras.lazy.filter { !$0.usesInsta360GPSRemote }.map(\.brand))
@@ -522,13 +525,21 @@ final class CameraStore {
                 && nextAutomaticConnectionAttempt(for: camera.id) <= now
         }
         scanner.startWatchReconnectScan(for: centralBrands, canRestart: canRestartScan, now: now)
-        probeSavedDJICamerasForWatch(reconnectCandidates, now: now)
+        if !scanRetry, scanner.isWatchReconnectScanning {
+            if scanner.bluetoothState == .poweredOn {
+                watchPeripheralProbeDeadline = nil
+                probeSavedDJICamerasForWatch(reconnectCandidates, now: now)
+            } else {
+                watchPeripheralProbeDeadline = .now.advanced(by: watchSavedPeripheralTimeoutDelay)
+            }
+        }
         refreshCameraDiscoveryActivity()
     }
 
     func resumeCameraConnections() {
         guard !isDemoMode else { return }
 
+        watchPeripheralProbeDeadline = nil
         scanner.restoreUnfilteredScan()
         insta360Remote?.reconcileKnownSessions()
 
@@ -810,6 +821,7 @@ final class CameraStore {
                     events.deliver { [weak self] in self?.appendLog(message) }
                 },
                 isInitialPairing: !camera.isPaired,
+                requiresAwakeRSDKStatus: isWatchPeripheralProbe,
                 onCommandCompleted: { [weak self] result in
                     events.deliver({ [weak self] in self?.handleBLECommandCompletion(result) },
                         onDiscard: { [weak self] in self?.recordBLECommandOutcome(result) })
@@ -1271,7 +1283,9 @@ private extension CameraStore {
             bluetoothStateLabel = state.displayName
             appendLog("Bluetooth state: \(state.displayName)")
             if state == .poweredOn {
-                if scanner.isWatchReconnectScanning {
+                let probeDeadline = watchPeripheralProbeDeadline
+                watchPeripheralProbeDeadline = nil
+                if let probeDeadline, .now < probeDeadline, scanner.isWatchReconnectScanning {
                     requestWatchCameraReconnect()
                 }
                 connectRememberedCamerasIfResolvable()
@@ -1952,14 +1966,16 @@ private extension CameraStore {
         for camera in candidates where camera.behavior.usesDJIRSDKControl {
             // Background scans can miss advertisements. With the saved peripheral,
             // the passive R SDK probe can verify awake status over the link instead.
-            guard clients[camera.id] == nil,
-                  !sleepingDJICameraIDs.contains(camera.id),
+            let needsProbe = sleepingDJICameraIDs.contains(camera.id)
+                || !hasFreshDJIConnectableAdvertisement(for: camera, now: now)
+            guard needsProbe,
+                  !passiveDJIProbeCameraIDs.contains(camera.id),
                   !pendingStartCameraIDs.contains(camera.id),
                   !stopState.needsReplay(camera.id),
-                  !hasFreshDJIConnectableAdvertisement(for: camera, now: now),
                   (availabilitySuppressedUntilByCameraID[camera.id] ?? .distantPast) <= now,
                   nextAutomaticConnectionAttempt(for: camera.id) <= now,
-                  scanner.peripheral(for: camera.id) != nil else { continue }
+                  let peripheral = scanner.peripheral(for: camera.id),
+                  peripheral.state == .disconnected || peripheral.state == .connected else { continue }
             appendLog("\(camera.name): trying saved Bluetooth peripheral for Watch reconnect.")
             beginPassiveDJIProbeIfNeeded(for: camera)
             connect(camera, isWatchPeripheralProbe: true)

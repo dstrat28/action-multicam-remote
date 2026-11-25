@@ -88,6 +88,7 @@ struct WatchCamera: Identifiable, Equatable {
 final class WatchSessionModel: NSObject, ObservableObject {
     private enum Key {
         static let command = "command"
+        static let scanRetry = "scanRetry"
         static let commandID = "commandID"
         static let commandAccepted = "commandAccepted"
         static let cameras = "cameras"
@@ -207,14 +208,25 @@ final class WatchSessionModel: NSObject, ObservableObject {
         statusMessage = message
     }
 
-    func requestLatestState() {
+    func refreshWhileActive(retryInterval: Duration = .seconds(4)) async {
+        guard !Task.isCancelled else { return }
+        requestLatestState()
+        // The first background scan may find a camera while it is still asleep.
+        for _ in 0..<3 {
+            do { try await Task.sleep(for: retryInterval) } catch { return }
+            guard !Task.isCancelled else { return }
+            requestLatestState(scanRetry: true)
+        }
+    }
+
+    func requestLatestState(scanRetry: Bool = false) {
         guard WCSession.isSupported() else { return }
         waitForInitialStateIfNeeded()
         let session = WCSession.default
         guard session.activationState == .activated, session.isReachable else { return }
 
         session.sendMessage(
-            [Key.command: "refresh"],
+            [Key.command: "refresh", Key.scanRetry: scanRetry],
             replyHandler: { [weak self] reply in
                 Task { @MainActor in
                     self?.apply(reply)

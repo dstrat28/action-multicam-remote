@@ -6,8 +6,8 @@ final class CameraStore {
     var cameras: [DiscoveredCamera] = []
     var readyConnectedCameras: [DiscoveredCamera] { cameras.filter { $0.connectionState == .connected } }
     var canAddHighlight = false
-    var reconnectRequests = 0
-    func requestWatchCameraReconnect() { reconnectRequests += 1 }
+    var reconnectRequests: [Bool] = []
+    func requestWatchCameraReconnect(scanRetry: Bool) { reconnectRequests.append(scanRetry) }
     func startWatchRecording() -> Bool { true }
     func stopWatchRecording() -> Bool { true }
     func addHighlight() {}
@@ -21,7 +21,9 @@ enum WatchCameraTelemetryRegression {
         let phone = WatchConnectivityController(store: store)
         let watch = WatchSessionModel()
         _ = await snapshot(from: phone)
-        precondition(store.reconnectRequests == 1, "A Watch refresh must request background camera discovery")
+        _ = await snapshot(from: phone, forScanRetry: true)
+        precondition(store.reconnectRequests == [false, true],
+            "The phone must distinguish opening the Watch app from its scan retries")
         let inner = CameraStorageVolume(location: .internalStorage, freeMB: 32_768, totalMB: 65_536)
         let sd = CameraStorageVolume(location: .sdCard, freeMB: 51_200, totalMB: 131_072)
         let cases: [(CameraModel, CameraTelemetry)] = [
@@ -118,6 +120,7 @@ enum WatchCameraTelemetryRegression {
         oldPhone["storageTotalMB"] = Int(UInt32.max)
         precondition(WatchCamera(snapshot: oldPhone)?.storageProgress == nil)
         await checkInitialWatchConnection()
+        await checkWatchScanRetryWindow()
         print("Watch camera telemetry passed: actual phone/Watch round trips, all brands, partial/empty/full/missing volumes, legacy compatibility and battery/power.")
     }
 
@@ -136,9 +139,39 @@ enum WatchCameraTelemetryRegression {
         await waitUntil { watch.unavailableStatusTitle == "No cameras connected" }
     }
 
-    private static func snapshot(from phone: WatchConnectivityController) async -> [String: Any] {
+    private static func checkWatchScanRetryWindow() async {
+        let session = WCSession.default
+        WCSession.supported = true
+        session.activationState = .activated
+        session.isReachable = true
+        defer {
+            session.isReachable = false
+            session.activationState = .notActivated
+            WCSession.supported = false
+        }
+        let watch = WatchSessionModel()
+        let start = session.sentMessages.count
+        await watch.refreshWhileActive(retryInterval: .zero)
+        let requests = session.sentMessages.dropFirst(start).compactMap { $0["scanRetry"] as? Bool }
+        precondition(requests == [false, true, true, true],
+            "A Watch activation must open one bounded scan retry window")
+
+        let cancelStart = session.sentMessages.count
+        let refresh = Task { await watch.refreshWhileActive() }
+        await waitUntil { session.sentMessages.count == cancelStart + 1 }
+        refresh.cancel()
+        await refresh.value
+        precondition(session.sentMessages.count == cancelStart + 1,
+            "Leaving the active Watch scene must cancel the remaining retries")
+    }
+
+    private static func snapshot(
+        from phone: WatchConnectivityController,
+        forScanRetry: Bool = false
+    ) async -> [String: Any] {
         await withCheckedContinuation { continuation in
-            phone.session(WCSession.default, didReceiveMessage: ["command": "refresh"],
+            let message: [String: Any] = forScanRetry ? ["command": "refresh", "scanRetry": true] : ["command": "refresh"]
+            phone.session(WCSession.default, didReceiveMessage: message,
                           replyHandler: { continuation.resume(returning: $0) })
         }
     }

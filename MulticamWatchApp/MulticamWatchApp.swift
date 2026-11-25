@@ -9,10 +9,9 @@ struct MulticamWatchApp: App {
         WindowGroup {
             WatchRemoteView()
                 .environmentObject(session)
-                .onChange(of: scenePhase) { _, phase in
-                    if phase == .active {
-                        session.requestLatestState()
-                    }
+                .task(id: scenePhase) {
+                    guard scenePhase == .active else { return }
+                    await session.refreshWhileActive()
                 }
         }
     }

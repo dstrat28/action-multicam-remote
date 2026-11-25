@@ -93,6 +93,7 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
     private let onNanoPairingStatus: (UUID, DJINanoProtocol.PairingStatus) -> Void
     private let onLog: (String) -> Void
     private let isInitialPairing: Bool
+    private let requiresAwakeRSDKStatus: Bool
     private let onCommandCompleted: (CameraCommandResult) -> Void
     private let onPairingRejected: (UUID, String) -> Void
     private let hasConfirmedAwakeNanoAdvertisement: Bool
@@ -109,6 +110,7 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
         hasConfirmedAwakeNanoAdvertisement: Bool,
         onLog: @escaping (String) -> Void,
         isInitialPairing: Bool = false,
+        requiresAwakeRSDKStatus: Bool = false,
         onCommandCompleted: @escaping (CameraCommandResult) -> Void = { _ in },
         onPairingRejected: @escaping (UUID, String) -> Void,
         metadataTime: @escaping () -> TimeInterval = { ProcessInfo.processInfo.systemUptime }
@@ -125,6 +127,7 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
         self.hasConfirmedAwakeNanoAdvertisement = hasConfirmedAwakeNanoAdvertisement
         self.onLog = onLog
         self.isInitialPairing = isInitialPairing
+        self.requiresAwakeRSDKStatus = requiresAwakeRSDKStatus
         self.onCommandCompleted = onCommandCompleted
         self.onPairingRejected = onPairingRejected
         self.metadataTime = metadataTime
@@ -1291,7 +1294,8 @@ private extension DJIExperimentalBLEClient {
             return
         }
 
-        if status.powerState != .sleeping, !hasReportedRSDKReady {
+        let isReady = requiresAwakeRSDKStatus ? status.powerState == .awake : status.powerState != .sleeping
+        if isReady, !hasReportedRSDKReady {
             hasReportedRSDKReady = true
             onStatus(cameraID, .connected, "DJI R SDK protocol ready.")
         }
