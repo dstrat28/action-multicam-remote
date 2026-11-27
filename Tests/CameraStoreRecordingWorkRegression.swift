@@ -98,6 +98,7 @@ enum CameraStoreRecordingWorkRegression {
         await checkDJIStopRecovery(.stillRecording)
         await checkDJIStopRecovery(.reconnect)
         await checkDJIStopRecovery(.alreadyStopped)
+        await checkDJIStopRecovery(.cameraRestarted)
         await checkDJIStopRecovery(.reconnectTimeout)
         print("Store recording-work checks passed: SDK mode preservation, quick transitions, pairing, discovery, disconnect and Watch reconnect.")
     }
@@ -391,7 +392,7 @@ enum CameraStoreRecordingWorkRegression {
     }
 
     private enum DJIStopScenario {
-        case stillRecording, reconnect, alreadyStopped, reconnectTimeout
+        case stillRecording, reconnect, alreadyStopped, cameraRestarted, reconnectTimeout
     }
 
     private static func checkDJIStopRecovery(_ scenario: DJIStopScenario) async {
@@ -561,6 +562,18 @@ enum CameraStoreRecordingWorkRegression {
         }
         precondition(recordActions() == [1], "A BLE connection attempt must not send Stop")
         let retryClient = openLink(verified: scenario != .reconnect)
+        if scenario == .cameraRestarted {
+            // All three reports arrive before the store can dispatch the first one's replay.
+            status(recording: true, power: 0, on: retryClient)
+            status(recording: false, power: 0, on: retryClient)
+            status(recording: true, power: 0, mode: 0x02, on: retryClient)
+            await waitUntil("Stop must settle and the new clip must be observed") {
+                store.cameras[0].isConnected && store.cameras[0].currentMode == .timelapse
+                    && store.cameras[0].recordingState == .recording && !store.isCameraStopping(store.cameras[0])
+            }
+            precondition(recordActions() == [1], "An older recording report must not stop the new clip")
+            return
+        }
         if scenario == .alreadyStopped {
             status(recording: false, power: 0, on: retryClient)
             await waitUntil("An awake idle camera must settle the pending Stop") {

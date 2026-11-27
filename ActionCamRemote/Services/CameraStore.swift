@@ -829,10 +829,10 @@ final class CameraStore {
                 cameraModel: camera.model,
                 peripheral: peripheral,
                 onStatus: { [weak self] id, state, detail in
-                    events.deliver { [weak self] in self?.updateCamera(id, state: state, detail: detail) }
+                    events.deliverInOrder { [weak self] in self?.updateCamera(id, state: state, detail: detail) }
                 },
                 onCameraStatus: { [weak self] id, update in
-                    events.deliver { [weak self] in self?.updateCameraStatus(id, update: update) }
+                    events.deliverInOrder { [weak self] in self?.updateCameraStatus(id, update: update) }
                 },
                 onProtocolActivity: { [weak self] id in
                     events.deliver { [weak self] in self?.noteProtocolActivity(for: id) }
@@ -2774,8 +2774,8 @@ private extension CameraStore {
         }
     }
 
-    func canWriteDJIStopImmediately(_ id: UUID) -> Bool {
-        (clients[id] as? DJIExperimentalBLEClient)?.canWriteRSDKStopImmediately == true
+    func canWriteDJIStopImmediately(_ id: UUID, for revision: UInt64) -> Bool {
+        (clients[id] as? DJIExperimentalBLEClient)?.canWriteRSDKStopImmediately(for: revision) == true
     }
 
     func replayPendingStopIfReady(for id: UUID, djiRecordingState: CameraRecordingState? = nil) {
@@ -3440,8 +3440,8 @@ private extension CameraStore {
     }
 
     func updateCameraStatus(_ id: UUID, update: CameraStatusUpdate) {
-        if update.canResolveDJIStop, let state = update.recordingState, stopState.needsReplay(id),
-           state == .stopped || canWriteDJIStopImmediately(id) {
+        if let revision = update.verifiedDJIStatusRevision, let state = update.recordingState, stopState.needsReplay(id),
+           state == .stopped || canWriteDJIStopImmediately(id, for: revision) {
             // Resolve readiness and the capture state from the same camera report.
             updateCamera(id, state: .connected, detail: "DJI R SDK protocol ready.", djiRecordingState: state)
         }
@@ -3470,7 +3470,7 @@ private extension CameraStore {
         if let recordingState = recordingStateToApply {
             let now = Date()
             if !isDemoMode, cameras[index].behavior.usesDJIRSDKControl, stopState.hasIntent(id),
-               !update.canResolveDJIStop,
+               update.verifiedDJIStatusRevision == nil,
                CameraStopState.isStopConfirmation(recordingState, canClearActiveRecording: update.canClearActiveRecording) {
                 recordingStateToApply = nil
                 recordingDecision = "waiting for verified awake status to confirm Stop"
@@ -3612,8 +3612,8 @@ private extension CameraStore {
             persistPairedCameras()
         }
 
-        if recordingStateToApply == .recording, update.canResolveDJIStop,
-           camera.isConnected, let mode = update.currentMode, mode != .photo, canWriteDJIStopImmediately(id),
+        if recordingStateToApply == .recording, let revision = update.verifiedDJIStatusRevision,
+           camera.isConnected, let mode = update.currentMode, mode != .photo, canWriteDJIStopImmediately(id, for: revision),
            stopState.consumeDJIRSDKRetry(for: id, at: ProcessInfo.processInfo.systemUptime) {
             appendLog("\(camera.name): camera still reports recording; retrying Stop on the current connection.")
             send(.stopRecording, to: [camera])

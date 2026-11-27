@@ -1753,7 +1753,7 @@ struct CameraStatusUpdate: Equatable {
     var replacesCaptureSettings: Bool = false
     var replacesDJIRSDKStatus: Bool = false
     // Only a fresh, awake report on a verified R SDK control link can resolve Stop.
-    var canResolveDJIStop: Bool = false
+    var verifiedDJIStatusRevision: UInt64? = nil
     var replacesTelemetry: Bool = false
     var goProPresets: [GoProPreset]? = nil
     var activeGoProPresetID: UInt32? = nil
@@ -1773,6 +1773,14 @@ final class CameraClientEventSession {
     ) {
         Task { @MainActor [weak self] in
             if self?.active == true { apply() } else { onDiscard() }
+        }
+    }
+
+    // A camera-side Stop separates two recordings. Preserve that boundary
+    // when queued DJI reports and readiness notifications reach the store.
+    nonisolated func deliverInOrder(_ apply: @escaping @MainActor () -> Void) {
+        DispatchQueue.main.async { [weak self] in
+            if self?.active == true { apply() }
         }
     }
 

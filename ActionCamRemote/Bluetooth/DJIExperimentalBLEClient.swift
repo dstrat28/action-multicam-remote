@@ -41,6 +41,7 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
     private var hasCompletedLegacyDumlHandshake = false
     private var hasReportedLegacyDumlReady = false
     private var hasReportedRSDKReady = false
+    private var rSDKStatusRevision: UInt64 = 0
     private var rSDKStatusSubscription: RSDKStatusSubscription?
     private var pendingRSDKWrites: [PendingRSDKWrite] = []
     private var commandTracker = DJICommandTracker()
@@ -219,8 +220,8 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
         compactStoppedProtectionUntil = .distantPast
     }
 
-    var canWriteRSDKStopImmediately: Bool {
-        guard hasCompletedRSDKHandshake, let characteristic = rSDKWriteCharacteristic,
+    func canWriteRSDKStopImmediately(for revision: UInt64) -> Bool {
+        guard revision == rSDKStatusRevision, hasCompletedRSDKHandshake, let characteristic = rSDKWriteCharacteristic,
               let peripheral, peripheral.state == .connected else { return false }
         return !characteristic.properties.contains(.writeWithoutResponse) || peripheral.canSendWriteWithoutResponse
     }
@@ -1317,6 +1318,8 @@ private extension DJIExperimentalBLEClient {
             return
         }
 
+        // Store delivery is deferred. Only the latest decoded report may trigger a write.
+        rSDKStatusRevision &+= 1
         let isReady = requiresAwakeRSDKStatus ? status.powerState == .awake : status.powerState != .sleeping
         if isReady, !hasReportedRSDKReady {
             hasReportedRSDKReady = true
@@ -1332,7 +1335,7 @@ private extension DJIExperimentalBLEClient {
 
     func publishRSDKStatus(_ status: DJIRSDKStatusPush, canResolveStop: Bool) {
         var update = status.cameraStatusUpdate(cameraModel: cameraModel)
-        update.canResolveDJIStop = canResolveStop
+        if canResolveStop { update.verifiedDJIStatusRevision = rSDKStatusRevision }
         onCameraStatus(cameraID, update)
         let now = Date()
         if status.debugLabel != lastRSDKStatusSummaryLabel
