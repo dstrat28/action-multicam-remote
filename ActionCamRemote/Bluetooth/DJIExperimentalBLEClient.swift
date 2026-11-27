@@ -1321,11 +1321,13 @@ private extension DJIExperimentalBLEClient {
             return
         }
 
-        publishRSDKStatus(status)
+        publishRSDKStatus(status, canResolveStop: canUseRSDKControl && status.powerState == .awake)
     }
 
-    func publishRSDKStatus(_ status: DJIRSDKStatusPush) {
-        onCameraStatus(cameraID, status.cameraStatusUpdate(cameraModel: cameraModel))
+    func publishRSDKStatus(_ status: DJIRSDKStatusPush, canResolveStop: Bool) {
+        var update = status.cameraStatusUpdate(cameraModel: cameraModel)
+        update.canResolveDJIStop = canResolveStop
+        onCameraStatus(cameraID, update)
         let now = Date()
         if status.debugLabel != lastRSDKStatusSummaryLabel
             || now.timeIntervalSince(lastRSDKStatusSummaryLogDate) >= 5 {
@@ -1393,7 +1395,7 @@ private extension DJIExperimentalBLEClient {
                 )
             }
             self.clearPendingRSDKModeTransition()
-            self.publishRSDKStatus(deferredStatus)
+            self.publishRSDKStatus(deferredStatus, canResolveStop: false)
         }
     }
 

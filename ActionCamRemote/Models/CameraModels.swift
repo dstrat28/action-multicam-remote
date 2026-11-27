@@ -1752,6 +1752,8 @@ struct CameraStatusUpdate: Equatable {
     var canClearActiveRecording: Bool = true
     var replacesCaptureSettings: Bool = false
     var replacesDJIRSDKStatus: Bool = false
+    // Only a fresh, awake report on a verified R SDK control link can resolve Stop.
+    var canResolveDJIStop: Bool = false
     var replacesTelemetry: Bool = false
     var goProPresets: [GoProPreset]? = nil
     var activeGoProPresetID: UInt32? = nil
