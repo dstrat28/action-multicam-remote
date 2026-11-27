@@ -97,6 +97,8 @@ enum CameraStoreRecordingWorkRegression {
         await checkWatchNanoReconnect()
         await checkDJIStopRecovery(.stillRecording)
         await checkDJIStopRecovery(.reconnect)
+        await checkDJIStopRecovery(.alreadyStopped)
+        await checkDJIStopRecovery(.cameraRestarted)
         await checkDJIStopRecovery(.reconnectTimeout)
         print("Store recording-work checks passed: SDK mode preservation, quick transitions, pairing, discovery, disconnect and Watch reconnect.")
     }
@@ -390,7 +392,7 @@ enum CameraStoreRecordingWorkRegression {
     }
 
     private enum DJIStopScenario {
-        case stillRecording, reconnect, reconnectTimeout
+        case stillRecording, reconnect, alreadyStopped, cameraRestarted, reconnectTimeout
     }
 
     private static func checkDJIStopRecovery(_ scenario: DJIStopScenario) async {
@@ -418,22 +420,37 @@ enum CameraStoreRecordingWorkRegression {
 
         // Synthetic R SDK frames with valid checksums.
         let verification = "aa 33 00 02 00 00 00 00 01 00 98 2f 00 19 00 00 ff 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 02 00 00 00 00 00 00 f9 f6 0e 5b"
-        func openLink() -> DJIExperimentalBLEClient {
+        func verify(_ client: DJIExperimentalBLEClient) {
+            notify.value = Data(verification.split(separator: " ").map { UInt8($0, radix: 16)! })
+            client.peripheral(peripheral, didUpdateValueFor: notify, error: nil)
+        }
+        func openLink(verified: Bool = true) -> DJIExperimentalBLEClient {
             peripheral.state = .connected
             scanner.centralManager(central, didConnect: peripheral)
             let client = peripheral.delegate as! DJIExperimentalBLEClient
             client.peripheral(peripheral, didDiscoverCharacteristicsFor: service, error: nil)
-            notify.value = Data(verification.split(separator: " ").map { UInt8($0, radix: 16)! })
-            client.peripheral(peripheral, didUpdateValueFor: notify, error: nil)
+            if verified { verify(client) }
             return client
         }
-        func status(recording: Bool, power: UInt8, checksum: [UInt8], on client: DJIExperimentalBLEClient) {
+        func checksum<T: FixedWidthInteger>(_ bytes: Data, polynomial: T) -> T {
+            var crc: T = 0x3AA3
+            for byte in bytes {
+                crc ^= T(byte)
+                for _ in 0..<8 {
+                    crc = (crc >> 1) ^ (crc & 1 == 1 ? polynomial : 0)
+                }
+            }
+            return crc.littleEndian
+        }
+        func status(recording: Bool, power: UInt8, mode: UInt8 = 1, on client: DJIExperimentalBLEClient) {
             var payload = Data(repeating: 0, count: 38)
-            payload[0] = 1
+            payload[0] = mode
             payload[1] = recording ? 3 : 1
             payload[28] = power
-            notify.value = Data([0xAA, 0x38, 0, 0, 0, 0, 0, 0, 1, 0, 0xC8, 0xDF, 0x1D, 0x02])
-                + payload + Data(checksum)
+            var frame = Data([0xAA, 0x38, 0, 0, 0, 0, 0, 0, 1, 0, 0xC8, 0xDF, 0x1D, 0x02]) + payload
+            let crc = checksum(frame, polynomial: UInt32(0xEDB88320))
+            withUnsafeBytes(of: crc) { frame.append(contentsOf: $0) }
+            notify.value = frame
             client.peripheral(peripheral, didUpdateValueFor: notify, error: nil)
         }
         func advertise() {
@@ -452,16 +469,6 @@ enum CameraStoreRecordingWorkRegression {
             }
         }
         func acknowledgeStop(on client: DJIExperimentalBLEClient) {
-            func checksum<T: FixedWidthInteger>(_ bytes: Data, polynomial: T) -> T {
-                var crc: T = 0x3AA3
-                for byte in bytes {
-                    crc ^= T(byte)
-                    for _ in 0..<8 {
-                        crc = (crc >> 1) ^ (crc & 1 == 1 ? polynomial : 0)
-                    }
-                }
-                return crc.littleEndian
-            }
             let stop = peripheral.writes.last { entry in
                 let bytes = entry.data
                 return bytes.count >= 19 && bytes[12] == 0x1D && bytes[13] == 0x03 && bytes[18] == 1
@@ -479,7 +486,7 @@ enum CameraStoreRecordingWorkRegression {
         store.requestWatchCameraReconnect()
         precondition(central.connectCount == 1)
         let firstClient = openLink()
-        status(recording: true, power: 0, checksum: [0x46, 0xE4, 0xE5, 0x1B], on: firstClient)
+        status(recording: true, power: 0, on: firstClient)
         await waitUntil("The DJI camera must be connected and recording") {
             store.cameras[0].isConnected && store.cameras[0].recordingState == .recording
         }
@@ -489,20 +496,20 @@ enum CameraStoreRecordingWorkRegression {
         if scenario == .stillRecording {
             precondition(recordActions().isEmpty, "Bluetooth backpressure must queue the original Stop")
             try? await Task.sleep(for: .seconds(2))
-            status(recording: true, power: 0, checksum: [0x46, 0xE4, 0xE5, 0x1B], on: firstClient)
+            status(recording: true, power: 0, on: firstClient)
             try? await Task.sleep(for: .seconds(1.8))
             peripheral.canSendWriteWithoutResponse = true
             firstClient.peripheralIsReady(toSendWriteWithoutResponse: peripheral)
             precondition(recordActions() == [1], "The original Stop must be written once after backpressure")
             try? await Task.sleep(for: .seconds(1.45))
-            status(recording: true, power: 0, checksum: [0x46, 0xE4, 0xE5, 0x1B], on: firstClient)
+            status(recording: true, power: 0, on: firstClient)
             try? await Task.sleep(for: .milliseconds(100))
             precondition(recordActions() == [1], "Retry must wait for the original Stop acknowledgement")
             acknowledgeStop(on: firstClient)
             await waitUntil("The first Stop acknowledgement must be received") {
                 store.commandResults.contains { $0.command == .stopRecording && $0.message.contains("acknowledged") }
             }
-            status(recording: true, power: 0, checksum: [0x46, 0xE4, 0xE5, 0x1B], on: firstClient)
+            status(recording: true, power: 0, on: firstClient)
             await waitUntil("The camera must report that recording continues") { store.cameras[0].recordingState == .recording }
             precondition(!store.canAddHighlight && !store.addHighlight(),
                 "A camera finishing Stop must not receive Highlight despite trailing Recording status")
@@ -510,15 +517,26 @@ enum CameraStoreRecordingWorkRegression {
 
             // The Action 6 remains connected while reporting recording over Bluetooth.
             try? await Task.sleep(for: .seconds(2.5))
-            status(recording: true, power: 0, checksum: [0x46, 0xE4, 0xE5, 0x1B], on: firstClient)
+            status(recording: true, power: 0, on: firstClient)
             try? await Task.sleep(for: .milliseconds(100))
             precondition(recordActions() == [1], "Allow five seconds after the acknowledgement before retrying")
             try? await Task.sleep(for: .seconds(2.5))
-            status(recording: true, power: 0, checksum: [0x46, 0xE4, 0xE5, 0x1B], on: firstClient)
+            // 0x3F is Osmo 360 Photo and is unknown for an Action-series or generic camera.
+            status(recording: true, power: 0, mode: 0x3F, on: firstClient)
+            status(recording: true, power: 0, mode: 0x05, on: firstClient)
+            await waitUntil("Both mode reports must be processed") { store.cameras[0].currentMode == .photo }
+            precondition(recordActions() == [1], "Unknown or Photo mode must not retry Stop using cached Video")
+            peripheral.canSendWriteWithoutResponse = false
+            status(recording: true, power: 0, mode: 0x02, on: firstClient)
+            await waitUntil("Recording status must arrive while writes are blocked") { store.cameras[0].currentMode == .timelapse }
+            peripheral.canSendWriteWithoutResponse = true
+            firstClient.peripheralIsReady(toSendWriteWithoutResponse: peripheral)
+            precondition(recordActions() == [1], "Flushing Bluetooth must not deliver an old automatic Stop retry")
+            status(recording: true, power: 0, on: firstClient)
             await waitUntil("Continued recording must retry Stop on the current connection") { recordActions() == [1, 1] }
             acknowledgeStop(on: firstClient)
-            status(recording: true, power: 0, checksum: [0x46, 0xE4, 0xE5, 0x1B], on: firstClient)
-            status(recording: false, power: 0, checksum: [0x39, 0xCC, 0x74, 0xC1], on: firstClient)
+            status(recording: true, power: 0, on: firstClient)
+            status(recording: false, power: 0, on: firstClient)
             await waitUntil("Camera status must confirm the retried Stop") { store.cameras[0].recordingState == .stopped }
             precondition(central.connectCount == 1 && central.disconnectCount == 0 && recordActions() == [1, 1])
             return
@@ -543,8 +561,40 @@ enum CameraStoreRecordingWorkRegression {
             central.connectCount == 2 && store.cameras[0].connectionState == .connecting
         }
         precondition(recordActions() == [1], "A BLE connection attempt must not send Stop")
-        let retryClient = openLink()
-        status(recording: true, power: 255, checksum: [0x52, 0x33, 0xA2, 0xFA], on: retryClient)
+        let retryClient = openLink(verified: scenario != .reconnect)
+        if scenario == .cameraRestarted {
+            // All three reports arrive before the store can dispatch the first one's replay.
+            status(recording: true, power: 0, on: retryClient)
+            status(recording: false, power: 0, on: retryClient)
+            status(recording: true, power: 0, mode: 0x02, on: retryClient)
+            await waitUntil("Stop must settle and the new clip must be observed") {
+                store.cameras[0].isConnected && store.cameras[0].currentMode == .timelapse
+                    && store.cameras[0].recordingState == .recording && !store.isCameraStopping(store.cameras[0])
+            }
+            precondition(recordActions() == [1], "An older recording report must not stop the new clip")
+            return
+        }
+        if scenario == .alreadyStopped {
+            status(recording: false, power: 0, on: retryClient)
+            await waitUntil("An awake idle camera must settle the pending Stop") {
+                store.cameras[0].isConnected && store.cameras[0].recordingState == .stopped
+                    && !store.isCameraStopping(store.cameras[0]) && !store.isCameraStopUnconfirmed(store.cameras[0])
+            }
+            precondition(recordActions() == [1], "An already stopped camera must not receive another Stop")
+            return
+        }
+        if scenario == .reconnect {
+            status(recording: false, power: 0, mode: 0x02, on: retryClient)
+            await waitUntil("The unverified report must arrive") { store.cameras[0].currentMode == .timelapse }
+            precondition(!store.cameras[0].isConnected && store.isCameraStopping(store.cameras[0]) && recordActions() == [1],
+                "A report before verification must leave Stop pending")
+            verify(retryClient)
+            status(recording: false, power: 255, mode: 0x05, on: retryClient)
+            await waitUntil("The unknown-power idle report must arrive") { store.cameras[0].currentMode == .photo }
+            precondition(!store.cameras[0].isConnected && store.isCameraStopping(store.cameras[0]) && recordActions() == [1],
+                "An unknown-power idle report must leave Stop pending")
+        }
+        status(recording: true, power: 255, on: retryClient)
         await waitUntil("The reconnect must process the unknown power status") {
             store.cameras[0].recordingState == .recording
         }
@@ -577,9 +627,17 @@ enum CameraStoreRecordingWorkRegression {
         } else {
             readyClient = retryClient
         }
-        status(recording: true, power: 0, checksum: [0x46, 0xE4, 0xE5, 0x1B], on: readyClient)
+        peripheral.canSendWriteWithoutResponse = false
+        status(recording: true, power: 0, mode: 0x02, on: readyClient)
+        await waitUntil("The reconnect must receive recording status while writes are blocked") {
+            store.cameras[0].currentMode == .timelapse
+        }
+        peripheral.canSendWriteWithoutResponse = true
+        readyClient.peripheralIsReady(toSendWriteWithoutResponse: peripheral)
+        precondition(recordActions() == [1], "A recovered link must wait for fresh status once it can write")
+        status(recording: true, power: 0, on: readyClient)
         await waitUntil("The awake control session must send the queued Stop once") { recordActions() == [1, 1] }
-        status(recording: false, power: 0, checksum: [0x39, 0xCC, 0x74, 0xC1], on: readyClient)
+        status(recording: false, power: 0, on: readyClient)
         await waitUntil("Camera status must confirm Stop") { store.cameras[0].recordingState == .stopped }
         precondition(central.connectCount == (scenario == .reconnectTimeout ? 3 : 2) && recordActions() == [1, 1])
     }
