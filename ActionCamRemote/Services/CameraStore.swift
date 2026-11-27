@@ -2774,6 +2774,10 @@ private extension CameraStore {
         }
     }
 
+    func canWriteDJIStopImmediately(_ id: UUID) -> Bool {
+        (clients[id] as? DJIExperimentalBLEClient)?.canWriteRSDKStopImmediately == true
+    }
+
     func replayPendingStopIfReady(for id: UUID, djiRecordingState: CameraRecordingState? = nil) {
         guard stopState.needsReplay(id) else { return }
         guard let latest = cameras.first(where: { $0.id == id }), latest.connectionState == .connected else { return }
@@ -3436,7 +3440,8 @@ private extension CameraStore {
     }
 
     func updateCameraStatus(_ id: UUID, update: CameraStatusUpdate) {
-        if update.canResolveDJIStop, let state = update.recordingState, stopState.needsReplay(id) {
+        if update.canResolveDJIStop, let state = update.recordingState, stopState.needsReplay(id),
+           state == .stopped || canWriteDJIStopImmediately(id) {
             // Resolve readiness and the capture state from the same camera report.
             updateCamera(id, state: .connected, detail: "DJI R SDK protocol ready.", djiRecordingState: state)
         }
@@ -3608,7 +3613,7 @@ private extension CameraStore {
         }
 
         if recordingStateToApply == .recording, update.canResolveDJIStop,
-           camera.isConnected, let mode = update.currentMode, mode != .photo,
+           camera.isConnected, let mode = update.currentMode, mode != .photo, canWriteDJIStopImmediately(id),
            stopState.consumeDJIRSDKRetry(for: id, at: ProcessInfo.processInfo.systemUptime) {
             appendLog("\(camera.name): camera still reports recording; retrying Stop on the current connection.")
             send(.stopRecording, to: [camera])

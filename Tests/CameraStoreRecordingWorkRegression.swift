@@ -525,6 +525,12 @@ enum CameraStoreRecordingWorkRegression {
             status(recording: true, power: 0, mode: 0x05, on: firstClient)
             await waitUntil("Both mode reports must be processed") { store.cameras[0].currentMode == .photo }
             precondition(recordActions() == [1], "Unknown or Photo mode must not retry Stop using cached Video")
+            peripheral.canSendWriteWithoutResponse = false
+            status(recording: true, power: 0, mode: 0x02, on: firstClient)
+            await waitUntil("Recording status must arrive while writes are blocked") { store.cameras[0].currentMode == .timelapse }
+            peripheral.canSendWriteWithoutResponse = true
+            firstClient.peripheralIsReady(toSendWriteWithoutResponse: peripheral)
+            precondition(recordActions() == [1], "Flushing Bluetooth must not deliver an old automatic Stop retry")
             status(recording: true, power: 0, on: firstClient)
             await waitUntil("Continued recording must retry Stop on the current connection") { recordActions() == [1, 1] }
             acknowledgeStop(on: firstClient)
@@ -608,6 +614,14 @@ enum CameraStoreRecordingWorkRegression {
         } else {
             readyClient = retryClient
         }
+        peripheral.canSendWriteWithoutResponse = false
+        status(recording: true, power: 0, mode: 0x02, on: readyClient)
+        await waitUntil("The reconnect must receive recording status while writes are blocked") {
+            store.cameras[0].currentMode == .timelapse
+        }
+        peripheral.canSendWriteWithoutResponse = true
+        readyClient.peripheralIsReady(toSendWriteWithoutResponse: peripheral)
+        precondition(recordActions() == [1], "A recovered link must wait for fresh status once it can write")
         status(recording: true, power: 0, on: readyClient)
         await waitUntil("The awake control session must send the queued Stop once") { recordActions() == [1, 1] }
         status(recording: false, power: 0, on: readyClient)

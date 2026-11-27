@@ -219,6 +219,12 @@ final class DJIExperimentalBLEClient: NSObject, BLECameraDeviceClient {
         compactStoppedProtectionUntil = .distantPast
     }
 
+    var canWriteRSDKStopImmediately: Bool {
+        guard hasCompletedRSDKHandshake, let characteristic = rSDKWriteCharacteristic,
+              let peripheral, peripheral.state == .connected else { return false }
+        return !characteristic.properties.contains(.writeWithoutResponse) || peripheral.canSendWriteWithoutResponse
+    }
+
     func send(_ command: CameraCommand) -> CameraCommandResult {
         guard let peripheral else {
             return result(for: command, status: .failed, message: "DJI peripheral is unavailable.")
